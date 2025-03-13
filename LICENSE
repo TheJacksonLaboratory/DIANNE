@@ -1,0 +1,142 @@
+JAX Non-Commercial Software License Version 1.0 
+Software: DIANNE. Copyright © 2026 The Jackson Laboratory.
+
+_____________________________________________________________________________________
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1.	Definitions
+
+“JAX” shall mean The Jackson Laboratory and its Affiliates. "Affiliate" means any entity that controls, 
+is controlled by, or is under common control with The Jackson Laboratory, where "control" means ownership 
+of more than fifty percent (50%) of the voting equity or equivalent decision-making authority.
+
+"Derivative Software" shall mean any work, whether in Source or Object Form that is based on (or derived from) 
+the Software and for which the editorial revisions, annotations, elaborations, or other modifications represent, 
+as a whole, an original work of authorship. For the purposes of this License, Derivative Software shall 
+not include works that remain separable from, or merely link (or bind by name) to the interfaces of, 
+the Software and Derivative Software thereof.
+
+"License" shall mean the terms and conditions for use, reproduction, and distribution as defined by 
+Sections 1 through 11 of this document.
+
+"Licensor" shall mean the copyright owner or any entity or entities authorized by the copyright 
+owner that is granting the License.
+
+"Non-Commercial Purpose" means use of the Software for academic research, teaching, or other scholarly or 
+non-profit activities, in each case not undertaken for monetary compensation or commercial advantage 
+(including direct or indirect financial, strategic, or reputational benefit to a for-profit entity). 
+Use of the Software by or on behalf of a for-profit entity, use in the provision of products or services 
+for a fee, and use in research that is sponsored by or conducted for the benefit of a for-profit entity 
+are commercial uses and require a separate commercial license from JAX. If You are uncertain whether 
+Your intended use qualifies as a Non-Commercial Purpose, contact JAX at TechTran@jax.org to discuss 
+a commercial license.
+
+"Object Form” shall mean any form resulting from mechanical transformation or translation of a Source Form, 
+including but not limited to compiled object code, generated documentation, and conversions to other media types.
+
+"Source Form” shall mean software source code, documentation source, configuration files, 
+and machine learning model parameters.
+
+“Software” shall mean the work of authorship, whether in Source or Object Form, made available under the License.
+
+"You" (or "Your") shall mean an individual or any entity or entities exercising permissions granted by this License.
+
+2.	Grant of Copyright License.
+
+a.	Subject to the terms and conditions of this License, Licensor grants to You a worldwide, non-exclusive, 
+non-transferable, non-sublicensable, royalty-free copyright license to: (a) use the Software solely for 
+a Non-Commercial Purpose; and (b) to reproduce, prepare Derivative Software of, and distribute the Software and 
+such Derivative Software in Source or Object Form, all solely for Non-Commercial Purposes.
+
+b.	Any use, reproduction, or distribution of the Software or Derivative Software other than for 
+a Non-Commercial Purpose requires a separately executed written license agreement. Please contact TechTran@jax.org 
+to request a commercial license.
+
+c.	The Software may incorporate third party software which may be subject to additional terms and conditions. 
+All rights granted under this License are subject to Your compliance with any additional 
+terms and conditions applicable to such third-party software.
+
+d.	All rights granted under this License are subject to acknowledgment of the Software in any publication of 
+results obtained with the Software or Derivative Software, by an appropriate citation including attribution to JAX.
+
+3.	Reservation of Commercial Rights.
+JAX expressly reserves the right to license the Software, or any modifications, enhancements, updates, or successor 
+versions thereof, to any third party under any terms JAX determines in its sole discretion including commercial 
+or other licensing terms. Nothing in this License shall limit JAX’s ability to commercialize the Software, 
+to grant commercial licenses to others, or to release the Software or successor versions under different 
+or additional license terms.
+
+4.	Patent License. Subject to the terms and conditions of this License, Licensor grants to You a worldwide, 
+non-exclusive, non-transferable, non-sublicensable, royalty-free patent license to make, use, reproduce, distribute, 
+and import the Software and Derivative Software, all solely for a Non-Commercial Purpose. This patent license 
+applies only to those patent claims that are licensable by Licensor and necessarily infringed by work included 
+by Licensor in the Software at the time the Software was distributed by Licensor. If You institute patent litigation 
+against any entity (including a cross-claim or counterclaim in a lawsuit) alleging that the Software or Derivative 
+Software (or any portion thereof contributed by Licensor) constitutes patent infringement under any patent 
+infringement theory, then all copyright and patent licenses granted to You pursuant to this License shall terminate 
+as of the date of filing of such patent litigation. 
+
+5.	Redistribution. You may reproduce and distribute copies of the Software or Derivative Software thereof to third parties 
+in any medium, with or without modifications, and in Source or Object Form, provided that You comply with the following conditions:
+
+a.	Any reproduction or distribution of copies of the Software or Derivative Software must be under the terms and conditions 
+of this License such that any third party obtains rights to the Software or Derivative Software only as a result of accepting 
+the terms and conditions of this License.
+
+b.	Any other recipient of the Software or Derivative Software must receive a copy of this License.
+
+c.	Any modified files must carry prominent notices stating that You changed the files.
+
+d.	The copyright of JAX (as “Copyright © 2026 The Jackson Laboratory”), copyrights of any other Licensors, and copyrights 
+of any incorporated third party software as described in the associated documentation must be acknowledged, and any such 
+copyrights must be part of a NOTICE file to be included with any reproduction or distribution of the Software or Derivative Software.
+
+e.	You may add Your own copyright statement to Your modifications.
+
+6.	Attribution and Marks. This License does not grant permission to use the names, trade names, trademarks, service marks, 
+or product names of JAX or any other Licensor, except as required by Section 5d and for reasonable and customary use in 
+describing the origin of the Software and Derivative Software and reproducing the content of the NOTICE file.
+
+7.	Termination.
+
+a.	You may not use, reproduce, modify, or distribute the Software or Derivative Software except as expressly provided 
+under this License. Any attempt otherwise to use, reproduce, modify, or distribute the Software or Derivative Software 
+is (i) void, and (ii) will automatically, without notice, terminate all Your rights under this License, including any 
+and all copyright and patent licenses granted by this License. Termination of Your rights under this License does not 
+terminate the rights of any third party who received the Software or Derivative Software from You and who remains 
+in compliance with this License.
+
+b.	You are not required to accept this License, since You have not signed it. However, nothing else grants You permission 
+to use, reproduce, modify, or distribute the Software or the Derivative Software. These actions are prohibited by law if 
+You do not accept this License. Therefore, by using, reproducing, modifying, or distributing the Software or 
+the Derivative Software, You indicate your acceptance of this License to do so, and all its terms and conditions.
+
+8.	Export Control Compliance. All the rights granted by this License are granted subject to You complying with all applicable 
+export control, sanctions, and trade laws in connection with Your use, distribution, and transfer of Software. You may not export, 
+re-export, or otherwise transfer the Software in violation of applicable law. JAX shall have no obligation to provide Software 
+where doing so would violate applicable export control or sanctions laws.
+
+9.	No Support Obligations. JAX is under no obligation to provide maintenance, support, updates, enhancements, modifications, 
+bug fixes, or other services for the Software. Any such assistance provided by JAX shall be provided solely at JAX’s discretion 
+and shall not create any continuing obligation.
+
+10.	No Implied License. Notwithstanding any provision of this License to the contrary, JAX retains all rights, title, and 
+interest in and to the Software and any associated intellectual property rights not expressly granted under this License. 
+Except for the rights expressly granted under this License, no other rights or licenses are granted, whether by implication, 
+estoppel, exhaustion, or otherwise. All rights not expressly granted by JAX are reserved. 
+
+11.	Disclaimer of Warranty and Limitation of Liability.
+
+THE SOFTWARE IS PROVIDED BY LICENSOR "AS IS", WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED, 
+INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS 
+FOR A PARTICULAR PURPOSE. ALL SUCH WARRANTIES ARE DISCLAIMED. YOU ARE SOLELY RESPONSIBLE FOR DETERMINING THE APPROPRIATENESS 
+OF USING OR REDISTRIBUTING THE SOFTWARE AND ASSUME ANY RISKS ASSOCIATED WITH YOUR EXERCISE OF PERMISSIONS UNDER THIS LICENSE.
+
+IN NO EVENT SHALL JAX OR ANY OTHER LICENSOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, 
+OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+THE POSSIBILITY OF SUCH DAMAGES.
+
+
+END OF TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
