@@ -22,6 +22,9 @@ from sklearn.linear_model import LogisticRegression as LR
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.metrics import adjusted_rand_score as ARI
 
+from scipy.spatial import KDTree
+from joblib import Parallel, delayed
+
 import tifffile
 
 import matplotlib
@@ -55,7 +58,7 @@ def loadAdImage(spath):
                                                     'spot_diameter_fullres': d['spot_diameter_fullres']}}}, grid.index.values, grid[[5, 4]].values
     return image
 
-def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05):
+def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05, sample_id=None):
 
     '''Prepare patches for WSI data.
     Input is a dataframe with columns 'x' and 'y' or 'pxl_col_in_wsi' and 'pxl_row_in_wsi',
@@ -109,19 +112,49 @@ def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05):
     # Filter patches by size
     df_temp_img_tiles = df_temp_img_tiles.loc[df_temp_img_tiles['patch_size'] >= df_temp_img_tiles['patch_size'].quantile(qth)]
 
+    if not sample_id is None:
+        df_temp_img_tiles['sample'] = sample_id
+        df_temp_img_tiles = df_temp_img_tiles.set_index(['sample'], append=True).reorder_levels(['sample', 'barcode'])
+
     print('Prepared patches:', df_temp_img_tiles['patch'].nunique())
     return df_temp_img_tiles
 
-def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=56, s=2000, sh=100, Nmax=10**7):
+def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=56, s=4000, sh=100, Nmax=10**7):
 
-    def getLocalRep(i, j, R, df_feat, df_xy, qs, index=False):
-        wh = np.sqrt((df_xy['x']-i).abs().values**2 + (df_xy['y']-j).abs().values**2)<=R
-        se = df_feat[wh].quantile(qs).stack()
+    def getLocalRep(i, j, R, df_feat, df_xy, qs, index=False, tree=None):
+
+        if tree is None:
+            wh = np.sqrt((df_xy['x']-i).abs().values**2 + (df_xy['y']-j).abs().values**2)<=R
+            se = df_feat[wh].quantile(qs).stack()
+        else:
+            iwh = tree.query_ball_point([i, j], R)
+            se = df_feat.iloc[iwh].quantile(qs).stack()
+
         if not index:
             return se.values
         else:
             se.index = se.index.get_level_values(1).values + '_' + np.round(se.index.get_level_values(0), 2).astype(str).values
+
             return se
+
+    def runChunk(i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, f, R, size, qs, index):
+
+        tree = KDTree(df_tiles_trimmed_coords_wh[['x', 'y']].values)
+        
+        x_ = []
+        y_ = []
+        p_ = []
+        for tile in df_tiles_trimmed_coords_wh.index:
+            tx, ty = df_tiles_trimmed_coords_wh.loc[tile, ['x', 'y']]
+            x_.append(tx)
+            y_.append(ty)
+        
+            localRep = getLocalRep(tx, ty, f*R*tsize,
+                                    df_tiles_trimmed_wh,
+                                    df_tiles_trimmed_coords_wh, qs, tree=tree)
+            p_.append(clf.predict_proba(localRep[None, index])[:, 1][0])
+
+        return {(i, j): {'x': x_, 'y': y_, 'p': p_}}
 
     df_tiles_trimmed = ad[:Nmax].to_df()
     df_tiles_trimmed_coords = ad[:Nmax].obs[['pxl_row_in_wsi', 'pxl_col_in_wsi']].copy()
@@ -136,45 +169,52 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=56, s=2000, sh=100, Nm
     limx = df_tiles_trimmed_coords['x'].min(), df_tiles_trimmed_coords['x'].max()
     limy = df_tiles_trimmed_coords['y'].min(), df_tiles_trimmed_coords['y'].max()
 
-    # Get grid of chunks of size SxS
+    # Get grid of chunks of size sxs
     gridx = np.append(np.arange(limx[0], limx[1], s), limx[1]+1)
     gridy = np.append(np.arange(limy[0], limy[1], s), limy[1]+1)
 
     x = []
     y = []
     p = []
-    for i in tqdm(range(len(gridx)-1)):
-        for j in range(len(gridy)-1):
-            x0, x1 = gridx[i], gridx[i+1]
-            y0, y1 = gridy[j], gridy[j+1]
-            wh = (df_tiles_trimmed_coords['x'] >= x0) &\
-                (df_tiles_trimmed_coords['x'] < x1) &\
-                (df_tiles_trimmed_coords['y'] >= y0) &\
-                (df_tiles_trimmed_coords['y'] < y1)
+    params = []
+    chunks = [(i, j) for i in range(len(gridx)-1) for j in range(len(gridy)-1)]
+    for i, j in tqdm(chunks, desc='Preparing chunks'):
+        x0, x1 = gridx[i], gridx[i+1]
+        y0, y1 = gridy[j], gridy[j+1]
+        wh = (df_tiles_trimmed_coords['x'] >= x0) &\
+            (df_tiles_trimmed_coords['x'] < x1) &\
+            (df_tiles_trimmed_coords['y'] >= y0) &\
+            (df_tiles_trimmed_coords['y'] < y1)
 
-            index_wh = df_tiles_trimmed_coords.index[wh].copy()
-            
-            wh = (df_tiles_trimmed_coords['x'] >= x0 - sh) &\
-                (df_tiles_trimmed_coords['x'] < x1 + sh) &\
-                (df_tiles_trimmed_coords['y'] >= y0 - sh) &\
-                (df_tiles_trimmed_coords['y'] < y1 + sh)
+        index_wh = df_tiles_trimmed_coords.index[wh].copy()
+        
+        wh = (df_tiles_trimmed_coords['x'] >= x0 - sh) &\
+            (df_tiles_trimmed_coords['x'] < x1 + sh) &\
+            (df_tiles_trimmed_coords['y'] >= y0 - sh) &\
+            (df_tiles_trimmed_coords['y'] < y1 + sh)
 
-            df_tiles_trimmed_wh = df_tiles_trimmed.loc[wh].copy()
-            df_tiles_trimmed_coords_wh = df_tiles_trimmed_coords.loc[wh].copy()
-            
-            for tile in index_wh:
-                tx, ty = df_tiles_trimmed_coords_wh.loc[tile, ['x', 'y']]
-                x.append(tx)
-                y.append(ty)
-            
-                localRep = getLocalRep(tx, ty, f*R*tsize,
-                                       df_tiles_trimmed_wh,
-                                       df_tiles_trimmed_coords_wh, qs)
-                p.append(clf.predict_proba(localRep[None, index])[:, 1][0])
+        df_tiles_trimmed_wh = df_tiles_trimmed.loc[wh].copy()
+        df_tiles_trimmed_coords_wh = df_tiles_trimmed_coords.loc[wh].copy()
+
+        params.append((i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, f, R, tsize, qs, index))
+
+    # Parallelize the computation to get local representation for each tile in the chunk and infer the probability
+    sT = time.time()
+    results = Parallel(n_jobs=-1, backend='loky')(delayed(runChunk)(*param) for param in params)
+    print(f"Computed chunks in: {time.time() - sT:.2f} seconds")
+
+    # Convert list of dictionaries to a single dictionary
+    results = {k: v for d in results for k, v in d.items()}
+
+    # Assemble the results from all chunks in the order
+    for i, j in chunks:
+        x.extend(results[(i, j)]['x'])
+        y.extend(results[(i, j)]['y'])
+        p.extend(results[(i, j)]['p'])
 
     return x, y, p
 
-def inferProbY(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=56, s=4000, sh=100, Nmax=10**7):
+def inferProb_DEPRECATED(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=56, s=4000, sh=100, Nmax=10**7):
 
     def getLocalRepInd(i, j, R, df_feat, df_xy, qs):
         wh = np.sqrt((df_xy['x']-i).abs().values**2 + (df_xy['y']-j).abs().values**2)<=R
@@ -265,18 +305,6 @@ def inferProbY(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=56, s=4000, sh=100, N
 
     return x, y, p
 
-# x, y, p = inferProbY(ad_w, clf_mixed_aug, qs, Nmax=5*10**5)
-# pa = np.array(p)
-# # pa[pa>0.1] = 1.
-# plt.rcParams['figure.figsize'] = (20, 15)
-# plt.scatter(x, y, c=pa, cmap='coolwarm', s=1)
-# plt.gca().set_aspect('equal')
-# plt.gca().axis('off')
-# plt.gca().invert_yaxis()
-# # plt.colorbar()
-# plt.show()
-# plt.rcParams['figure.figsize'] = (5, 5)
-
 def loadAdFromH5(spath, L=1, fname='img.data.ctranspath-1.h5ad', suffix=None):
     p = f'{spath}/image.ome.tiff'
     img = tifffile.imread(p, level=L)
@@ -296,12 +324,14 @@ def loadAdFromH5(spath, L=1, fname='img.data.ctranspath-1.h5ad', suffix=None):
     sc.pl.spatial(ad, color=None, img_key='lowres')
     return ad, img
 
-def getPatchRepresentation(ad, df_temp_img_tiles, qs):
+def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
     df = ad.to_df().loc[df_temp_img_tiles.index]
     df.index = df_temp_img_tiles['patch']
     df = df.groupby(level=0).quantile(qs).unstack()
     df = df.reorder_levels([1, 0], axis=1)
     df = df.T.sort_index().T
+    if not sample_id is None:
+        df.index = pd.MultiIndex.from_product([[sample_id], df.index], names=['sample', 'patch'])
     return df
 
 def trainAugClassifier(button_press_results, alpha=0.5):
@@ -336,13 +366,13 @@ def showProb(x, y, p, s=1, figsize=(25, 15), marker='o', colorbar=False, filter=
     pa = np.array(p)
     if not filter is None:
         pa[pa>filter] = 1.
-    plt.rcParams['figure.figsize'] = figsize
-    plt.scatter(x, y, c=pa, cmap='coolwarm', s=s, marker=marker, vmin=vmin, vmax=vmax)
-    plt.gca().set_aspect('equal')
-    plt.gca().axis('off')
-    plt.gca().invert_yaxis()
+    fig, ax = plt.subplots(figsize=figsize)
+    sco = ax.scatter(x, y, c=pa, cmap='coolwarm', s=s, marker=marker, vmin=vmin, vmax=vmax)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    ax.invert_yaxis()
     if colorbar:
-        plt.colorbar()
+        plt.colorbar(sco, ax=ax, orientation='vertical', pad=0.01, shrink=0.5)
     plt.show()
     return
 

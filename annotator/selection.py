@@ -11,7 +11,7 @@ import matplotlib.patheffects as path_effects
 import numpy as np
 import ipywidgets as widgets
 
-def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)], alpha=0.5, figsize=(7, 5), precision=2, downsample=8):
+def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)], alpha=0.5, figsize=(7, 5), precision=2, downsample=8, fontsize=16):
 
     """Run ROI selection tool for a given image.
 
@@ -54,6 +54,9 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
 
     downsample (int):
         Factor by which to downsample the image.
+
+    fontsize (int):
+        Font size of the text.
 
     Returns:
     None
@@ -172,7 +175,7 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
         ax.axis('off')
         ax.set_aspect('equal', adjustable='box')
         ax.invert_yaxis()
-        ax.set_title(sample)
+        ax.set_title(sample, fontsize=fontsize)
 
         plt.show()
 

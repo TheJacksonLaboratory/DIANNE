@@ -14,7 +14,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 import ipywidgets as widgets
 
-def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_results, clfd, plog, L=1, sh=112, minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1.):
+def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, L=1, sh=112,
+                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True):
 
     """
     Run positive, negative, or uncertain label annotation of image patches.
@@ -39,17 +40,14 @@ def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_resu
 
     Parameters
     ----------
-    df_temp_img_tiles : pd.DataFrame
-        DataFrame with image tiles.
+    patchCoordinates : pd.DataFrame
+        DataFrame with image patch coordinates.
 
     patchesCDFs : pd.DataFrame
         DataFrame with CDFs of image tiles.
 
     img : np.ndarray
         Image.
-
-    ad_obs : pd.DataFrame
-        DataFrame with annotations.
 
     button_press_results : dict
         Dictionary with annotation results.
@@ -92,7 +90,10 @@ def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_resu
 
     np.random.seed(seed)
 
-    plt.rcParams['figure.figsize'] = figsize
+    patchCoordinates = patchCoordinates.set_index('patch', append=True).droplevel('barcode', axis=0)
+    patchCoordinates = patchCoordinates.sort_index()
+    all_patches = patchCoordinates.index.unique()
+
     yes_button = widgets.Button(description='yes')
     no_button = widgets.Button(description='no')
     uncertain_button = widgets.Button(description='uncertain')
@@ -106,15 +107,22 @@ def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_resu
         nonlocal p
         nonlocal clfd
 
-        curated_positive = pd.Index([k for k in button_press_results.keys() if button_press_results[k]=='yes'])
-        curated_negative = pd.Index([k for k in button_press_results.keys() if button_press_results[k]=='no'])
-        curated_uncertain = pd.Index([k for k in button_press_results.keys() if button_press_results[k]=='uncertain'])
+        emptyIndex = pd.MultiIndex.from_tuples([((), ())])
 
-        uncurated = pd.Index(all_patches).difference(curated_positive).difference(curated_negative).difference(curated_uncertain)
-        print('Positive: ', len(curated_positive), end='\n')
-        print('Negative: ', len(curated_negative), end='\n')
-        print('Uncertain: ', len(curated_uncertain), end='\n')
-        print('Uncurated: ', len(uncurated), end='\n')
+        temp_positive = [k for k in button_press_results.keys() if button_press_results[k]=='yes']
+        curated_positive = pd.MultiIndex.from_tuples(temp_positive) if len(temp_positive)>0 else emptyIndex
+
+        temp_negative = [k for k in button_press_results.keys() if button_press_results[k]=='no']
+        curated_negative = pd.MultiIndex.from_tuples(temp_negative) if len(temp_negative)>0 else emptyIndex
+
+        temp_uncertain = [k for k in button_press_results.keys() if button_press_results[k]=='uncertain']
+        curated_uncertain = pd.MultiIndex.from_tuples(temp_uncertain) if len(temp_uncertain)>0 else emptyIndex
+
+        uncurated = all_patches.difference(curated_positive).difference(curated_negative).difference(curated_uncertain)
+        print('Positive: ', curated_positive.difference(emptyIndex).shape[0], end='\n')
+        print('Negative: ', curated_negative.difference(emptyIndex).shape[0], end='\n')
+        print('Uncertain: ', curated_uncertain.difference(emptyIndex).shape[0], end='\n')
+        print('Uncurated: ', uncurated.difference(emptyIndex).shape[0], end='\n')
 
         if (len(curated_positive)>=minN) and (len(curated_negative)>=minN):
             clf = LR(penalty='l2', C=10, class_weight='balanced', solver='liblinear', max_iter=1000)
@@ -153,7 +161,8 @@ def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_resu
 
             if np.random.rand()>=randomness:
                 print('Random patch')
-                p = np.random.choice(list(uncurated))
+                p = uncurated[np.random.choice(range(len(uncurated)))]
+                patchType = 'random'
             else:
                 # Predict all uncurated
                 y_pred = clf.predict_proba(X_test.values)[:, 1]
@@ -162,19 +171,22 @@ def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_resu
                     v = np.round(y_pred.max(), 2)
                     print(f'Suggested positive patch ({v})')
                     p = X_test.index[np.argmax(y_pred)]
+                    patchType = 'positive'
                 else:
                     # Suggest most negative for curation
                     v = np.round(y_pred.min(), 2)
                     print(f'Suggested negative patch ({v})')
                     p = X_test.index[np.argmin(y_pred)]
+                    patchType = 'negative'
         else:
             print('Random patch')
-            p = np.random.choice(list(uncurated))
+            p = uncurated[np.random.choice(range(len(uncurated)))]
+            patchType = 'random'
 
-        df_mind = ad_obs.loc[df_temp_img_tiles[df_temp_img_tiles['patch']==p].index, :]
-        vals = df_mind[['pxl_row_in_wsi', 'pxl_col_in_wsi']]
-        x1, y1 = vals.min().values
-        x2, y2 = vals.max().values
+
+        df_vals = patchCoordinates[['y', 'x']].loc[p]
+        x1, y1 = df_vals.min().values
+        x2, y2 = df_vals.max().values
         
         x1, y1 = x1-sh, y1-sh
         x2, y2 = x2+sh, y2+sh
@@ -182,12 +194,30 @@ def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_resu
         f = 4**L
         mx1, mx2 = int(x1/f), int(x2/f)
         my1, my2 = int(y1/f), int(y2/f)
+
     
-        dims = img[mx1:mx2, my1:my2].shape
-    
-        plt.imshow(img[mx1:mx2, my1:my2])
-        plt.axis('off')
-        plt.title(p)
+        fig, ax = plt.subplots(figsize=figsize)
+        img_ = imgs[p[0]][mx1:mx2, my1:my2].copy()
+        dims = img_.shape
+        if addOutline:
+            if patchType == 'positive':
+                color = np.array([0, 255, 0], dtype=np.uint8)
+            elif patchType == 'negative':
+                color = np.array([255, 0, 0], dtype=np.uint8)
+            else:
+                color = None
+
+            borderWidth = int(0.01 * min(dims[0], dims[1]))
+            
+            if not color is None:
+                img_[:borderWidth, :, :] = color
+                img_[-borderWidth:, :, :] = color
+                img_[:, :borderWidth, :] = color
+                img_[:, -borderWidth:, :] = color
+
+        ax.imshow(img_)
+        ax.axis('off')
+        ax.set_title(p)
         plt.show()
 
         return
@@ -206,7 +236,6 @@ def runAnnotation(df_temp_img_tiles, patchesCDFs, img, ad_obs, button_press_resu
                 showOne()
         return
 
-    all_patches = df_temp_img_tiles['patch'].unique()
     p = None
 
     with the_output:
