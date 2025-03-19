@@ -6,6 +6,9 @@ Date: 2025-01-01
 import pandas as pd
 import numpy as np
 
+import tifffile
+import zarr
+
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.metrics import roc_auc_score
@@ -15,7 +18,7 @@ import matplotlib.pyplot as plt
 import ipywidgets as widgets
 
 def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, L=1, sh=112,
-                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True):
+                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75]):
 
     """
     Run positive, negative, or uncertain label annotation of image patches.
@@ -23,6 +26,18 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
     The function facilitates the annotation of image patches as positive, negative, or uncertain.
     It initializes the random seed for reproducibility and sets the figure size for plots. The function 
     creates several buttons for user interaction and a widget to display the output.
+
+    User guide:
+    1. The user can click on the "positive", "negative", or "uncertain" buttons to label the displayed patch.
+        If a patch contains any amount of a target attribute, it is considered positive. If it contains none, it is negative.
+        User can click "uncertain", and the patch will be excluded from any further use.
+
+    2. The "undo" button allows the user to remove the last annotation. Successive "undo" clicks remove one more annotation each time.
+
+    3. When there is enough curated positive and negative patches (as defined by "minN"), the function stats to suggest positive and negative patches for curation.
+        If there are less positive patches than negative, the function suggests the most positive uncurated patch for curation, and vice versa.
+        If the randomness parameter is set, the function randomly selects a patch for curation if a chance is above the set randomness threshold.
+        The function evaluates the likelihood of the randomly selected patch being positive or negative based on the classifier's predictions and parameter "pcut".
 
     The nested showOne function displays an image patch and updates the classifier based on 
     user desigantion annotations. It identifies curated positive, negative, 
@@ -94,10 +109,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
     patchCoordinates = patchCoordinates.sort_index()
     all_patches = patchCoordinates.index.unique()
 
-    yes_button = widgets.Button(description='yes')
-    no_button = widgets.Button(description='no')
-    uncertain_button = widgets.Button(description='uncertain')
-    undo_button = widgets.Button(description='undo')
+    yes_button = widgets.Button(description='positive', button_style='Success')
+    no_button = widgets.Button(description='negative', button_style='Danger')
+    uncertain_button = widgets.Button(description='uncertain', button_style='Warning')
+    undo_button = widgets.Button(description='undo', button_style='')
 
     change_output_button = widgets.Button(description="Change output?")
     the_output = widgets.Output()
@@ -109,10 +124,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
 
         emptyIndex = pd.MultiIndex.from_tuples([((), ())])
 
-        temp_positive = [k for k in button_press_results.keys() if button_press_results[k]=='yes']
+        temp_positive = [k for k in button_press_results.keys() if button_press_results[k]=='positive']
         curated_positive = pd.MultiIndex.from_tuples(temp_positive) if len(temp_positive)>0 else emptyIndex
 
-        temp_negative = [k for k in button_press_results.keys() if button_press_results[k]=='no']
+        temp_negative = [k for k in button_press_results.keys() if button_press_results[k]=='negative']
         curated_negative = pd.MultiIndex.from_tuples(temp_negative) if len(temp_negative)>0 else emptyIndex
 
         temp_uncertain = [k for k in button_press_results.keys() if button_press_results[k]=='uncertain']
@@ -160,9 +175,15 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                 print('ROC AUC Train:', auroc_train)
 
             if np.random.rand()>=randomness:
-                print('Random patch')
                 p = uncurated[np.random.choice(range(len(uncurated)))]
-                patchType = 'random'
+                y_pred = clf.predict_proba(patchesCDFs.loc[[p]].values)[:, 1][0]
+                print('Suggested random patch: (%s)' % np.round(y_pred, 2))
+                if y_pred >= pcut[1]:
+                    patchType = 'positive'
+                elif y_pred <= pcut[0]:
+                    patchType = 'negative'
+                else:
+                    patchType = 'random'
             else:
                 # Predict all uncurated
                 y_pred = clf.predict_proba(X_test.values)[:, 1]
@@ -179,7 +200,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                     p = X_test.index[np.argmin(y_pred)]
                     patchType = 'negative'
         else:
-            print('Random patch')
+            print('Suggested random patch')
             p = uncurated[np.random.choice(range(len(uncurated)))]
             patchType = 'random'
 
@@ -195,17 +216,26 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
         mx1, mx2 = int(x1/f), int(x2/f)
         my1, my2 = int(y1/f), int(y2/f)
 
+        if type(imgs[p[0]]) == str:
+            # if the image is a path, connect to Zarr store, read the patch
+            with tifffile.imread(imgs[p[0]], aszarr=True) as store:
+                with zarr.open(store, mode='r') as zArray:
+                    img_ = np.moveaxis(zArray[L][:, mx1:mx2, my1:my2], 0, -1)
+        elif type(imgs[p[0]]) == np.ndarray:
+            # if the image is a numpy array, slice it
+            img_ = imgs[p[0]][mx1:mx2, my1:my2].copy()
+        else:
+            raise ValueError("Unsupported image type. Must be either a path or a numpy array.")
     
         fig, ax = plt.subplots(figsize=figsize)
-        img_ = imgs[p[0]][mx1:mx2, my1:my2].copy()
         dims = img_.shape
         if addOutline:
             if patchType == 'positive':
-                color = np.array([0, 255, 0], dtype=np.uint8)
+                color = np.array([50, 200, 50], dtype=np.uint8)
             elif patchType == 'negative':
                 color = np.array([255, 0, 0], dtype=np.uint8)
             else:
-                color = None
+                color = np.array([240, 150, 0], dtype=np.uint8)
 
             borderWidth = int(0.01 * min(dims[0], dims[1]))
             
