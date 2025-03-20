@@ -202,7 +202,7 @@ def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05, sample_id=None, ve
         print('Prepared patches:', df_temp_img_tiles['patch'].nunique())
     return df_temp_img_tiles
 
-def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7):
+def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, verbose=True):
 
     '''Infer the probability of each tile in the image using a trained classifier.
 
@@ -317,7 +317,7 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
     p = []
     params = []
     chunks = [(i, j) for i in range(len(gridx)-1) for j in range(len(gridy)-1)]
-    for i, j in tqdm(chunks, desc='Preparing chunks'):
+    for i, j in tqdm(chunks, desc='Preparing chunks', disable=not verbose):
         x0, x1 = gridx[i], gridx[i+1]
         y0, y1 = gridy[j], gridy[j+1]
         wh = (df_tiles_trimmed_coords['x'] >= x0) &\
@@ -326,7 +326,7 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
             (df_tiles_trimmed_coords['y'] < y1)
 
         index_wh = df_tiles_trimmed_coords.index[wh].copy()
-        
+
         sh = 1.25 * f*R*tsize
 
         wh = (df_tiles_trimmed_coords['x'] >= x0 - sh) &\
@@ -339,10 +339,14 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
 
         params.append((i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, index_wh, f, R, tsize, qs, index))
 
-    # Parallelize the computation to get local representation for each tile in the chunk and infer the probability
-    sT = time.time()
-    results = Parallel(n_jobs=-1, backend='loky')(delayed(runChunk)(*param) for param in params)
-    print(f"Computed chunks in: {time.time() - sT:.2f} seconds")
+    if parallel:
+        # Parallelize the computation to get local representation for each tile in the chunk and infer the probability
+        sT = time.time()
+        results = Parallel(n_jobs=-1, backend='loky')(delayed(runChunk)(*param) for param in params)
+        if verbose:
+            print(f"Computed chunks in: {time.time() - sT:.2f} seconds")
+    else:
+        results = [runChunk(*param) for param in params]
 
     # Convert list of dictionaries to a single dictionary
     results = {k: v for d in results for k, v in d.items()}
@@ -553,7 +557,7 @@ def trainClassifier(annotation_results, patchesCDFs, alpha=None, seed=None, augF
 
     return clf
 
-def showProb(x, y, p, s=1, figsize=(25, 15), marker='o', colorbar=False, filter=None, vmin=None, vmax=None, title=None, fontsize=16):
+def showProb(x, y, p, s=1, figsize=(25, 15), marker='o', colorbar=False, filter=None, vmin=None, vmax=None, title=None, fontsize=16, cmapColors=['red', 'blue']):
 
     '''Visualize the probability map as a scatter plot.
 
@@ -603,7 +607,8 @@ def showProb(x, y, p, s=1, figsize=(25, 15), marker='o', colorbar=False, filter=
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    sco = ax.scatter(x, y, c=pa, cmap='coolwarm', s=s, marker=marker, vmin=vmin, vmax=vmax)
+    cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
+    sco = ax.scatter(x, y, c=pa, cmap=cmap, s=s, marker=marker, vmin=vmin, vmax=vmax)
 
     ax.set_aspect('equal')
     ax.axis('off')

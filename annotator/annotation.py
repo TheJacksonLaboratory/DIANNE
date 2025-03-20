@@ -13,12 +13,19 @@ from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.metrics import roc_auc_score
 
+from scipy.spatial import KDTree
+
+from .stqutils import inferProb
+
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.colors import LinearSegmentedColormap
+
 import ipywidgets as widgets
 
-def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, L=1, sh=112,
-                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75]):
+def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, ads=None, qs=None, L=1, sh=112, pyramidscale=4,
+                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue']):
 
     """
     Run positive, negative, or uncertain label annotation of image patches.
@@ -73,11 +80,17 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
     plog : list
         List with patches.
 
+    ads : dictionary
+        Dictionary with with pd.DataFrame(s) of samples.
+
     L : int
         Level of the image pyramid.
 
     sh : int
         Shift.
+
+    pyramidscale : int
+        Pyramid scale.
 
     minN : int
         Minimum number of patches.
@@ -105,18 +118,36 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
 
     np.random.seed(seed)
 
+    patchCoordinatesFull = patchCoordinates.copy()
     patchCoordinates = patchCoordinates.set_index('patch', append=True).droplevel('barcode', axis=0)
     patchCoordinates = patchCoordinates.sort_index()
     all_patches = patchCoordinates.index.unique()
 
-    yes_button = widgets.Button(description='positive', button_style='Success')
+    yes_button = widgets.Button(description='positive', button_style='Info')
     no_button = widgets.Button(description='negative', button_style='Danger')
     uncertain_button = widgets.Button(description='uncertain', button_style='Warning')
     undo_button = widgets.Button(description='undo', button_style='')
 
+    checkbox = widgets.Checkbox(value=True, description='Show differential attributes')
+
+    widget_Radius = widgets.BoundedIntText(value=R, min=0, max=5, step=1, description='Radius:', disabled=False, layout=widgets.Layout(width='140px'))
+
+    hbox = widgets.HBox([checkbox, widget_Radius])
+
     change_output_button = widgets.Button(description="Change output?")
     the_output = widgets.Output()
-    clear_output_widget = widgets.VBox([yes_button, no_button, uncertain_button, undo_button, the_output])
+    clear_output_widget = widgets.VBox([yes_button, no_button, uncertain_button, undo_button, the_output, hbox])
+
+    def toggle_visibility(change):
+        widget_Radius.layout.display = 'block' if change['new'] else 'none'
+
+    checkbox.observe(toggle_visibility, names='value')
+
+    def update_Radius(change):
+        nonlocal R
+        R = change['new']
+
+    widget_Radius.observe(update_Radius, names='value')
 
     def showOne():
         nonlocal p
@@ -212,7 +243,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
         x1, y1 = x1-sh, y1-sh
         x2, y2 = x2+sh, y2+sh
     
-        f = 4**L
+        f = pyramidscale**L
         mx1, mx2 = int(x1/f), int(x2/f)
         my1, my2 = int(y1/f), int(y2/f)
 
@@ -226,28 +257,76 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             img_ = imgs[p[0]][mx1:mx2, my1:my2].copy()
         else:
             raise ValueError("Unsupported image type. Must be either a path or a numpy array.")
-    
-        fig, ax = plt.subplots(figsize=figsize)
+
         dims = img_.shape
+        imgMarked = img_.copy()
         if addOutline:
             if patchType == 'positive':
-                color = np.array([50, 200, 50], dtype=np.uint8)
+                color = np.array([50, 50, 200], dtype=np.uint8)
             elif patchType == 'negative':
                 color = np.array([255, 0, 0], dtype=np.uint8)
             else:
                 color = np.array([240, 150, 0], dtype=np.uint8)
 
-            borderWidth = int(0.01 * min(dims[0], dims[1]))
+            borderWidth = max(1, int(0.01 * min(dims[0], dims[1])))
             
             if not color is None:
-                img_[:borderWidth, :, :] = color
-                img_[-borderWidth:, :, :] = color
-                img_[:, :borderWidth, :] = color
-                img_[:, -borderWidth:, :] = color
+                imgMarked[:borderWidth, :, :] = color
+                imgMarked[-borderWidth:, :, :] = color
+                imgMarked[:, :borderWidth, :] = color
+                imgMarked[:, -borderWidth:, :] = color
+    
+        if checkbox.value and 'clf' in clfd:
+            fig = plt.figure(figsize=(figsize[0]*2, figsize[1]))
+            gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1.25])
 
-        ax.imshow(img_)
-        ax.axis('off')
-        ax.set_title(p)
+            axMain = fig.add_subplot(gs[0])
+            axDiff = fig.add_subplot(gs[1])
+        else:
+            fig, axMain = plt.subplots(figsize=figsize)
+
+        axMain.imshow(imgMarked)
+        axMain.axis('off')
+        axMain.set_title(p)
+
+        if checkbox.value and 'clf' in clfd:
+            df_temp = patchCoordinatesFull.xs(p[0], level='sample', axis=0)
+            infTiles = df_temp[df_temp['patch'] == p[1]].index.sort_values()
+
+            tree = KDTree(df_temp[['x', 'y']])
+
+            indices = tree.query_ball_point(df_temp.loc[infTiles][['x', 'y']], R * 2 * sh + 2)
+            wrkTiles = df_temp.index[np.unique(np.concatenate(indices))]
+            bndTiles = wrkTiles.difference(infTiles)
+
+            ad_sub = ads[p[0]][wrkTiles].copy()
+            x_inf, y_inf, p_inf = inferProb(ad_sub, clfd['clf'], qs, tsize=2*sh, R=R, verbose=False, parallel=False)
+
+            df_inf = pd.DataFrame({'x': x_inf, 'y': y_inf, 'p': p_inf}, index=wrkTiles).loc[infTiles]
+
+            axDiff.imshow(img_, alpha=1.)
+
+            heatmap = np.zeros((dims[0], dims[1]), dtype=np.float32) * np.nan
+            for i, t in enumerate(df_inf.index):
+                x, y = df_inf.loc[t][['x', 'y']]
+                heatmap[int((df_inf.loc[t, 'y']-x1-sh)/f):int((df_inf.loc[t, 'y']-x1+sh)/f),
+                        int((df_inf.loc[t, 'x']-y1-sh)/f):int((df_inf.loc[t, 'x']-y1+sh)/f)] = df_inf.loc[t, 'p']
+
+            cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
+            pparams = dict(cmap=cmap, alpha=0.85, vmin=0, vmax=1)
+            if True:
+                # Display as heatmap
+                imh = axDiff.imshow(heatmap, **pparams)
+            else:
+                # Display as points
+                imh = axDiff.scatter((df_inf['x']-y1)/f, (df_inf['y']-x1)/f, c=df_inf['p'],
+                                    marker='s', s=250, **pparams)
+
+            plt.colorbar(imh, ax=axDiff, shrink=0.35)
+            axDiff.axis('off')
+            axDiff.set_aspect('equal')
+            axDiff.set_title('Positive class probability')
+
         plt.show()
 
         return
