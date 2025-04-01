@@ -27,30 +27,13 @@ from joblib import Parallel, delayed
 
 import tifffile
 
+from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
+
 import matplotlib
 from matplotlib import cm
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
-
-def loadAdFromH5_DEPRECATED(spath, L=0, fname='img.data.ctranspath-1.h5ad', suffix=None):
-    p = f'{spath}/image.ome.tiff'
-    img = tifffile.imread(p, level=L)
-    img = np.moveaxis(np.moveaxis(img, 0, 1), 1, 2)
-    print(img.shape)
-    
-    # Load WSI STQ data    
-    ad = sc.read_h5ad(spath + fname)
-    if not suffix is None:
-        ad.obs.index = ad.obs.index + suffix
-    image = loadAdImage(spath)
-    ad.uns['spatial'] = image[0]
-    ad.obsm['spatial'] = pd.DataFrame(index=image[1], data=image[2]).reindex(ad.obs['original_barcode']).values
-    spot_size = ad.uns['spatial']['library_id']['scalefactors']['spot_diameter_fullres']
-    print(spot_size)
-    print(ad.shape)
-    sc.pl.spatial(ad, color=None, img_key='lowres')
-    return ad, img
 
 def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbose=False):
 
@@ -202,7 +185,7 @@ def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05, sample_id=None, ve
         print('Prepared patches:', df_temp_img_tiles['patch'].nunique())
     return df_temp_img_tiles
 
-def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, verbose=True):
+def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, verbose=True, avgNegativePatchCDF=None):
 
     '''Infer the probability of each tile in the image using a trained classifier.
 
@@ -276,10 +259,22 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
 
             return se
 
-    def runChunk(i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, index_wh, f, R, size, qs, index):
+    def runChunk(i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, index_wh, f, R, size, qs, index, avgNegativePatchCDF):
 
         tree = KDTree(df_tiles_trimmed_coords_wh[['x', 'y']].values)
-        
+
+        if not avgNegativePatchCDF is None and len(index_wh)>0:
+            tile = index_wh[0]
+            tx, ty = df_tiles_trimmed_coords_wh.loc[tile, ['x', 'y']]
+            ifull = getLocalRep(tx, ty, f*R*tsize,
+                            df_tiles_trimmed_wh,
+                            df_tiles_trimmed_coords_wh, qs, tree=tree, index=True).index
+            tempNegCDF = avgNegativePatchCDF.copy()
+            tempNegCDF.index = tempNegCDF.index.get_level_values(1).values + '_' + np.round(tempNegCDF.index.get_level_values(0), 2).astype(str).values
+            avgNegativePatchCDF = avgNegativePatchCDF.iloc[tempNegCDF.index.reindex(ifull)[1]]
+
+        alpha = 0.5
+
         x_ = []
         y_ = []
         p_ = []
@@ -290,8 +285,23 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
         
             localRep = getLocalRep(tx, ty, f*R*tsize,
                                     df_tiles_trimmed_wh,
-                                    df_tiles_trimmed_coords_wh, qs, tree=tree)
-            p_.append(clf.predict_proba(localRep[None, index])[:, 1][0])
+                                    df_tiles_trimmed_coords_wh, qs, tree=tree)[None, index]
+
+            if not avgNegativePatchCDF is None:
+                df_neg = avgNegativePatchCDF.unstack()
+                df_pos = pd.Series(index=avgNegativePatchCDF.index,data=localRep[0]).unstack()
+
+                acdf = pd.DataFrame(index=df_pos.index,
+                                    columns=df_pos.columns,
+                                    data=PCMA(df_pos.index.values, df_pos.values, 
+                                                df_neg.values, alpha=alpha, beta=1.-alpha)).fillna(0.)
+
+                se = acdf.T.sort_index().T.stack().rename(tile)
+                se.index = se.index.get_level_values(1).values + '_' + np.round(se.index.get_level_values(0), 2).astype(str).values
+
+                localRep = se.loc[clf.feat].values[None, :]
+
+            p_.append(clf.predict_proba(localRep)[:, 1][0])
 
         return {(i, j): {'x': x_, 'y': y_, 'p': p_}}
 
@@ -337,7 +347,7 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
         df_tiles_trimmed_wh = df_tiles_trimmed.loc[wh].copy()
         df_tiles_trimmed_coords_wh = df_tiles_trimmed_coords.loc[wh].copy()
 
-        params.append((i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, index_wh, f, R, tsize, qs, index))
+        params.append((i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, index_wh, f, R, tsize, qs, index, avgNegativePatchCDF))
 
     if parallel:
         # Parallelize the computation to get local representation for each tile in the chunk and infer the probability
@@ -356,97 +366,6 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
         x.extend(results[(i, j)]['x'])
         y.extend(results[(i, j)]['y'])
         p.extend(results[(i, j)]['p'])
-
-    return x, y, p
-
-def inferProb_DEPRECATED(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=56, s=4000, sh=100, Nmax=10**7):
-
-    def getLocalRepInd(i, j, R, df_feat, df_xy, qs):
-        wh = np.sqrt((df_xy['x']-i).abs().values**2 + (df_xy['y']-j).abs().values**2)<=R
-        se = df_feat[wh].quantile(qs).stack()
-        se.index = se.index.get_level_values(1).values + '_' + np.round(se.index.get_level_values(0), 2).astype(str).values
-        return se
-
-    def getLocalRep(i, j, R, df_feat, df_xy, qs):
-        wh = np.sqrt((df_xy['x']-i).abs().values**2 + (df_xy['y']-j).abs().values**2)<=R
-        return df_feat[wh].quantile(qs).stack().values
-
-    @njit(parallel=True)
-    def getLocalRepNum(i, j, R, ar, x, y, qs):
-        wh = np.sqrt(np.abs(x-i)**2 + np.abs(y-j)**2)<=R
-        m, n = ar.shape[1], len(qs)
-        res = np.zeros((m*n,), dtype=np.float64)
-        for i in prange(m):
-            res[i*n: i*n+n] = np.quantile(ar[wh, i], qs)
-        return res.reshape(m, n).T.flatten()
-
-    df_tiles_trimmed = ad[:Nmax].to_df()
-    df_tiles_trimmed_coords = ad[:Nmax].obs[['pxl_row_in_wsi', 'pxl_col_in_wsi']].copy()
-    df_tiles_trimmed_coords.columns = ['y', 'x']
-    N = df_tiles_trimmed.shape[0]
-    
-    tile = df_tiles_trimmed.index[0]
-    i, j = df_tiles_trimmed_coords.loc[tile, ['x', 'y']]
-    index = getLocalRepInd(i, j, f*R*tsize, df_tiles_trimmed, df_tiles_trimmed_coords, qs).index.reindex(clf.feat)[1]
-
-    # Coordinates are in xenium physical space.
-    limx = df_tiles_trimmed_coords['x'].min(), df_tiles_trimmed_coords['x'].max()
-    limy = df_tiles_trimmed_coords['y'].min(), df_tiles_trimmed_coords['y'].max()
-
-    # Get grid of chunks of size SxS
-    gridx = np.append(np.arange(limx[0], limx[1], s), limx[1]+1)
-    gridy = np.append(np.arange(limy[0], limy[1], s), limy[1]+1)
-
-    indices = []
-    for i in range(len(gridx)-1):
-        for j in range(len(gridy)-1):
-            indices.append((i, j))
-            
-    x = []
-    y = []
-    p = []
-    for ichunk in tqdm(range(len(indices))):
-        i, j = indices[ichunk]
-        x0, x1 = gridx[i], gridx[i+1]
-        y0, y1 = gridy[j], gridy[j+1]
-        wh = (df_tiles_trimmed_coords['x'] >= x0) &\
-            (df_tiles_trimmed_coords['x'] < x1) &\
-            (df_tiles_trimmed_coords['y'] >= y0) &\
-            (df_tiles_trimmed_coords['y'] < y1)
-
-        index_wh = df_tiles_trimmed_coords.index[wh].copy()
-        
-        wh = (df_tiles_trimmed_coords['x'] >= x0 - sh) &\
-            (df_tiles_trimmed_coords['x'] < x1 + sh) &\
-            (df_tiles_trimmed_coords['y'] >= y0 - sh) &\
-            (df_tiles_trimmed_coords['y'] < y1 + sh)
-
-        df_tiles_trimmed_wh = df_tiles_trimmed.loc[wh].copy()
-        df_tiles_trimmed_coords_wh = df_tiles_trimmed_coords.loc[wh].copy()
-
-        reps = []
-        Nt = index_wh.shape[0]
-        for itile in prange(Nt):
-            tile = index_wh[itile]
-            tx, ty = df_tiles_trimmed_coords_wh.loc[tile, ['x', 'y']]
-            x.append(tx)
-            y.append(ty)
-
-            if True:
-                localRep = getLocalRep(tx, ty, f*R*tsize,
-                                       df_tiles_trimmed_wh,
-                                       df_tiles_trimmed_coords_wh,
-                                       qs)
-            else:
-                localRep = getLocalRepNum(tx, ty, f*R*tsize,
-                                       df_tiles_trimmed_wh.values,
-                                       df_tiles_trimmed_coords_wh['x'].values,
-                                       df_tiles_trimmed_coords_wh['y'].values,
-                                       qs)
-            reps.append(localRep)
-        if len(reps)>0:
-            reps = np.vstack(reps)[:, index]
-            p.extend(clf.predict_proba(reps)[:, 1].tolist())
 
     return x, y, p
 
@@ -540,9 +459,6 @@ def trainClassifier(annotation_results, patchesCDFs, alpha=None, seed=None, augF
                                 columns=df_pos.columns,
                                 data=acdf)
 
-            # print(patchesCDFs.loc[s_pos].rename(s_pos))
-            # print(acdf.T.sort_index().T.stack().rename(s_pos))
-
             dpos[s_pos] = acdf.T.sort_index().T.stack().rename(s_pos)
         X_train = pd.concat([pd.DataFrame(dpos).T, patchesCDFs.loc[curated_negative]])
         y_train = pd.concat([pd.Series(index=curated_positive, data=1),
@@ -624,6 +540,103 @@ def showProb(x, y, p, s=1, figsize=(25, 15), marker='o', colorbar=False, filter=
 
     return
 
+def showProbImg(x, y, p, f=1, ts=56, mpp=0.25, figsize=(3, 3), colorbar=True, filter=None, vmin=0, vmax=1,
+                title=None, fontsize=16, cmapColors=['lightcoral', 'gold', 'blue'],
+                ticks=[0, 0.5, 1], shrink=0.35, invert=True, saveName=None):
+
+    '''Show the probability map as an image
+
+    Parameters
+    ----------
+    x : list
+        The x coordinates of the tiles
+
+    y : list
+        The y coordinates of the tiles
+
+    p : list
+        The probability of the tiles
+
+    f : int
+        The factor to scale the image
+
+    ts : int
+        The size of the tiles
+
+    mpp : float
+        The microns per pixel resolution
+
+    figsize : tuple
+        The size of the figure
+
+    colorbar : bool
+        Whether to show the colorbar
+
+    filter : float
+        The filter value
+
+    vmin : float
+        The minimum value of the colorbar
+
+    vmax : float
+        The maximum value of the colorbar
+
+    title : str
+        The title of the plot
+
+    fontsize : int
+        The fontsize of the title
+
+    cmapColors : list
+        The colors of the colormap
+
+    ticks : list
+        The ticks of the colorbar
+
+    shrink : float
+        The shrink of the colorbar
+    '''
+
+    def funcScale(x, f):
+        xa = (np.array(x) / (ts/mpp))
+        xa -= np.min(xa)
+        return xa.astype(int) * f
+
+    xa = funcScale(x, f)
+    ya = funcScale(y, f)
+
+    pa = np.array(p)
+    if not filter is None:
+        pa[pa>filter] = 1.
+
+    img = np.zeros(((max(ya)+1), (max(xa)+1)), dtype=np.float32) * np.nan
+    for i in range(len(pa)):
+        img[ya[i]:ya[i]+f, xa[i]:xa[i]+f] = pa[i]
+
+    fig, ax = plt.subplots(1, 1, figsize=(figsize[0]*f, figsize[1]*f))
+
+    cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
+    imh = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+
+    ax.axis('off')
+
+    if colorbar:
+        plt.colorbar(imh, ticks=ticks, shrink=shrink)
+
+    if not title is None:
+        ax.set_title(title, fontsize=fontsize)
+
+    if invert:
+        ax.invert_yaxis()
+
+    if not saveName is None:
+        plt.savefig(saveName, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
+
+    return
+
 def showMolecularData(sample, df_coordinates, se_color, figsize=(6, 6), cmap='coolwarm', vmin=0, vmax=15, shrink=0.5):
     
     """Show the molecular data for islets in a scatter plot.
@@ -670,4 +683,27 @@ def showMolecularData(sample, df_coordinates, se_color, figsize=(6, 6), cmap='co
     plt.show()
 
     return
-    
+
+def getGroupNegativeCDF(annotation_results, patchesCDFs, alpha=0.9, seed=None, augFunc=None):
+
+    if seed is not None:
+        np.random.seed(seed)
+
+    getValue = lambda x: pd.MultiIndex.from_tuples([k for k in annotation_results.keys() if annotation_results[k]==x]).sort_values()
+
+    curated_negative = getValue('negative')
+
+    sequence = np.random.choice(curated_negative, len(curated_negative), replace=False)
+
+    df_neg_out = patchesCDFs.loc[sequence[0]].unstack()
+    for s_neg in sequence[1:]:
+        df_neg = patchesCDFs.loc[s_neg].unstack()
+        df_neg_out = pd.DataFrame(index=df_neg_out.index,
+                                columns=df_neg_out.columns,
+                                data=augFunc(df_neg_out.index.values, df_neg_out.values, 
+                                            df_neg.values, alpha=alpha, beta=1.-alpha)).T.sort_index().T
+
+    avgNegativePatchCDF = df_neg_out.stack()
+    # avgNegativePatchCDF.index = avgNegativePatchCDF.index.get_level_values(1).values + '_' + np.round(avgNegativePatchCDF.index.get_level_values(0), 2).astype(str).values
+
+    return avgNegativePatchCDF

@@ -6,14 +6,19 @@ Date: 2025-01-01
 import pandas as pd
 import numpy as np
 
+from tqdm import tqdm
+
 import tifffile
 import zarr
 
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.metrics import roc_auc_score
+from scipy.spatial.distance import pdist, squareform
 
 from scipy.spatial import KDTree
+
+from sklearn.cluster import KMeans
 
 from .stqutils import inferProb
 
@@ -123,10 +128,14 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
     patchCoordinates = patchCoordinates.sort_index()
     all_patches = patchCoordinates.index.unique()
 
-    yes_button = widgets.Button(description='positive', button_style='Info')
+    yes_button = widgets.Button(description='positive', button_style='success', style={'button_color': '#0D52BD'})
     no_button = widgets.Button(description='negative', button_style='Danger')
+
     uncertain_button = widgets.Button(description='uncertain', button_style='Warning')
     undo_button = widgets.Button(description='undo', button_style='')
+
+    h_1 = widgets.HBox([yes_button, uncertain_button], layout=widgets.Layout(justify_content='flex-start'))
+    h_2 = widgets.HBox([no_button, undo_button], layout=widgets.Layout(justify_content='flex-start'))
 
     checkbox = widgets.Checkbox(value=True, description='Show differential attributes')
 
@@ -136,7 +145,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
 
     change_output_button = widgets.Button(description="Change output?")
     the_output = widgets.Output()
-    clear_output_widget = widgets.VBox([yes_button, no_button, uncertain_button, undo_button, the_output, hbox])
+    clear_output_widget = widgets.VBox([h_1, h_2, the_output, hbox])
 
     def toggle_visibility(change):
         widget_Radius.layout.display = 'block' if change['new'] else 'none'
@@ -170,7 +179,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
         print('Uncertain: ', curated_uncertain.difference(emptyIndex).shape[0], end='\n')
         print('Uncurated: ', uncurated.difference(emptyIndex).shape[0], end='\n')
 
-        if (len(curated_positive)>=minN) and (len(curated_negative)>=minN):
+        if (curated_positive.difference(emptyIndex).shape[0]>=minN) and (curated_negative.difference(emptyIndex).shape[0]>=minN):
             clf = LR(penalty='l2', C=10, class_weight='balanced', solver='liblinear', max_iter=1000)
 
             if not alpha is None:
@@ -235,28 +244,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             p = uncurated[np.random.choice(range(len(uncurated)))]
             patchType = 'random'
 
-
-        df_vals = patchCoordinates[['y', 'x']].loc[p]
-        x1, y1 = df_vals.min().values
-        x2, y2 = df_vals.max().values
-        
-        x1, y1 = x1-sh, y1-sh
-        x2, y2 = x2+sh, y2+sh
-    
-        f = pyramidscale**L
-        mx1, mx2 = int(x1/f), int(x2/f)
-        my1, my2 = int(y1/f), int(y2/f)
-
-        if type(imgs[p[0]]) == str:
-            # if the image is a path, connect to Zarr store, read the patch
-            with tifffile.imread(imgs[p[0]], aszarr=True) as store:
-                with zarr.open(store, mode='r') as zArray:
-                    img_ = np.moveaxis(zArray[L][:, mx1:mx2, my1:my2], 0, -1)
-        elif type(imgs[p[0]]) == np.ndarray:
-            # if the image is a numpy array, slice it
-            img_ = imgs[p[0]][mx1:mx2, my1:my2].copy()
-        else:
-            raise ValueError("Unsupported image type. Must be either a path or a numpy array.")
+        img_, x1, x2, y1, y2 = loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs)
 
         dims = img_.shape
         imgMarked = img_.copy()
@@ -309,6 +297,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             heatmap = np.zeros((dims[0], dims[1]), dtype=np.float32) * np.nan
             for i, t in enumerate(df_inf.index):
                 x, y = df_inf.loc[t][['x', 'y']]
+                f = pyramidscale**L
                 heatmap[int((df_inf.loc[t, 'y']-x1-sh)/f):int((df_inf.loc[t, 'y']-x1+sh)/f),
                         int((df_inf.loc[t, 'x']-y1-sh)/f):int((df_inf.loc[t, 'x']-y1+sh)/f)] = df_inf.loc[t, 'p']
 
@@ -356,3 +345,132 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
     undo_button.on_click(button_clicked)
 
     return clear_output_widget
+
+def loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs):
+
+    df_vals = patchCoordinates[['y', 'x']].loc[p]
+    x1, y1 = df_vals.min().values
+    x2, y2 = df_vals.max().values
+    
+    x1, y1 = x1-sh, y1-sh
+    x2, y2 = x2+sh, y2+sh
+
+    f = pyramidscale**L
+    mx1, mx2 = int(x1/f), int(x2/f)
+    my1, my2 = int(y1/f), int(y2/f)
+
+    if type(imgs[p[0]]) == str:
+        # if the image is a path, connect to Zarr store, read the patch
+        with tifffile.imread(imgs[p[0]], aszarr=True) as store:
+            with zarr.open(store, mode='r') as zArray:
+                img_ = np.moveaxis(zArray[L][:, mx1:mx2, my1:my2], 0, -1)
+    elif type(imgs[p[0]]) == np.ndarray:
+        # if the image is a numpy array, slice it
+        img_ = imgs[p[0]][mx1:mx2, my1:my2].copy()
+    else:
+        raise ValueError("Unsupported image type. Must be either a path or a numpy array.")
+
+    return img_, x1, x2, y1, y2
+
+def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, sh=112, pyramidscale=4, figsize=(3, 3), seed=None, nrows=3, ncols=4, metric='correlation'):
+
+    np.random.seed(seed)
+
+    patchCoordinatesFull = patchCoordinates.copy()
+    patchCoordinates = patchCoordinates.set_index('patch', append=True).droplevel('barcode', axis=0)
+    patchCoordinates = patchCoordinates.sort_index()
+    all_patches = patchCoordinates.index.unique()
+
+    progress_bar = widgets.IntProgress(value=0, min=0, max=nrows*ncols, description='Loading:',
+                                       bar_style='info', orientation='horizontal')
+
+    # Display the progress bar
+    display(progress_bar)
+
+    done_button = widgets.Button(description='done', button_style='success', style={'button_color': '#0D52BD'})
+    choose_widget = widgets.BoundedIntText(value=0, min=0, max=nrows*ncols-1, step=1, description='Selected:', disabled=False)
+
+    h_box = widgets.HBox([choose_widget, done_button], layout=widgets.Layout(justify_content='flex-start'))
+
+    the_output = widgets.Output()
+    the_widget = widgets.VBox([h_box, the_output])
+
+    def showAll():
+
+        nonlocal ps
+
+        N = ncols*nrows
+
+        kmeans = KMeans(n_clusters=N)
+        distance = squareform(pdist(patchesCDFs.values, metric=metric))
+        kmeans.fit(distance)
+        clusters = kmeans.labels_
+
+        sel_patches = patchesCDFs.index[[np.random.choice(np.where(clusters == i)[0]) for i in range(N)]]
+
+        ps = sel_patches
+
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(figsize[0]*ncols, figsize[1]*nrows))
+       
+        for i in range(nrows):
+            for j in range(ncols):
+                ind = i*ncols+j
+                p_ = sel_patches[ind]
+                imgp = loadPatch(p_, patchCoordinates, L, sh, pyramidscale, imgs)[0]
+                axs[i, j].imshow(imgp)
+
+                txt = axs[i, j].text(20, 20, f'({ind}) {p_[0]}-{p_[1]}', horizontalalignment='left', 
+                                    verticalalignment='center', fontsize=10, color='k', fontweight='bold')
+                txt.set_path_effects([matplotlib.patheffects.withStroke(linewidth=1, foreground='w')])
+                axs[i, j].axis('off')
+
+                progress_bar.value += 1
+
+        progress_bar.layout.display = 'none'
+        plt.show()
+    
+        return
+
+    def showSelectedOne():
+
+        nonlocal ps
+
+        ind = choose_widget.value
+        p_ = ps[ind]
+
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+       
+        imgp = loadPatch(p_, patchCoordinates, L, sh, pyramidscale, imgs)[0]
+        ax.imshow(imgp)
+        txt = ax.text(20, 20, f'({ind}) {p_[0]}-{p_[1]}', horizontalalignment='left', 
+                    verticalalignment='center', fontsize=10, color='k', fontweight='bold')
+        txt.set_path_effects([matplotlib.patheffects.withStroke(linewidth=1, foreground='w')])
+        ax.axis('off')
+
+        plt.show()
+    
+        return
+
+    def button_clicked(_button):
+        if not 'selected_patch' in startParams.keys():
+            the_output.clear_output()
+            startParams.update({'selected_id': choose_widget.value})
+            startParams.update({'selected_patch': ps[choose_widget.value]})
+            startParams.update({'considered_patches': ps})
+
+            # Hide the button and the selection widget
+            done_button.layout.display = 'none'
+            choose_widget.layout.display = 'none'
+
+            with the_output:
+                showSelectedOne()
+        return
+
+    ps = None
+
+    with the_output:
+        showAll()
+    
+    done_button.on_click(button_clicked)
+
+    return the_widget
