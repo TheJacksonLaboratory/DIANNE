@@ -542,7 +542,7 @@ def showProb(x, y, p, s=1, figsize=(25, 15), marker='o', colorbar=False, filter=
 
 def showProbImg(x, y, p, f=1, ts=56, mpp=0.25, figsize=(3, 3), colorbar=True, filter=None, vmin=0, vmax=1,
                 title=None, fontsize=16, cmapColors=['lightcoral', 'gold', 'blue'],
-                ticks=[0, 0.5, 1], shrink=0.35, invert=True, saveName=None):
+                ticks=[0, 0.5, 1], shrink=0.35, invert=True, saveName=None, dpi=100):
 
     '''Show the probability map as an image
 
@@ -630,7 +630,7 @@ def showProbImg(x, y, p, f=1, ts=56, mpp=0.25, figsize=(3, 3), colorbar=True, fi
         ax.invert_yaxis()
 
     if not saveName is None:
-        plt.savefig(saveName, bbox_inches='tight')
+        plt.savefig(saveName, bbox_inches='tight', dpi=dpi)
         plt.close(fig)
     else:
         plt.show()
