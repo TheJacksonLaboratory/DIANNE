@@ -372,7 +372,7 @@ def loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs):
 
     return img_, x1, x2, y1, y2
 
-def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, sh=112, pyramidscale=4, figsize=(3, 3), seed=None, nrows=3, ncols=4, metric='correlation'):
+def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, sh=112, pyramidscale=4, figsize=(3, 3), seed=None, nrows=3, ncols=4, metric='correlation', maxN=10**3):
 
     np.random.seed(seed)
 
@@ -402,11 +402,16 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
         N = ncols*nrows
 
         kmeans = KMeans(n_clusters=N)
-        distance = squareform(pdist(patchesCDFs.values, metric=metric))
+        if not maxN is None:
+            subsetCDFs = patchesCDFs.sample(n=min(maxN, patchesCDFs.shape[0]))
+        else:
+            subsetCDFs = patchesCDFs
+        
+        distance = squareform(pdist(subsetCDFs.values, metric=metric))
         kmeans.fit(distance)
         clusters = kmeans.labels_
 
-        sel_patches = patchesCDFs.index[[np.random.choice(np.where(clusters == i)[0]) for i in range(N)]]
+        sel_patches = subsetCDFs.index[[np.random.choice(np.where(clusters == i)[0]) for i in range(N)]]
 
         ps = sel_patches
 
