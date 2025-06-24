@@ -621,6 +621,8 @@ def showProbImg(x, y, p, f=1, ts=56, mpp=0.25, figsize=(3, 3), colorbar=True, fi
     ax.axis('off')
 
     if colorbar:
+        if ticks is None:
+            ticks = np.linspace(vmin, vmax, 3)
         plt.colorbar(imh, ticks=ticks, shrink=shrink)
 
     if not title is None:

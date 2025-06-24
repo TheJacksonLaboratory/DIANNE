@@ -141,18 +141,38 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
         v_slider.value = y
         v_slider.observe(slider_moved, names='value')
 
+        input_text_savename.value = ''
+
         the_output.clear_output()
 
         with the_output:
             showOne()
         return
 
+    def save_button_clicked(_button):
+        nonlocal currentSample, x, y, write, img, sample, N
+        nonlocal showOutOfSamplesMessage
+        nonlocal h_slider, v_slider
+
+        suffix = input_text_savename.value
+        suffixp = '-0' if suffix == '' else f'-{suffix}'
+
+        a = np.round(x[0], precision), np.round(y[0], precision)
+        b = np.round(x[1] - x[0], precision), np.round(y[1] - y[0], precision)
+        roi = {str(k): {"location": a[k], "size": b[k]} for k in range(2)}
+        with open(f'{thumbsPath}/{sample}{suffixp}.json', 'w') as outfile:
+            outfile.write(json.dumps(roi))
+
+        input_text_savename.value = ''
+
+        return
 
 
-    change_output_button = widgets.Button(description="Change output?")
+    input_text_savename = widgets.Text(description='', placeholder='ROI suffix, e.g., 0', layout=widgets.Layout(width='150px'))
+    save_button = widgets.Button(description="Save ROI")
     the_output = widgets.Output()
 
-    right_box = widgets.VBox([the_output, h_slider, next_button])
+    right_box = widgets.VBox([the_output, h_slider, input_text_savename, save_button, next_button])
     clear_output_widget = widgets.HBox([v_slider, right_box])
 
     def showOne(v=''):
@@ -179,14 +199,6 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
 
         plt.show()
 
-        a = np.round(x[0], precision), np.round(y[0], precision)
-        b = np.round(x[1] - x[0], precision), np.round(y[1] - y[0], precision)
-
-        if write:
-            roi = {str(k): {"location": a[k], "size": b[k]} for k in range(2)}
-            with open(f'{thumbsPath}/{sample}.json', 'w') as outfile:
-                outfile.write(json.dumps(roi))
-
         return
 
     def slider_moved(_slider):
@@ -210,6 +222,7 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
     h_slider.observe(slider_moved, names='value')
     v_slider.observe(slider_moved, names='value')
     next_button.on_click(next_button_clicked)
+    save_button.on_click(save_button_clicked)
  
     with the_output:
         showOne()
@@ -243,7 +256,7 @@ def viewSelection(thumbsPath, sample, downsample=8, c='crimson', ext='tiff', fon
     Returns:
     None
     """
-    
+
     if not os.path.isfile(thumbsPath + f'/{sample}.json'):
         print(f'No annotation found for {sample}.')
         return
@@ -284,6 +297,85 @@ def viewSelection(thumbsPath, sample, downsample=8, c='crimson', ext='tiff', fon
     tx.set_path_effects([path_effects.Stroke(linewidth=2., foreground='k'), path_effects.Normal()])
     
     plt.tight_layout()
+    plt.show()
+    
+    return
+
+def viewSelectionMultipleTissues(thumbsPath, sample, tissue, downsample=8, c='crimson', ext='tiff', puttext=True, fontsize=12, vmin=None, vmax=None, savename=None, dpi=150):
+
+    """
+    Load JSON annotation and display a selected region of an image.
+
+    Parameters:
+    thumbsPath (str):
+        Path to the directory containing the thumbnails.
+
+    sample (str):
+        Name of the sample file.
+
+    downsample (int):
+        Factor by which to downsample the image.
+
+    c (str):
+        Color of the bounding box.
+
+    ext (str):
+        File extension of the image file.
+
+    fontsize (int):
+        Font size of the text.
+
+    Returns:
+    None
+    """
+
+    if not os.path.isfile(thumbsPath + f'/{tissue}.json'):
+        print(f'No annotation found for {tissue}.')
+        return
+
+    with open(thumbsPath + f'/{tissue}.json', 'r') as tempfile:
+        infodata = json.loads(tempfile.read())
+    
+    if not os.path.isfile(thumbsPath + f'/{sample}.{ext}'):
+        print(f'No image found for {sample}.')
+        return
+
+    img = plt.imread(thumbsPath + f'/{sample}.{ext}')
+    
+    if not downsample is None:
+        img  = img[::downsample, ::downsample, ...]
+    
+    fx = img.shape[1]/300
+    fy = img.shape[0]/300
+
+    fig, ax = plt.subplots(1, 1, figsize=(fx*4, fy*4))
+
+    if len(img.shape)==2:
+        ax.imshow(img[:, :], origin='lower', vmin=vmin, vmax=vmax)
+    else:
+        ax.imshow(img[:, :, :3], origin='lower', vmin=vmin, vmax=vmax)
+    ax.set_xticks([])
+    ax.set_xticklabels([])
+    ax.set_yticks([])
+    ax.set_yticklabels([])
+    ax.invert_yaxis()
+    ax.set_aspect('equal')
+    ax.invert_yaxis()
+    ax.axis('off')
+
+    x1 = infodata['0']['location']*img.shape[1]
+    x2 = x1 + infodata['0']['size']*img.shape[1]
+    y1 = infodata['1']['location']*img.shape[0]
+    y2 = y1 + infodata['1']['size']*img.shape[0]
+    ax.plot([x1, x1, x2, x2, x1], [y1, y2, y2, y1, y1], linewidth=1.0, c=c)
+    
+    if puttext:
+        tx = ax.text((x1+x2)/2, (y1+y2)/2, tissue.split('.')[0], fontsize=8 * fontsize / downsample, ha='center', va='center', fontweight='bold', c='w')
+        tx.set_path_effects([path_effects.Stroke(linewidth=2., foreground='k'), path_effects.Normal()])
+    
+    if savename is not None:
+        plt.savefig(savename, dpi=dpi, bbox_inches='tight', pad_inches=0.1)
+
     plt.show()
     
     return
