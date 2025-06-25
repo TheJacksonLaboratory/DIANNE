@@ -111,7 +111,10 @@ def fetch_xenium_zarr_cell_coords(bundle_path: str, query_point: tuple, half_sid
     idx, coords = square_query(all_coords, query_point, half_side=half_side)
 
     if return_boundaries:
-        boundaries = root['polygon_vertices'][:, idx, :][boundary_id]
+        try:
+            boundaries = root['polygon_vertices'][:, idx, :][boundary_id]
+        except:
+            boundaries = root['polygon_sets']['0']['vertices'][idx, :]
         boundaries = boundaries.reshape(boundaries.shape[0], int(boundaries.shape[1]/2), 2)
         return idx, coords, boundaries
     

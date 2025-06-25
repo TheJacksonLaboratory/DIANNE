@@ -29,13 +29,15 @@ import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Polygon
 from matplotlib.collections import PatchCollection
+from matplotlib.lines import Line2D
+from matplotlib.colors import ListedColormap
 
 import ipywidgets as widgets
 
 def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, ads=None, qs=None, L=1, sh=112, pyramidscale=4,
                 minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue'],
                 xeniumBundlePaths=None, xeniumMatrixPaths=None, selectedGenes=None, minCount=1, cmapGenes='viridis',
-                loadCells=False, loadCellBoundaries=False, loadTranscripts=False):
+                loadCells=False, loadCellBoundaries=False, loadTranscripts=False, showAnnotations=False, annotations=None, annotationsPalette='tab20'):
 
     """
     Run positive, negative, or uncertain label annotation of image patches.
@@ -284,6 +286,11 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
         axMain.axis('off')
         axMain.set_title(p)
 
+        def calculate_legend_columns(num_items, max_height, item_height):
+            max_items_per_column = max_height // item_height
+            num_columns = (num_items + max_items_per_column - 1) // max_items_per_column
+            return num_columns
+
         if (not loadCells is None) or (loadTranscripts is not None):
             # print('Loading Xenium data...')
             if not xeniumBundlePaths is None:
@@ -309,20 +316,51 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                         
                         # Convert Xenium um to HE pixel coordinates
                         coords_he = np.dot((coords / mppxe) - Tr, Mi.T)
+                        coords_he[..., 0] = (coords_he[..., 0] - y1) / Ps
+                        coords_he[..., 1] = (coords_he[..., 1] - x1) / Ps
                         
-                        # Extract cells by gene matrix from Xenium Zarr store
-                        csrmat = fetch_cell_by_gene_matrix(bundle_path, sel_genes=selectedGenes, cell_idx=cell_idx)
-                        sum_per_cell = csrmat.sum(axis=0).A1
-                        vqmax = np.quantile(sum_per_cell, 0.99)
+                        if showAnnotations and not annotations is None:
+                            this_annotations = annotations[p[0]].iloc[cell_idx]
+                            unique_annotations = this_annotations.unique()
 
-                        wh = sum_per_cell >= minCount
-                        sca = axMain.scatter((coords_he[:, 0][wh] - y1) / Ps,
-                                            (coords_he[:, 1][wh] - x1) / Ps,
-                                            s=10, c=sum_per_cell[wh], alpha=1.,
-                                            cmap=cmapGenes, edgecolors='none',
-                                            vmin=0, vmax=vqmax)
-                        
-                        plt.colorbar(sca, ax=axMain, shrink=0.35)
+                            if type(annotationsPalette) is str:
+                                temp_palette = plt.get_cmap(annotationsPalette)
+                                ucolors = {a: temp_palette(i)[:3] for i, a in enumerate(unique_annotations)}
+                            elif type(annotationsPalette) is dict:
+                                ucolors = {a: annotationsPalette[a] if a in annotationsPalette else 'gray' for a in unique_annotations}
+                            else:
+                                raise ValueError("Annotations palette should be a colormap name, e.g., 'tab20', or a dictionary mapping annotations to colors.")
+
+                            colors = [ucolors[a] for a in this_annotations.values]
+
+                            sca = axMain.scatter(coords_he[:, 0], coords_he[:, 1],
+                                                s=10, c=colors, alpha=1.,
+                                                edgecolors='none')
+
+                            max_height = fig.get_figheight() * fig.dpi
+                            item_height = 50
+                            num_columns = calculate_legend_columns(len(unique_annotations), max_height, item_height)
+                            cic_handles = []
+                            mkeys = sorted(list(ucolors.keys()), key=str.lower)
+                            for annotation in mkeys:
+                                color = ucolors[annotation]
+                                cic_handles.append(Line2D([0], [0], marker='o', color='w', label=annotation, markerfacecolor=color, markersize=12))
+                            axMain.legend(handles=cic_handles, bbox_to_anchor=(1, 0.5), loc='center left', ncol=num_columns, fancybox=False,
+                                    frameon=False, fontsize=12, title='', title_fontsize=16)
+
+                        else:
+                            # Extract cells by gene matrix from Xenium Zarr store
+                            csrmat = fetch_cell_by_gene_matrix(bundle_path, sel_genes=selectedGenes, cell_idx=cell_idx)
+                            sum_per_cell = csrmat.sum(axis=0).A1
+                            vqmax = np.quantile(sum_per_cell, 0.99)
+
+                            wh = sum_per_cell >= minCount
+                            sca = axMain.scatter(coords_he[:, 0], coords_he[:, 1],
+                                                s=10, c=sum_per_cell[wh], alpha=1.,
+                                                cmap=cmapGenes, edgecolors='none',
+                                                vmin=0, vmax=vqmax)
+                            
+                            plt.colorbar(sca, ax=axMain, shrink=0.35)
                     
                     else:
                         # Find cells in the patch
@@ -331,39 +369,75 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                                                                                     return_boundaries=True, 
                                                                                     boundary_id=1)
 
-                        # Extract cells by gene matrix from Xenium Zarr store
-                        csrmat = fetch_cell_by_gene_matrix(bundle_path, sel_genes=selectedGenes, cell_idx=cell_idx)
-                        sum_per_cell = csrmat.sum(axis=0).A1
-                        vqmax = np.quantile(sum_per_cell, 0.99)      
-                                                                      
                         # Convert Xenium um to HE pixel coordinates
                         coords_he = np.dot((coords / mppxe) - Tr, Mi.T)
                         boundaries = np.dot((boundaries / mppxe) - Tr, Mi.T)
                         boundaries[..., 0] = (boundaries[..., 0] - y1) / Ps
                         boundaries[..., 1] = (boundaries[..., 1] - x1) / Ps
 
-                        cmap = plt.get_cmap(cmapGenes, 256)
-                        vc = sum_per_cell
-                        vmin, vmax = 0, vqmax
-                        if vmax==vmin:
-                            vmax = vmin + 1
-                        print('vmin, vmax:', vmin, vmax)
-                        if vmin is not None and vmax is not None:
-                            vc = (vc - vmin) / (vmax - vmin)
-                            vc = np.clip(vc, 0, 1)
+                        if showAnnotations and not annotations is None:
+                            this_annotations = annotations[p[0]].iloc[cell_idx]
+                            unique_annotations = this_annotations.unique()
 
-                        whid = np.where(sum_per_cell >= minCount)[0]
-                        patchcolor = cmap(vc)
-                        patches = []
-                        for i in whid:
-                            patches.append(Polygon(boundaries[i], closed=True, fill=True, edgecolor='k',
-                                                    linewidth=0.5, facecolor=patchcolor[i], label=None, alpha=0.65))
-                        pc = PatchCollection(patches, match_original=True)
+                            if type(annotationsPalette) is str:
+                                temp_palette = plt.get_cmap(annotationsPalette)
+                                ucolors = {a: temp_palette(i) for i, a in enumerate(unique_annotations)}
+                            elif type(annotationsPalette) is ListedColormap:
+                                ucolors = {a: annotationsPalette(i) for i, a in enumerate(unique_annotations)}
+                            elif type(annotationsPalette) in [dict]:
+                                ucolors = {a: annotationsPalette[a] if a in annotationsPalette else 'gray' for a in unique_annotations}
+                            else:
+                                raise ValueError("Annotations palette should be a colormap name, e.g., 'tab20', or a dictionary mapping annotations to colors.")
 
-                        axMain.add_collection(pc)
-                        pc.set_clim(vmin=vmin, vmax=vmax)
-                        cbar = plt.colorbar(pc, ax=axMain, label='Counts', orientation='vertical', fraction=0.03, pad=0.04, shrink=0.35)
-                        cbar.ax.tick_params(labelsize=12)
+                            colors = [ucolors[a] for a in this_annotations.values]
+
+                            patches = []
+                            for i in range(len(boundaries)):
+                                patches.append(Polygon(boundaries[i], closed=True, fill=True, edgecolor='k',
+                                                        linewidth=0.5, facecolor=colors[i], label=None, alpha=0.65))
+                            pc = PatchCollection(patches, match_original=True)
+                            axMain.add_collection(pc)
+
+                            max_height = fig.get_figheight() * fig.dpi
+                            item_height = 25
+                            num_columns = calculate_legend_columns(len(unique_annotations), max_height, item_height)
+                            cic_handles = []
+                            mkeys = sorted(list(ucolors.keys()), key=str.lower)
+                            for annotation in mkeys:
+                                color = ucolors[annotation]
+                                cic_handles.append(Line2D([0], [0], marker='o', color='w', label=annotation, markerfacecolor=color, markersize=10))
+                            leg = axMain.legend(handles=cic_handles, bbox_to_anchor=(1, 0.5), loc='center left', ncol=num_columns, fancybox=False,
+                                    frameon=False, fontsize=10, title='', title_fontsize=16)
+                            leg.set_zorder(10**8)
+
+                        else:
+                            # Extract cells by gene matrix from Xenium Zarr store
+                            csrmat = fetch_cell_by_gene_matrix(bundle_path, sel_genes=selectedGenes, cell_idx=cell_idx)
+                            sum_per_cell = csrmat.sum(axis=0).A1
+                            vqmax = np.quantile(sum_per_cell, 0.99)      
+                                                                        
+                            cmap = plt.get_cmap(cmapGenes, 256)
+                            vc = sum_per_cell
+                            vmin, vmax = 0, vqmax
+                            if vmax==vmin:
+                                vmax = vmin + 1
+                            # print('vmin, vmax:', vmin, vmax)
+                            if vmin is not None and vmax is not None:
+                                vc = (vc - vmin) / (vmax - vmin)
+                                vc = np.clip(vc, 0, 1)
+
+                            whid = np.where(sum_per_cell >= minCount)[0]
+                            patchcolor = cmap(vc)
+                            patches = []
+                            for i in whid:
+                                patches.append(Polygon(boundaries[i], closed=True, fill=True, edgecolor='k',
+                                                        linewidth=0.5, facecolor=patchcolor[i], label=None, alpha=0.65))
+                            pc = PatchCollection(patches, match_original=True)
+
+                            axMain.add_collection(pc)
+                            pc.set_clim(vmin=vmin, vmax=vmax)
+                            cbar = plt.colorbar(pc, ax=axMain, label='Counts', orientation='vertical', fraction=0.03, pad=0.04, shrink=0.35)
+                            cbar.ax.tick_params(labelsize=12)
 
 
                     
@@ -420,6 +494,8 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             axDiff.set_aspect('equal')
             axDiff.set_title('Positive class probability')
 
+
+        plt.tight_layout()
         plt.show()
 
         return
