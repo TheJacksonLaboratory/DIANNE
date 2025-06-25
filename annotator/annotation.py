@@ -21,16 +21,21 @@ from scipy.spatial import KDTree
 from sklearn.cluster import KMeans
 
 from .stqutils import inferProb
+from .transcriptomics import fetch_xenium_zarr_cell_coords, fetch_cell_by_gene_matrix, extract_transcripts_from_grid_locs
 
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.patches import Polygon
+from matplotlib.collections import PatchCollection
 
 import ipywidgets as widgets
 
 def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, ads=None, qs=None, L=1, sh=112, pyramidscale=4,
-                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue']):
+                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue'],
+                xeniumBundlePaths=None, xeniumMatrixPaths=None, selectedGenes=None, minCount=1, cmapGenes='viridis',
+                loadCells=False, loadCellBoundaries=False, loadTranscripts=False):
 
     """
     Run positive, negative, or uncertain label annotation of image patches.
@@ -274,8 +279,107 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             fig, axMain = plt.subplots(figsize=figsize)
 
         axMain.imshow(imgMarked)
+        axMain.set_xlim([0, imgMarked.shape[1]])
+        axMain.set_ylim([imgMarked.shape[0], 0])
         axMain.axis('off')
         axMain.set_title(p)
+
+        if (not loadCells is None) or (loadTranscripts is not None):
+            # print('Loading Xenium data...')
+            if not xeniumBundlePaths is None:
+                bundle_path = xeniumBundlePaths[p[0]]
+                matrix_path = xeniumMatrixPaths[p[0]]
+
+                mppxe = 0.2125
+                patch_size = 8.*56.
+                Ps = pyramidscale**L
+
+                mat = pd.read_csv(matrix_path, index_col=None, header=None).values
+                M, Tr = mat[:2, :2], mat[:2, -1]
+                Mi = np.linalg.inv(M)
+
+                tempv = patchCoordinatesFull.xs(p[0], level='sample').set_index('patch', append=True).xs(p[1], level='patch')[['x', 'y']].values
+                tempv_xe = (np.dot(tempv, M.T) + Tr) * mppxe
+                query_point = (tempv_xe.min(axis=0) + tempv_xe.max(axis=0)) / 2.
+
+                if loadCells:
+                    if not loadCellBoundaries:
+                        # Find cells in the patch
+                        cell_idx, coords = fetch_xenium_zarr_cell_coords(bundle_path, query_point, half_side=patch_size / 2.)
+                        
+                        # Convert Xenium um to HE pixel coordinates
+                        coords_he = np.dot((coords / mppxe) - Tr, Mi.T)
+                        
+                        # Extract cells by gene matrix from Xenium Zarr store
+                        csrmat = fetch_cell_by_gene_matrix(bundle_path, sel_genes=selectedGenes, cell_idx=cell_idx)
+                        sum_per_cell = csrmat.sum(axis=0).A1
+                        vqmax = np.quantile(sum_per_cell, 0.99)
+
+                        wh = sum_per_cell >= minCount
+                        sca = axMain.scatter((coords_he[:, 0][wh] - y1) / Ps,
+                                            (coords_he[:, 1][wh] - x1) / Ps,
+                                            s=10, c=sum_per_cell[wh], alpha=1.,
+                                            cmap=cmapGenes, edgecolors='none',
+                                            vmin=0, vmax=vqmax)
+                        
+                        plt.colorbar(sca, ax=axMain, shrink=0.35)
+                    
+                    else:
+                        # Find cells in the patch
+                        cell_idx, coords, boundaries = fetch_xenium_zarr_cell_coords(bundle_path, query_point, 
+                                                                                    half_side=patch_size / 2., 
+                                                                                    return_boundaries=True, 
+                                                                                    boundary_id=1)
+
+                        # Extract cells by gene matrix from Xenium Zarr store
+                        csrmat = fetch_cell_by_gene_matrix(bundle_path, sel_genes=selectedGenes, cell_idx=cell_idx)
+                        sum_per_cell = csrmat.sum(axis=0).A1
+                        vqmax = np.quantile(sum_per_cell, 0.99)      
+                                                                      
+                        # Convert Xenium um to HE pixel coordinates
+                        coords_he = np.dot((coords / mppxe) - Tr, Mi.T)
+                        boundaries = np.dot((boundaries / mppxe) - Tr, Mi.T)
+                        boundaries[..., 0] = (boundaries[..., 0] - y1) / Ps
+                        boundaries[..., 1] = (boundaries[..., 1] - x1) / Ps
+
+                        cmap = plt.get_cmap(cmapGenes, 256)
+                        vc = sum_per_cell
+                        vmin, vmax = 0, vqmax
+                        if vmax==vmin:
+                            vmax = vmin + 1
+                        print('vmin, vmax:', vmin, vmax)
+                        if vmin is not None and vmax is not None:
+                            vc = (vc - vmin) / (vmax - vmin)
+                            vc = np.clip(vc, 0, 1)
+
+                        whid = np.where(sum_per_cell >= minCount)[0]
+                        patchcolor = cmap(vc)
+                        patches = []
+                        for i in whid:
+                            patches.append(Polygon(boundaries[i], closed=True, fill=True, edgecolor='k',
+                                                    linewidth=0.5, facecolor=patchcolor[i], label=None, alpha=0.65))
+                        pc = PatchCollection(patches, match_original=True)
+
+                        axMain.add_collection(pc)
+                        pc.set_clim(vmin=vmin, vmax=vmax)
+                        cbar = plt.colorbar(pc, ax=axMain, label='Counts', orientation='vertical', fraction=0.03, pad=0.04, shrink=0.35)
+                        cbar.ax.tick_params(labelsize=12)
+
+
+                    
+
+                if loadTranscripts:
+                    # Extract transcripts from the Xenium Zarr store
+                    coords, gene_names = extract_transcripts_from_grid_locs(bundle_path, query_point, patch_size, selectedGenes)
+
+                    coords_he = np.dot((coords / mppxe) - Tr, Mi.T)
+                    axMain.scatter((coords_he[:, 0] - y1) / Ps,
+                                    (coords_he[:, 1] - x1) / Ps,
+                                    s=2., c='lime', alpha=0.85, edgecolors='none')         
+            # print('Done')
+
+
+
 
         if checkbox.value and 'clf' in clfd:
             df_temp = patchCoordinatesFull.xs(p[0], level='sample', axis=0)

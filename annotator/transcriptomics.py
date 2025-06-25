@@ -10,6 +10,8 @@ import pandas as pd
 from scipy.spatial import KDTree
 from scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
+from matplotlib.collections import PatchCollection
 
 def plotXeniumTranscriptGrid(bundle_path: str, grid_key: str = '3', lw: float = 2.,
                             alpha: float = 0.5, fontsize: int = 6, figsize: tuple = (4, 4)):
@@ -81,7 +83,8 @@ def square_query(coords, center, half_side):
 
     return found_idx, found_coords
     
-def fetch_xenium_zarr_cell_coords(bundle_path: str, query_point: tuple, half_side: float=100.0):
+def fetch_xenium_zarr_cell_coords(bundle_path: str, query_point: tuple, half_side: float=100.0,
+                                return_boundaries: bool = False, boundary_id: int = 1) -> tuple:
 
     """
     Fetch cell coordinates from a Xenium Zarr store within a square region.
@@ -90,10 +93,13 @@ def fetch_xenium_zarr_cell_coords(bundle_path: str, query_point: tuple, half_sid
     - bundle_path: str, path to Xenium bundle containing the Zarr files
     - query_point: tuple (x, y) representing the center of the square
     - half_side: float, half the length of the square's side
+    - return_boundaries: bool, whether to return cell boundaries (default is False)
+    - boundary_id: int, 0-nucleus or 1-cell (default is 1 for cell boundaries)
 
     Returns:
     - idx: indices of cells within the square region
     - coords: coordinates of cells within the square region
+    - boundaries: np.ndarray, boundaries of the cells (if return_boundaries is True)
     """
     
     zip_fs = fsspec.filesystem('zip', fo=bundle_path + '/cells.zarr.zip')
@@ -103,6 +109,11 @@ def fetch_xenium_zarr_cell_coords(bundle_path: str, query_point: tuple, half_sid
     all_coords = root['cell_summary'][:, :2]
 
     idx, coords = square_query(all_coords, query_point, half_side=half_side)
+
+    if return_boundaries:
+        boundaries = root['polygon_vertices'][:, idx, :][boundary_id]
+        boundaries = boundaries.reshape(boundaries.shape[0], int(boundaries.shape[1]/2), 2)
+        return idx, coords, boundaries
     
     return idx, coords
 
@@ -129,7 +140,7 @@ def fetch_cell_by_gene_matrix(bundle_path: str, sel_genes: np.ndarray, cell_idx:
 
     sel_gene_idx = np.where(np.isin(cf.attrs['feature_keys'], sel_genes))[0]
     
-    gene_by_cell = csr_matrix((cf["data"], cf["indices"], cf["indptr"]))[sel_gene_idx, :][:, cell_idx]
+    gene_by_cell = csr_matrix((cf["data"], cf["indices"], cf["indptr"]))[:, cell_idx][sel_gene_idx, :]
 
     if verbose:
         print("Shape of gene by cell matrix:", gene_by_cell.shape)
