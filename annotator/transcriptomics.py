@@ -118,7 +118,7 @@ def fetch_xenium_zarr_cell_coords(bundle_path: str, query_point: tuple, half_sid
         try:
             boundaries = root['polygon_vertices'][:, idx, :][boundary_id]
         except:
-            boundaries = root['polygon_sets']['0']['vertices'][idx, :]
+            boundaries = root['polygon_sets'][boundary_id]['vertices'][idx, :]
         boundaries = boundaries.reshape(boundaries.shape[0], int(boundaries.shape[1]/2), 2)
         return idx, coords, boundaries
     
@@ -145,9 +145,11 @@ def fetch_cell_by_gene_matrix(bundle_path: str, sel_genes: np.ndarray, cell_idx:
     
     cf = root["cell_features"]
 
-    sel_gene_idx = np.where(np.isin(cf.attrs['feature_keys'], sel_genes))[0]
-    
-    gene_by_cell = csr_matrix((cf["data"], cf["indices"], cf["indptr"]))[:, cell_idx][sel_gene_idx, :]
+    if sel_genes is None:
+        gene_by_cell = csr_matrix((cf["data"], cf["indices"], cf["indptr"]))[:, cell_idx]
+    else:
+        sel_gene_idx = np.where(np.isin(cf.attrs['feature_keys'], sel_genes))[0]
+        gene_by_cell = csr_matrix((cf["data"], cf["indices"], cf["indptr"]))[:, cell_idx][sel_gene_idx, :]
 
     if verbose:
         print("Shape of gene by cell matrix:", gene_by_cell.shape)

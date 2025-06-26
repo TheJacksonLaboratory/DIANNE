@@ -36,7 +36,8 @@ import ipywidgets as widgets
 
 def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, ads=None, qs=None, L=1, sh=112, pyramidscale=4,
                 minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue'],
-                xeniumBundlePaths=None, xeniumMatrixPaths=None, selectedGenes=None, minCount=1, cmapGenes='viridis',
+                xeniumBundlePaths=None, xeniumMatrixPaths=None, selectedGenes=None, minCount=1, cmapGenes='viridis', numColumns='auto',
+                transcriptsAlpha=0.85, transcriptsColor='lime', transcriptsSize=2.,
                 loadCells=False, loadCellBoundaries=False, loadTranscripts=False, showAnnotations=False, annotations=None, annotationsPalette='tab20'):
 
     """
@@ -341,7 +342,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
 
                             max_height = fig.get_figheight() * fig.dpi
                             item_height = 25
-                            num_columns = calculate_legend_columns(len(unique_annotations), max_height, item_height)
+                            if numColumns == 'auto':
+                                num_columns = calculate_legend_columns(len(unique_annotations), max_height, item_height)
+                            else:
+                                num_columns = numColumns
                             cic_handles = []
                             mkeys = sorted(list(ucolors.keys()), key=str.lower)
                             for annotation in mkeys:
@@ -403,7 +407,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
 
                             max_height = fig.get_figheight() * fig.dpi
                             item_height = 25
-                            num_columns = calculate_legend_columns(len(unique_annotations), max_height, item_height)
+                            if numColumns == 'auto':
+                                num_columns = calculate_legend_columns(len(unique_annotations), max_height, item_height)
+                            else:
+                                num_columns = numColumns
                             cic_handles = []
                             mkeys = sorted(list(ucolors.keys()), key=str.lower)
                             for annotation in mkeys:
@@ -452,7 +459,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                     coords_he = np.dot((coords / mppxe) - Tr, Mi.T)
                     axMain.scatter((coords_he[:, 0] - y1) / Ps,
                                     (coords_he[:, 1] - x1) / Ps,
-                                    s=2., c='lime', alpha=0.85, edgecolors='none')         
+                                    s=transcriptsSize, c=transcriptsColor, alpha=transcriptsAlpha, edgecolors='none')         
             # print('Done')
 
 
