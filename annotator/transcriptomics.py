@@ -71,6 +71,10 @@ def square_query(coords, center, half_side):
     # Compute radius for ball query (half-diagonal of square)
     radius = half_side * np.sqrt(2)
     candidate_indices = np.array(tree.query_ball_point(center, r=radius))
+
+    if len(candidate_indices) == 0:
+        return np.array([]), np.array([])
+
     candidates = coords[candidate_indices]
 
     # Filter candidates to retain only those within the square
