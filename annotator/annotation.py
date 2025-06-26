@@ -325,8 +325,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
 
                             if type(annotationsPalette) is str:
                                 temp_palette = plt.get_cmap(annotationsPalette)
-                                ucolors = {a: temp_palette(i)[:3] for i, a in enumerate(unique_annotations)}
-                            elif type(annotationsPalette) is dict:
+                                ucolors = {a: temp_palette(i) for i, a in enumerate(unique_annotations)}
+                            elif type(annotationsPalette) is ListedColormap:
+                                ucolors = {a: annotationsPalette(i) for i, a in enumerate(unique_annotations)}
+                            elif type(annotationsPalette) in [dict]:
                                 ucolors = {a: annotationsPalette[a] if a in annotationsPalette else 'gray' for a in unique_annotations}
                             else:
                                 raise ValueError("Annotations palette should be a colormap name, e.g., 'tab20', or a dictionary mapping annotations to colors.")
@@ -338,15 +340,16 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                                                 edgecolors='none')
 
                             max_height = fig.get_figheight() * fig.dpi
-                            item_height = 50
+                            item_height = 25
                             num_columns = calculate_legend_columns(len(unique_annotations), max_height, item_height)
                             cic_handles = []
                             mkeys = sorted(list(ucolors.keys()), key=str.lower)
                             for annotation in mkeys:
                                 color = ucolors[annotation]
-                                cic_handles.append(Line2D([0], [0], marker='o', color='w', label=annotation, markerfacecolor=color, markersize=12))
-                            axMain.legend(handles=cic_handles, bbox_to_anchor=(1, 0.5), loc='center left', ncol=num_columns, fancybox=False,
-                                    frameon=False, fontsize=12, title='', title_fontsize=16)
+                                cic_handles.append(Line2D([0], [0], marker='o', color='w', label=annotation, markerfacecolor=color, markersize=10))
+                            leg = axMain.legend(handles=cic_handles, bbox_to_anchor=(1, 0.5), loc='center left', ncol=num_columns, fancybox=False,
+                                    frameon=False, fontsize=10, title='', title_fontsize=16)
+                            leg.set_zorder(10**8)
 
                         else:
                             # Extract cells by gene matrix from Xenium Zarr store
@@ -355,7 +358,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                             vqmax = np.quantile(sum_per_cell, 0.99)
 
                             wh = sum_per_cell >= minCount
-                            sca = axMain.scatter(coords_he[:, 0], coords_he[:, 1],
+                            sca = axMain.scatter(coords_he[:, 0][wh], coords_he[:, 1][wh],
                                                 s=10, c=sum_per_cell[wh], alpha=1.,
                                                 cmap=cmapGenes, edgecolors='none',
                                                 vmin=0, vmax=vqmax)
