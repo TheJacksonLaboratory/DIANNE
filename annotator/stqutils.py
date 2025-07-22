@@ -35,7 +35,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 
-def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbose=False):
+def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbose=False, useInputImagePath=False):
 
     '''Load or pepare AnnData object and image from the specified path.
 
@@ -67,7 +67,12 @@ def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbo
         The loaded image as a NumPy array (if L is specified), or the path to the image file (if L is None).
     '''
 
-    imagePath = os.path.join(spath, 'image.ome.tiff')
+    if useInputImagePath:
+        infoPath = imagePath = os.path.join(spath, 'info.json')
+        with open(infoPath, 'r') as f:
+            imagePath = json.load(f)['image']
+    else:
+        imagePath = os.path.join(spath, 'image.ome.tiff')
     if not L is None:
         img = tifffile.imread(imagePath, level=L)
         img = np.moveaxis(np.moveaxis(img, 0, 1), 1, 2)
@@ -88,7 +93,12 @@ def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbo
 
     image = loadAdImage(spath, verbose=verbose)
     ad.uns['spatial'] = image[0]
-    ad.obsm['spatial'] = pd.DataFrame(index=image[1], data=image[2]).reindex(ad.obs['original_barcode']).values
+    df_temp = pd.DataFrame(index=image[1], data=image[2])
+    if 'original_barcode' in ad.obs.columns:
+        df_temp = df_temp.reindex(ad.obs['original_barcode'])
+    else:
+        df_temp = df_temp.reindex(ad.obs.index)
+    ad.obsm['spatial'] = df_temp.values
     spot_size = ad.uns['spatial']['library_id']['scalefactors']['spot_diameter_fullres']
 
     if verbose:
@@ -105,7 +115,12 @@ def loadImFeatures(dpath):
     return ad
 
 def loadAdImage(spath, verbose=False):
-    thumbnail = plt.imread(f'{spath}/thumbnail.tiff')
+    if os.path.isfile(f'{spath}/thumbnail.tiff'):
+        thumbnail = plt.imread(f'{spath}/thumbnail.tiff')
+    elif os.path.isfile(f'{spath}/thumbnail.jpeg'):
+        thumbnail = plt.imread(f'{spath}/thumbnail.jpeg')
+    else:
+        raise FileNotFoundError(f"Thumbnail image not found in {spath}. Please check the path.")
     if verbose:
         print(thumbnail.shape)
     with open(f'{spath}/grid/grid.json', 'r') as f:        
@@ -149,7 +164,10 @@ def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05, sample_id=None, ve
     '''
 
     if (not 'x' in ad_obs.columns) | (not 'y' in ad_obs.columns):
-        df_temp_img_tiles = ad_obs[['pxl_col_in_wsi', 'pxl_row_in_wsi']].copy().rename({'pxl_col_in_wsi': 'x', 'pxl_row_in_wsi': 'y'}, axis=1)
+        try:
+            df_temp_img_tiles = ad_obs[['pxl_col_in_wsi', 'pxl_row_in_wsi']].copy().rename({'pxl_col_in_wsi': 'x', 'pxl_row_in_wsi': 'y'}, axis=1)
+        except:
+            df_temp_img_tiles = ad_obs[['pxl_col_in_fullres', 'pxl_row_in_fullres']].copy().rename({'pxl_col_in_fullres': 'x', 'pxl_row_in_fullres': 'y'}, axis=1)
     else:
         df_temp_img_tiles = ad_obs[['x', 'y']].copy()
 
@@ -306,7 +324,10 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
         return {(i, j): {'x': x_, 'y': y_, 'p': p_}}
 
     df_tiles_trimmed = ad[:Nmax].to_df()
-    df_tiles_trimmed_coords = ad[:Nmax].obs[['pxl_row_in_wsi', 'pxl_col_in_wsi']].copy()
+    try:
+        df_tiles_trimmed_coords = ad[:Nmax].obs[['pxl_row_in_wsi', 'pxl_col_in_wsi']].copy()
+    except:
+        df_tiles_trimmed_coords = ad[:Nmax].obs[['pxl_row_in_fullres', 'pxl_col_in_fullres']].copy()
     df_tiles_trimmed_coords.columns = ['y', 'x']
     N = df_tiles_trimmed.shape[0]
     

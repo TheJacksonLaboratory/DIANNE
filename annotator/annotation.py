@@ -13,6 +13,7 @@ import zarr
 
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression as LR
+from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
 from scipy.spatial.distance import pdist, squareform
 
@@ -34,10 +35,18 @@ from matplotlib.colors import ListedColormap
 
 import ipywidgets as widgets
 
+def normalize_pseudo_channels(image, bounds):
+    clipped_image = np.empty_like(image)
+    for i in range(3):
+        lower, upper = bounds[i]
+        clipped_image[..., i] = np.clip(image[..., i], lower, upper)
+        clipped_image[..., i] = ((clipped_image[..., i] - lower) / (upper - lower) * 255.)
+    return clipped_image.astype(np.uint8)
+
 def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, ads=None, qs=None, L=1, sh=112, pyramidscale=4,
                 minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue'],
                 xeniumBundlePaths=None, xeniumMatrixPaths=None, selectedGenes=None, minCount=1, cmapGenes='viridis', numColumns='auto',
-                transcriptsAlpha=0.85, transcriptsColor='lime', transcriptsSize=2.,
+                transcriptsAlpha=0.85, transcriptsColor='lime', transcriptsSize=2., startParams=None,
                 loadCells=False, loadCellBoundaries=False, loadTranscripts=False, showAnnotations=False, annotations=None, annotationsPalette='tab20'):
 
     """
@@ -254,6 +263,12 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
 
         img_, x1, x2, y1, y2 = loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs)
 
+        if not startParams is None and 'mif_pca' in startParams.keys() and 'mif_bounds' in startParams.keys():
+            temp_imgp = startParams['mif_pca'].transform(img_.reshape(-1, img_.shape[-1]))
+            temp_imgp = temp_imgp.reshape(img_.shape[0], img_.shape[1], 3 * startParams['mif_nrep_pca'])
+            temp_imgp = np.dstack([temp_imgp[..., i::3].sum(axis=-1)[..., None] for i in range(3)])
+            img_ = normalize_pseudo_channels(temp_imgp, startParams['mif_bounds'])
+
         dims = img_.shape
         imgMarked = img_.copy()
         if addOutline:
@@ -450,8 +465,6 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                             cbar.ax.tick_params(labelsize=12)
 
 
-                    
-
                 if loadTranscripts:
                     # Extract transcripts from the Xenium Zarr store
                     coords, gene_names = extract_transcripts_from_grid_locs(bundle_path, query_point, patch_size, selectedGenes)
@@ -553,6 +566,11 @@ def loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs):
         # if the image is a path, connect to Zarr store, read the patch
         with tifffile.imread(imgs[p[0]], aszarr=True) as store:
             with zarr.open(store, mode='r') as zArray:
+                pyramidscale_zarr = int(round(zArray[0].shape[1] / zArray[L].shape[1]))
+                # TODO: Use pyramidscale input parameter only for ndarrays, not for zarr
+                # For Zarr, pyramidscale is determined automatically from the zarr store
+                # This is necessary to allow simultaneous use of Zarr images with different pyramid scales
+                assert pyramidscale_zarr == pyramidscale, "Mismatch in pyramid scale between image and input parameter."
                 img_ = np.moveaxis(zArray[L][:, mx1:mx2, my1:my2], 0, -1)
     elif type(imgs[p[0]]) == np.ndarray:
         # if the image is a numpy array, slice it
@@ -562,7 +580,66 @@ def loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs):
 
     return img_, x1, x2, y1, y2
 
-def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, sh=112, pyramidscale=4, figsize=(3, 3), seed=None, nrows=3, ncols=4, metric='correlation', maxN=10**3):
+def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, sh=112, pyramidscale=4, figsize=(3, 3),
+            seed=None, nrows=3, ncols=4, metric='correlation', maxN=10**3, equal_pca=False):
+
+    """ Jump start the annotation process by displaying a grid of image patches.
+    This function initializes the annotation process by displaying a grid of image patches.
+    For mIF images, it prepares PCA on the patches to normalize the pseudo-channels. The PCA is 
+    used in the subsequent annotation process to ensure that the patches are displayed in a consistent manner.
+
+    Instructions:
+    1. Enter the index of the patch you want to start with in the "Selected" widget.
+    2. Click on the "done" button to choose the starting positive patch in the annotation process.
+
+    Parameters
+    ----------
+    patchCoordinates : pd.DataFrame
+        DataFrame with image patch coordinates.
+
+    patchesCDFs : pd.DataFrame
+        DataFrame with CDFs of image tiles.
+
+    imgs : dict
+        Dictionary with images, where keys are sample names and values are either paths to Zarr stores or numpy arrays. 
+
+    startParams : dict
+        Dictionary with parameters for the annotation process, including PCA and bounds for mIF images.
+
+    ads : dict, optional
+        Dictionary with ads DataFrames for samples. Default is None.
+
+    L : int, optional
+        Level of the image pyramid. Default is 1.
+
+    sh : int, optional
+        Shift for the image patches. Default is 112.
+
+    pyramidscale : int, optional
+        Scale factor for the image pyramid. Default is 4.
+
+    figsize : tuple, optional   
+        Size of the figure for displaying patches. Default is (3, 3).
+
+    seed : int, optional
+        Seed for random number generation. Default is None.
+
+    nrows : int, optional
+        Number of rows in the grid of patches. Default is 3.
+
+    ncols : int, optional
+        Number of columns in the grid of patches. Default is 4.
+
+    metric : str, optional
+        Metric for clustering the patches. Default is 'correlation'.
+
+    maxN : int, optional
+        Maximum number of patches to use for clustering. Default is 1000.
+
+    equal_pca : bool, optional
+        Whether to apply equal PCA normalization for mIF images. Default is False.
+        If False, PCs with larger variance will have stronger visual impact.
+    """
 
     np.random.seed(seed)
 
@@ -589,7 +666,7 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
 
         nonlocal ps
 
-        N = ncols*nrows
+        N = min(ncols*nrows, patchesCDFs.shape[0])
 
         kmeans = KMeans(n_clusters=N)
         if not maxN is None:
@@ -602,24 +679,85 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
         clusters = kmeans.labels_
 
         sel_patches = subsetCDFs.index[[np.random.choice(np.where(clusters == i)[0]) for i in range(N)]]
-
         ps = sel_patches
 
         fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(figsize[0]*ncols, figsize[1]*nrows))
-       
+
+        imgps = []
         for i in range(nrows):
             for j in range(ncols):
                 ind = i*ncols+j
-                p_ = sel_patches[ind]
-                imgp = loadPatch(p_, patchCoordinates, L, sh, pyramidscale, imgs)[0]
-                axs[i, j].imshow(imgp)
-
-                txt = axs[i, j].text(20, 20, f'({ind}) {p_[0]}-{p_[1]}', horizontalalignment='left', 
-                                    verticalalignment='center', fontsize=10, color='k', fontweight='bold')
-                txt.set_path_effects([matplotlib.patheffects.withStroke(linewidth=1, foreground='w')])
-                axs[i, j].axis('off')
-
+                if ind < N:
+                    p_ = sel_patches[ind]
+                    imgps.append(loadPatch(p_, patchCoordinates, L, sh, pyramidscale, imgs)[0])
                 progress_bar.value += 1
+
+        is_mif = False
+        if imgps[0].shape[-1] > 3:
+            progress_bar.description = 'Normalizing:'
+            progress_bar.bar_style = 'success'
+            progress_bar.max = 3
+            progress_bar.value = 0
+
+            is_mif = True
+
+            Nrep = imgps[0].shape[-1] // 3
+            pca = PCA(n_components=3 * Nrep, random_state=seed, whiten=equal_pca)
+            fdata = np.vstack([imgp.reshape(-1, imgp.shape[-1]) for imgp in imgps])
+            if fdata.shape[0] > 3*10**6:
+                fdata = fdata[np.random.choice(fdata.shape[0], size=10**6, replace=False), :]
+            pca.fit(fdata)
+
+            progress_bar.value += 1
+
+            startParams.update({'mif_pca': pca, 'mif_nrep_pca': Nrep})
+
+            for i in range(nrows):
+                for j in range(ncols):
+                    ind = i*ncols+j
+                    if ind < N:
+                        temp_imgp = startParams['mif_pca'].transform(imgps[ind].reshape(-1, imgps[ind].shape[-1]))
+                        temp_imgp = temp_imgp.reshape(imgps[ind].shape[0], imgps[ind].shape[1], 3 * startParams['mif_nrep_pca'])
+                        temp_imgp = np.dstack([temp_imgp[..., i::3].sum(axis=-1)[..., None] for i in range(3)])
+                        imgps[ind] = temp_imgp
+
+            progress_bar.value += 1
+
+            bounds = []
+            for i in range(3):
+                temp = np.vstack([np.quantile(imgp[..., i].flatten(), [0.025, 0.975]) for imgp in imgps])
+                bounds.append(np.median(temp, axis=0))
+            bounds = np.array(bounds)
+
+            startParams.update({'mif_bounds': bounds})
+
+            progress_bar.value += 1
+
+            imgps = [normalize_pseudo_channels(imgp, startParams['mif_bounds']) for imgp in imgps]
+
+        if nrows==1 and ncols==1:
+            axs = np.array([axs])
+ 
+        axs = axs.flatten()
+        for i in range(nrows):
+            for j in range(ncols):
+                ind = i*ncols+j
+                if ind < N:
+                    p_ = sel_patches[ind]
+                    imgp = imgps[ind]
+                    axs[ind].imshow(imgp)
+
+                    if is_mif:
+                        text_color = 'w'
+                        outline_color = 'k'
+                    else:
+                        text_color = 'k'
+                        outline_color = 'w'
+
+                    txt = axs[ind].text(30, 30, f'({ind}) {p_[0]}-{p_[1]}', horizontalalignment='left', 
+                                        verticalalignment='center', fontsize=10, color=text_color, fontweight='bold')
+                    txt.set_path_effects([matplotlib.patheffects.withStroke(linewidth=1, foreground=outline_color)])
+                axs[ind].axis('off')
 
         progress_bar.layout.display = 'none'
         plt.show()
@@ -636,6 +774,13 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
         fig, ax = plt.subplots(1, 1, figsize=figsize)
        
         imgp = loadPatch(p_, patchCoordinates, L, sh, pyramidscale, imgs)[0]
+
+        if not startParams is None and 'mif_pca' in startParams.keys() and 'mif_bounds' in startParams.keys():
+            temp_imgp = startParams['mif_pca'].transform(imgp.reshape(-1, imgp.shape[-1]))
+            temp_imgp = temp_imgp.reshape(imgp.shape[0], imgp.shape[1], 3 * startParams['mif_nrep_pca'])
+            temp_imgp = np.dstack([temp_imgp[..., i::3].sum(axis=-1)[..., None] for i in range(3)])
+            imgp = normalize_pseudo_channels(temp_imgp, startParams['mif_bounds'])
+
         ax.imshow(imgp)
         txt = ax.text(20, 20, f'({ind}) {p_[0]}-{p_[1]}', horizontalalignment='left', 
                     verticalalignment='center', fontsize=10, color='k', fontweight='bold')
