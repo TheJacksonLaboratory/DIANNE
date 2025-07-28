@@ -23,3 +23,25 @@ if above the set randomness threshold. The function displays the suggested patch
 ## Spatial SAMPLER inference
 
 Use PCMA-trained classifier to run spatial inference of the learnt differential attributes.
+
+
+## How to run the annotator
+
+Clone this repository:
+
+    workdir="/path/to/workdir/"
+    cd $workdir
+
+    git clone https://github.com/TheJacksonLaboratory/DIANNE.git
+
+Get a copy of the container, ~2GB, and launch Jupyter server:
+> Internally at JAX one can use this copy of the container: `/projects/chuang-lab/USERS/domans/containers/annotator_v1.0.0.sif`
+
+    module load singularity
+    singularity pull oras://quay.io/jaxcompsci/annotator:v1.0.0
+
+    singularity exec annotator_v1.0.0.sif jupyter notebook --no-browser --port=$(shuf -i10000-11999 -n1) --ip=$(hostname -i) --notebook-dir "$workdir"
+
+Copy the server URL and paste into a browser (e.g., Google Chrome, preferred)
+
+Open a demo notebook at `./notebooks`
