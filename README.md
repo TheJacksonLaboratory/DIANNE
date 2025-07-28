@@ -34,14 +34,24 @@ Clone this repository:
 
     git clone https://github.com/TheJacksonLaboratory/DIANNE.git
 
-Get a copy of the container, ~2GB, and launch Jupyter server:
-> Internally at JAX one can use this copy of the container: `/projects/chuang-lab/USERS/domans/containers/annotator_v1.0.0.sif`
 
+Allocate an HPC node and load singularity:
+
+    sinteractive -y -m 64G
     module load singularity
-    singularity pull oras://quay.io/jaxcompsci/annotator:v1.0.0
 
-    singularity exec annotator_v1.0.0.sif jupyter notebook --no-browser --port=$(shuf -i10000-11999 -n1) --ip=$(hostname -i) --notebook-dir "$workdir"
+Use an existing copy of the container. If not available, pull from quay.io. Then lunch Jupyter server:
+
+    container="/projects/chuang-lab/USERS/domans/containers/annotator_v2.0.0.sif"
+
+    if [ ! -f "$container" ]; then
+        echo "Container not found, pulling from registry..."
+        singularity pull oras://quay.io/jaxcompsci/annotator:v2.0.0 &&\
+        container="annotator_v2.0.0.sif"
+    fi
+
+    singularity exec "$container" jupyter notebook --no-browser --port=$(shuf -i10000-11999 -n1) --ip=$(hostname -i) --notebook-dir "$workdir"
 
 Copy the server URL and paste into a browser (e.g., Google Chrome, preferred)
 
-Open a demo notebook at `./notebooks`
+Open a demo notebook at `./scripts`
