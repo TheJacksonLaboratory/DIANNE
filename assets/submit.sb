@@ -1,0 +1,11 @@
+#!/bin/bash --login
+#SBATCH -t 02:00:00
+#SBATCH -N 1
+#SBATCH -n 1
+#SBATCH --mem=18GB
+#SBATCH -q build
+#SBATCH -p build
+
+singularity build --fakeroot $1 $2
+
+scontrol show job $SLURM_JOB_ID

@@ -1,0 +1,37 @@
+bootstrap: docker
+from: debian:trixie-slim
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+    export PATH=/opt/conda/bin:$PATH
+
+%post
+    echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+
+    # Install dependencies
+    apt-get update && apt-get install -y \
+        dialog apt-utils \
+        wget \
+        bzip2 \
+        ca-certificates \
+        curl \
+        git \
+        g++ gcc \
+        libsm6 libxext6 libxrender-dev \
+        procps \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Download and install Mambaforge
+    wget https://github.com/conda-forge/miniforge/releases/download/24.11.3-2/Miniforge3-24.11.3-2-Linux-x86_64.sh -O Mambaforge.sh
+    
+    bash Mambaforge.sh -b -p /opt/conda
+    rm Mambaforge.sh
+
+    # Update PATH environment variable
+    echo 'export PATH=/opt/conda/bin:$PATH' >> /etc/profile.d/conda.sh
+    echo 'source /etc/profile.d/conda.sh' >> ~/.bashrc
+
+    /opt/conda/bin/mamba install -y -c conda-forge joblib scanpy numba zarr=2 scikit-image tifffile imagecodecs ipywidgets jupyter notebook=7 opencv
+
+    # Even though vitessce is fine with zarr=3, zarr<3 is required by scanpy
+    /opt/conda/bin/pip install --upgrade vitessce[all] jupyter "zarr>=2,<3"
