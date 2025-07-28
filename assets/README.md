@@ -3,7 +3,7 @@
 
 The container is publicly available, and can be downloaded with command
 
-    singularity pull oras://quay.io/jaxcompsci/annotator:v1.0.0
+    singularity pull oras://quay.io/jaxcompsci/annotator:v2.0.0
 
 To modify or re-build the container (takes ~7 min):
 
@@ -13,4 +13,4 @@ To upload the container to quay.io
 
     singularity remote login -u <user> docker://quay.io
 
-    singularity push annotator-base.sif oras://quay.io/jaxcompsci/annotator:v1.0.0
+    singularity push annotator-base.sif oras://quay.io/jaxcompsci/annotator:v2.0.0

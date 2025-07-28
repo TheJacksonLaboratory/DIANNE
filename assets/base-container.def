@@ -31,7 +31,7 @@ from: debian:trixie-slim
     echo 'export PATH=/opt/conda/bin:$PATH' >> /etc/profile.d/conda.sh
     echo 'source /etc/profile.d/conda.sh' >> ~/.bashrc
 
-    /opt/conda/bin/mamba install -y -c conda-forge joblib scanpy numba zarr=2 scikit-image tifffile imagecodecs ipywidgets jupyter notebook=7 opencv
+    /opt/conda/bin/mamba install -y -c conda-forge joblib scanpy numba zarr=2.18.5 scikit-image tifffile=2025.3.30 imagecodecs ipywidgets jupyter notebook=7 opencv
 
     # Even though vitessce is fine with zarr=3, zarr<3 is required by scanpy
-    /opt/conda/bin/pip install --upgrade vitessce[all] jupyter "zarr>=2,<3"
+    /opt/conda/bin/pip install --upgrade vitessce[all] jupyter zarr==2.18.5
