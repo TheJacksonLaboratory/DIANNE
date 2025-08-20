@@ -730,3 +730,132 @@ def getGroupNegativeCDF(annotation_results, patchesCDFs, alpha=0.9, seed=None, a
     # avgNegativePatchCDF.index = avgNegativePatchCDF.index.get_level_values(1).values + '_' + np.round(avgNegativePatchCDF.index.get_level_values(0), 2).astype(str).values
 
     return avgNegativePatchCDF
+
+def makeManualAndAutomatedAnnotationComparison(ad, se_inf, se_anno, case, cmapColors=['lightcoral', 'gold', 'blue'], figsize=(6, 3),
+                filter=None, f=1, ts=56, mpp=0.25, vmin=0, vmax=1, verbose=False, threshold_for_metrics=0.5):
+
+    """Compare manual annotations with DIANNE inference results.
+    Manual annotations are shown on the left, DIANNE inference results on the right.
+    Maunal annoitation are fraction of tumor ixels in a tile, DIANNE inference results are probability of tumor in tile.
+
+    Parameters
+    ----------
+    ad : AnnData
+        Annotated data object containing spatial coordinates and features.
+
+    se_inf : pd.Series
+        Series containing DIANNE inference probabilities for each tile.
+
+    se_anno : pd.Series
+        Series containing manual annotation values for each tile.
+
+    case : str
+        Case identifier for the plot title.
+
+    cmapColors : list, optional
+        Colors for the colormap, by default ['lightcoral', 'gold', 'blue'].
+
+    figsize : tuple, optional
+        Size of the figure, by default (6, 3).
+
+    filter : float, optional
+        Threshold to filter out values in the inference series, by default None.
+
+    f : int, optional
+        Factor to scale the image, by default 1.
+
+    ts : int, optional
+        Tile size in pixels, by default 56.
+
+    mpp : float, optional
+        Microns per pixel, by default 0.25.
+
+    vmin : float, optional
+        Minimum value for color scaling, by default 0.
+
+    vmax : float, optional
+        Maximum value for color scaling, by default 1.
+
+    verbose : bool, optional
+        If True, print accuracy, precision, recall, F1 score, correlation, and AUROC, by default False.
+
+    threshold_for_metrics : float, optional
+        Threshold for calculating metrics, by default 0.5.
+    """
+
+    def get_image_map(x, y, p):
+
+        def funcScale(x, f):
+            xa = (np.array(x) / (ts/mpp))
+            xa -= np.min(xa)
+            return xa.astype(int) * f
+
+        xa = funcScale(x, f)
+        ya = funcScale(y, f)
+
+        pa = np.array(p)
+        if not filter is None:
+            pa[pa>filter] = 1.
+
+        img = np.zeros(((max(ya)+1), (max(xa)+1)), dtype=np.float32) * np.nan
+        for i in range(len(pa)):
+            img[ya[i]:ya[i]+f, xa[i]:xa[i]+f] = pa[i]
+        return img
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(figsize[0]*f, figsize[1]*f))
+
+    cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
+
+    img1 = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_anno.values)
+    im1 = ax1.imshow(img1, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax1.set_aspect('equal')
+    plt.colorbar(im1, shrink=0.5)
+    ax1.set_title('Manual Annotation\nFraction of tumor in tile')
+    ax1.invert_yaxis()
+    ax1.axis('off')
+
+    se_inf_star = se_inf.reindex(se_anno.index)
+
+    img2 = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
+    im2 = ax2.imshow(img2, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax2.set_aspect('equal')
+    plt.colorbar(im2, shrink=0.5)
+    ax2.set_title('DIANNE Inference\nProbaility of tumor in tile')
+    ax2.invert_yaxis()
+    ax2.axis('off')
+
+    se_anno.iloc[0] = 0.0  # Set first value to zero
+
+    th = threshold_for_metrics
+
+    accuracy = (se_inf_star.values > th).astype(int) == (se_anno.values > th).astype(int)
+    accuracy = np.sum(accuracy) / len(accuracy)
+    if verbose:
+        print(f'Accuracy: {accuracy:.2f}')
+
+    precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_inf_star.values > th)
+    if verbose:
+        print(f'Precision: {precision:.2f}')
+    
+    recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_anno.values > th)
+    if verbose:
+        print(f'Recall: {recall:.2f}')
+
+    f1_score = 2 * (precision * recall) / (precision + recall)
+    if verbose:
+        print(f'F1 Score: {f1_score:.2f}')
+
+    correlation = pd.concat([se_inf_star, se_anno], axis=1).corr().iloc[0, 1]
+    if verbose:
+        print(f'Correlation: {correlation:.2f}')
+
+    auroc = roc_auc_score((se_anno.values > th).astype(int), se_inf_star.values)
+    if verbose:
+        print(f'AUROC: {auroc:.2f}')
+
+    plt.suptitle(f'Case: {case}\nPrecision: {precision:.2f}, recall: {recall:.2f}', fontsize=16)
+    plt.tight_layout()
+    plt.show()
+
+    return
+
