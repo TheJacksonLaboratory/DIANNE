@@ -660,6 +660,30 @@ def showProbImg(x, y, p, f=1, ts=56, mpp=0.25, figsize=(3, 3), colorbar=True, fi
 
     return
 
+def showGridProb(ads, clf, samples, qs, ts=56, mpp=0.25, R=2, dpi=150, size=3., f=1, n_cols=4, verbose=True):
+    # To run inference on the entire slides and save the images, and then display them in a grid
+    for i in tqdm(range(len(samples)), desc='Inference progress', disable=not verbose):
+        infSample  = samples[i]
+        x, y, p = inferProb(ads[infSample], clf['clf'], qs, tsize=ts/mpp, R=R, verbose=False)
+        showProbImg(x, y, p, f=f, figsize=(3, 3), ts=ts, mpp=mpp, title=infSample, invert=False,
+                    saveName=f'{infSample}.png', dpi=dpi)
+
+    nc = n_cols
+    nr = int(np.ceil(len(samples) / nc))
+    fig, axs = plt.subplots(nr, nc, figsize=(nc*size, nr*size))
+    axs = axs.flatten()
+    for i in range(nr*nc):
+        ax = axs[i]
+        if i < len(samples):
+            img = plt.imread(f'{samples[i]}.png')
+            ax.imshow(img)
+        ax.axis('off')
+    fig.tight_layout()
+    plt.show()
+    return
+
+
+
 def showMolecularData(sample, df_coordinates, se_color, figsize=(6, 6), cmap='coolwarm', vmin=0, vmax=15, shrink=0.5):
     
     """Show the molecular data for islets in a scatter plot.
@@ -858,4 +882,160 @@ def makeManualAndAutomatedAnnotationComparison(ad, se_inf, se_anno, case, cmapCo
     plt.show()
 
     return
+
+def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_anno, case, cmapColors=['lightcoral', 'gold', 'blue'], figsize=(9, 3),
+                filter=None, f=1, ts=56, mpp=0.25, vmin=0, vmax=1, verbose=False, threshold_for_metrics=0.5):
+
+    """Compare manual annotations with DIANNE inference results.
+    Manual annotations are shown on the left, DIANNE inference results on the right.
+    Maunal annoitation are fraction of tumor ixels in a tile, DIANNE inference results are probability of tumor in tile.
+
+    Parameters
+    ----------
+    ad : AnnData
+        Annotated data object containing spatial coordinates and features.
+
+    se_inf : pd.Series
+        Series containing DIANNE inference probabilities for each tile.
+
+    se_anno : pd.Series
+        Series containing manual annotation values for each tile.
+
+    case : str
+        Case identifier for the plot title.
+
+    cmapColors : list, optional
+        Colors for the colormap, by default ['lightcoral', 'gold', 'blue'].
+
+    figsize : tuple, optional
+        Size of the figure, by default (6, 3).
+
+    filter : float, optional
+        Threshold to filter out values in the inference series, by default None.
+
+    f : int, optional
+        Factor to scale the image, by default 1.
+
+    ts : int, optional
+        Tile size in pixels, by default 56.
+
+    mpp : float, optional
+        Microns per pixel, by default 0.25.
+
+    vmin : float, optional
+        Minimum value for color scaling, by default 0.
+
+    vmax : float, optional
+        Maximum value for color scaling, by default 1.
+
+    verbose : bool, optional
+        If True, print accuracy, precision, recall, F1 score, correlation, and AUROC, by default False.
+
+    threshold_for_metrics : float, optional
+        Threshold for calculating metrics, by default 0.5.
+    """
+
+    def get_image_map(x, y, p):
+
+        def funcScale(x, f):
+            xa = (np.array(x) / (ts/mpp))
+            xa -= np.min(xa)
+            return xa.astype(int) * f
+
+        xa = funcScale(x, f)
+        ya = funcScale(y, f)
+
+        pa = np.array(p)
+        if not filter is None:
+            pa[pa>filter] = 1.
+
+        img = np.zeros(((max(ya)+1), (max(xa)+1)), dtype=np.float32) * np.nan
+        for i in range(len(pa)):
+            img[ya[i]:ya[i]+f, xa[i]:xa[i]+f] = pa[i]
+        return img
+
+    fig, axs = plt.subplots(1, 3, figsize=(figsize[0]*f, figsize[1]*f))
+
+    cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
+
+
+
+    ax = axs[0]
+
+    img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_anno.values)
+    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax.set_aspect('equal')
+    plt.colorbar(im, shrink=0.5)
+    ax.set_title('Manual Annotation\nFraction of tumor in tile')
+    ax.invert_yaxis()
+    ax.axis('off')
+
+
+
+    se_inf_star = se_inf_dianne.reindex(se_anno.index)
+
+    ax = axs[1]
+    img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
+    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax.set_aspect('equal')
+    plt.colorbar(im, shrink=0.5)
+    ax.invert_yaxis()
+    ax.axis('off')
+
+    se_anno.iloc[0] = 0.0  # Set first value to zero
+
+    th = threshold_for_metrics
+
+    denom = np.sum(se_inf_star.values > th)
+    if denom == 0:
+        denom = 1
+    precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / denom
+    if verbose:
+        print(f'Precision: {precision:.2f}')
+    
+    recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_anno.values > th)
+    if verbose:
+        print(f'Recall: {recall:.2f}')
+
+    ax.set_title(f'DIANNE Inference\nProbaility of tumor in tile\nPrecision: {precision:.2f}, recall: {recall:.2f}')
+
+
+
+
+    se_inf_star = se_inf_clam.reindex(se_anno.index)
+
+    ax = axs[2]
+    img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
+    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+    ax.set_aspect('equal')
+    plt.colorbar(im, shrink=0.5)
+    ax.invert_yaxis()
+    ax.axis('off')
+
+    se_anno.iloc[0] = 0.0  # Set first value to zero
+
+    th = threshold_for_metrics
+
+    denom = np.sum(se_inf_star.values > th)
+    if denom == 0:
+        denom = 1
+    precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / denom
+    if verbose:
+        print(f'Precision: {precision:.2f}')
+    
+    recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_anno.values > th)
+    if verbose:
+        print(f'Recall: {recall:.2f}')
+
+    ax.set_title(f'CLAM Inference\nProbaility of tumor in tile\nPrecision: {precision:.2f}, recall: {recall:.2f}')
+
+
+
+
+    plt.suptitle(f'Case: {case}', fontsize=16)
+    plt.tight_layout()
+    plt.show()
+
+    return
+
 

@@ -28,7 +28,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Polygon
+from matplotlib.patches import Polygon, Rectangle
 from matplotlib.collections import PatchCollection
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
@@ -654,7 +654,7 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
     # Display the progress bar
     display(progress_bar)
 
-    done_button = widgets.Button(description='done', button_style='success', style={'button_color': '#0D52BD'})
+    done_button = widgets.Button(description='choose', button_style='success', style={'button_color': '#0D52BD'})
     choose_widget = widgets.BoundedIntText(value=0, min=0, max=nrows*ncols-1, step=1, description='Selected:', disabled=False)
 
     h_box = widgets.HBox([choose_widget, done_button], layout=widgets.Layout(justify_content='flex-start'))
@@ -662,9 +662,11 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
     the_output = widgets.Output()
     the_widget = widgets.VBox([h_box, the_output])
 
-    def showAll():
+    def loadAll():
 
         nonlocal ps
+        nonlocal imgps
+        nonlocal is_mif
 
         N = min(ncols*nrows, patchesCDFs.shape[0])
 
@@ -680,8 +682,6 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
 
         sel_patches = subsetCDFs.index[[np.random.choice(np.where(clusters == i)[0]) for i in range(N)]]
         ps = sel_patches
-
-        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(figsize[0]*ncols, figsize[1]*nrows))
 
         imgps = []
         for i in range(nrows):
@@ -735,6 +735,14 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
 
             imgps = [normalize_pseudo_channels(imgp, startParams['mif_bounds']) for imgp in imgps]
 
+    def showAll(indh=None):
+
+        nonlocal ps
+        nonlocal imgps
+        nonlocal is_mif
+
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(figsize[0]*ncols, figsize[1]*nrows))
+
         if nrows==1 and ncols==1:
             axs = np.array([axs])
  
@@ -742,10 +750,12 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
         for i in range(nrows):
             for j in range(ncols):
                 ind = i*ncols+j
-                if ind < N:
-                    p_ = sel_patches[ind]
-                    imgp = imgps[ind]
-                    axs[ind].imshow(imgp)
+                if ind < len(imgps):
+                    p_ = ps[ind]
+                    axs[ind].imshow(imgps[ind])
+
+                    if not indh is None and ind==indh:
+                        axs[ind].add_patch(Rectangle((0, 0), imgps[ind].shape[1], imgps[ind].shape[0], linewidth=4, edgecolor='blue', facecolor='none'))
 
                     if is_mif:
                         text_color = 'w'
@@ -754,8 +764,8 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
                         text_color = 'k'
                         outline_color = 'w'
 
-                    txt = axs[ind].text(30, 30, f'({ind}) {p_[0]}-{p_[1]}', horizontalalignment='left', 
-                                        verticalalignment='center', fontsize=10, color=text_color, fontweight='bold')
+                    txt = axs[ind].text(10, 10, f'({ind}) {p_[0]}\n{p_[1]}', horizontalalignment='left', 
+                                        verticalalignment='top', fontsize=10, color=text_color, fontweight='bold')
                     txt.set_path_effects([matplotlib.patheffects.withStroke(linewidth=1, foreground=outline_color)])
                 axs[ind].axis('off')
 
@@ -767,48 +777,61 @@ def jumpStart(patchCoordinates, patchesCDFs, imgs, startParams, ads=None, L=1, s
     def showSelectedOne():
 
         nonlocal ps
+        nonlocal imgps
+        nonlocal is_mif
 
         ind = choose_widget.value
         p_ = ps[ind]
 
-        fig, ax = plt.subplots(1, 1, figsize=figsize)
-       
-        imgp = loadPatch(p_, patchCoordinates, L, sh, pyramidscale, imgs)[0]
+        fxx = 1.8
+        fig, ax = plt.subplots(1, 1, figsize=(figsize[0]*fxx, figsize[1]*fxx))
+    
+        if is_mif:
+            text_color = 'w'
+            outline_color = 'k'
+        else:
+            text_color = 'k'
+            outline_color = 'w'
 
-        if not startParams is None and 'mif_pca' in startParams.keys() and 'mif_bounds' in startParams.keys():
-            temp_imgp = startParams['mif_pca'].transform(imgp.reshape(-1, imgp.shape[-1]))
-            temp_imgp = temp_imgp.reshape(imgp.shape[0], imgp.shape[1], 3 * startParams['mif_nrep_pca'])
-            temp_imgp = np.dstack([temp_imgp[..., i::3].sum(axis=-1)[..., None] for i in range(3)])
-            imgp = normalize_pseudo_channels(temp_imgp, startParams['mif_bounds'])
-
-        ax.imshow(imgp)
-        txt = ax.text(20, 20, f'({ind}) {p_[0]}-{p_[1]}', horizontalalignment='left', 
-                    verticalalignment='center', fontsize=10, color='k', fontweight='bold')
-        txt.set_path_effects([matplotlib.patheffects.withStroke(linewidth=1, foreground='w')])
+        ax.imshow(imgps[ind])
+        txt = ax.text(10, 10, f'({ind}) {p_[0]}\n{p_[1]}', horizontalalignment='left', 
+                    verticalalignment='top', fontsize=10, color=text_color, fontweight='bold')
+        txt.set_path_effects([matplotlib.patheffects.withStroke(linewidth=1, foreground=outline_color)])
         ax.axis('off')
+
+        ax.add_patch(Rectangle((0, 0), imgps[ind].shape[1], imgps[ind].shape[0], linewidth=4, edgecolor='blue', facecolor='none'))
 
         plt.show()
     
         return
 
     def button_clicked(_button):
-        if not 'selected_patch' in startParams.keys():
+
+        # if not 'selected_patch' in startParams.keys():
+        if True:
             the_output.clear_output()
             startParams.update({'selected_id': choose_widget.value})
             startParams.update({'selected_patch': ps[choose_widget.value]})
             startParams.update({'considered_patches': ps})
 
-            # Hide the button and the selection widget
-            done_button.layout.display = 'none'
-            choose_widget.layout.display = 'none'
+            # # Hide the button and the selection widget
+            # done_button.layout.display = 'none'
+            # choose_widget.layout.display = 'none'
 
             with the_output:
+                showAll(indh=choose_widget.value)
+                print('-' * 160)
+
                 showSelectedOne()
         return
 
     ps = None
+    imgps = None
+    is_mif = False
 
     with the_output:
+        if imgps is None:
+            loadAll()
         showAll()
     
     done_button.on_click(button_clicked)
