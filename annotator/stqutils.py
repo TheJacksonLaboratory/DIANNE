@@ -883,8 +883,8 @@ def makeManualAndAutomatedAnnotationComparison(ad, se_inf, se_anno, case, cmapCo
 
     return
 
-def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_anno, case, cmapColors=['lightcoral', 'gold', 'blue'], figsize=(9, 3),
-                filter=None, f=1, ts=56, mpp=0.25, vmin=0, vmax=1, verbose=False, threshold_for_metrics=0.5):
+def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, cmapColors=['lightcoral', 'gold', 'blue'], panel_size=3, aspect=1.,
+                filter=None, f=1, ts=56, mpp=0.25, vmin=0, vmax=1, verbose=False, threshold_for_metrics=0.5, plot=True, ysup=None, show_segmenter=True):
 
     """Compare manual annotations with DIANNE inference results.
     Manual annotations are shown on the left, DIANNE inference results on the right.
@@ -954,88 +954,194 @@ def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, 
             img[ya[i]:ya[i]+f, xa[i]:xa[i]+f] = pa[i]
         return img
 
-    fig, axs = plt.subplots(1, 3, figsize=(figsize[0]*f, figsize[1]*f))
+    def get_metrics(se_inf_star, se_anno, th, prefix='method_name_'):
+    
+        if se_inf_star.min()==se_inf_star.max():
+            se_inf_star.iloc[0] = 0.0
 
-    cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
+        if (se_anno.values > th).astype(int).sum() == 0:
+            precision = np.nan
+            recall = np.nan
+            f1_score = np.nan
+        else:
+            precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_inf_star.values > th)
+            recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_anno.values > th)
+            f1_score = 2 * (precision * recall) / (precision + recall)
+
+        accuracy = (se_inf_star.values > th).astype(int) == (se_anno.values > th).astype(int)
+        accuracy = np.sum(accuracy) / len(accuracy)
+
+        fpr = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values <= th).astype(int)) / np.sum(se_anno.values <= th)
+
+        if verbose:
+            print(f'Precision: {precision:.2f}')
+            print(f'Recall: {recall:.2f}')
+            print(f'F1 Score: {f1_score:.2f}')
+            print(f'FPR: {fpr:.2f}')
+            print(f'Accuracy: {accuracy:.2f}')
+
+        return {f'{prefix}precision': precision, f'{prefix}recall': recall, f'{prefix}fpr': fpr, f'{prefix}f1_score': f1_score, f'{prefix}accuracy': accuracy}
 
 
-
-    ax = axs[0]
-
-    img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_anno.values)
-    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
-    ax.set_aspect('equal')
-    plt.colorbar(im, shrink=0.5)
-    ax.set_title('Manual Annotation\nFraction of tumor in tile')
-    ax.invert_yaxis()
-    ax.axis('off')
-
-
+    result = {}
+    result.update({'manual_annotation': se_anno.mean()})
 
     se_inf_star = se_inf_dianne.reindex(se_anno.index)
-
-    ax = axs[1]
-    img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
-    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
-    ax.set_aspect('equal')
-    plt.colorbar(im, shrink=0.5)
-    ax.invert_yaxis()
-    ax.axis('off')
-
-    se_anno.iloc[0] = 0.0  # Set first value to zero
-
-    th = threshold_for_metrics
-
-    denom = np.sum(se_inf_star.values > th)
-    if denom == 0:
-        denom = 1
-    precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / denom
-    if verbose:
-        print(f'Precision: {precision:.2f}')
-    
-    recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_anno.values > th)
-    if verbose:
-        print(f'Recall: {recall:.2f}')
-
-    ax.set_title(f'DIANNE Inference\nProbaility of tumor in tile\nPrecision: {precision:.2f}, recall: {recall:.2f}')
-
-
-
+    result.update(get_metrics(se_inf_star, se_anno, threshold_for_metrics, prefix='dianne_'))
 
     se_inf_star = se_inf_clam.reindex(se_anno.index)
+    result.update(get_metrics(se_inf_star, se_anno, threshold_for_metrics, prefix='clam_'))
 
-    ax = axs[2]
-    img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
-    im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
-    ax.set_aspect('equal')
-    plt.colorbar(im, shrink=0.5)
-    ax.invert_yaxis()
-    ax.axis('off')
+    if show_segmenter:
+        se_inf_star = se_inf_segmenter.reindex(se_anno.index)
+        result.update(get_metrics(se_inf_star, se_anno, threshold_for_metrics, prefix='segmenter_'))
 
-    se_anno.iloc[0] = 0.0  # Set first value to zero
 
-    th = threshold_for_metrics
+    if plot:
+        n_panels = 4 if show_segmenter else 3
+        fig, axs = plt.subplots(1, n_panels, figsize=(panel_size*f*n_panels*aspect, panel_size*f))
 
-    denom = np.sum(se_inf_star.values > th)
-    if denom == 0:
-        denom = 1
-    precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / denom
-    if verbose:
-        print(f'Precision: {precision:.2f}')
+        cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
     
-    recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > th).astype(int)) / np.sum(se_anno.values > th)
-    if verbose:
-        print(f'Recall: {recall:.2f}')
+        ax = axs[0]
+        img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_anno.values)
+        im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+        ax.set_aspect('equal')
+        plt.colorbar(im, shrink=0.5)
+        ax.set_title('Manual Annotation\nFraction of tumor in tile')
+        ax.invert_yaxis()
+        ax.axis('off')
 
-    ax.set_title(f'CLAM Inference\nProbaility of tumor in tile\nPrecision: {precision:.2f}, recall: {recall:.2f}')
+        se_inf_star = se_inf_dianne.reindex(se_anno.index)
+        ax = axs[1]
+        img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
+        im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+        ax.set_aspect('equal')
+        plt.colorbar(im, shrink=0.5)
+        ax.invert_yaxis()
+        ax.axis('off')
+        prefix = 'dianne_'
+        prec, rec, acc, fpr = result[f'{prefix}precision'], result[f'{prefix}recall'], result[f'{prefix}accuracy'], result[f'{prefix}fpr']
+        if prec != prec:
+            strv = f'Specificity {1-fpr:.2f}'
+        else:
+            strv = f'Pr. {prec:.2f}, rec. {rec:.2f}, sp. {1-fpr:.2f}'
+        ax.set_title(f'DIANNE Inference\nProbaility of tumor in tile\n{strv}')
+
+        se_inf_star = se_inf_clam.reindex(se_anno.index)
+        ax = axs[2]
+        img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
+        im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+        ax.set_aspect('equal')
+        plt.colorbar(im, shrink=0.5)
+        ax.invert_yaxis()
+        ax.axis('off')
+        prefix = 'clam_'
+        prec, rec, acc, fpr = result[f'{prefix}precision'], result[f'{prefix}recall'], result[f'{prefix}accuracy'], result[f'{prefix}fpr']
+        if prec != prec:
+            strv = f'Specificity {1-fpr:.2f}'
+        else:
+            strv = f'Pr. {prec:.2f}, rec. {rec:.2f}, sp. {1-fpr:.2f}'
+        ax.set_title(f'CLAM Inference\nProbaility of tumor in tile\n{strv}')
+
+        if show_segmenter:
+            se_inf_star = se_inf_segmenter.reindex(se_anno.index)
+            ax = axs[3]
+            img = get_image_map(ad.obsm['spatial'][:, 0], ad.obsm['spatial'][:, 1], se_inf_star.values)
+            im = ax.imshow(img, cmap=cmap, vmin=vmin, vmax=vmax, interpolation='nearest')
+            ax.set_aspect('equal')
+            plt.colorbar(im, shrink=0.5)
+            ax.invert_yaxis()
+            ax.axis('off')
+            prefix = 'segmenter_'
+            prec, rec, acc, fpr = result[f'{prefix}precision'], result[f'{prefix}recall'], result[f'{prefix}accuracy'], result[f'{prefix}fpr']
+            if prec != prec:
+                strv = f'Specificity {1-fpr:.2f}'
+            else:
+                strv = f'Pr. {prec:.2f}, rec. {rec:.2f}, sp. {1-fpr:.2f}'
+            ax.set_title(f'Segmenter Inference\nProbaility of tumor in tile\n{strv}')
 
 
 
+        plt.suptitle(f'Case: {case}', fontsize=16, y=ysup)
+        plt.tight_layout()
+        plt.show()
 
-    plt.suptitle(f'Case: {case}', fontsize=16)
-    plt.tight_layout()
-    plt.show()
+    return result
 
-    return
+def get_tile_mask_means(mfile, ts, mpp, coords):
+    try:
+        m = tifffile.imread(mfile)
+        means = []
+        for i in range(len(coords)):
+            x0, y0 = coords[i]
+            h = int(0.5 * ts / mpp)
+            temp = m[y0-h:y0+h, x0-h:x0+h]
+            if temp.shape[0]>0 and temp.shape[1]>0:
+                tv = temp.mean() / 255.
+            else:
+                tv = 0.0
+            means.append(tv)
+    except Exception as exception:
+        print(f'Error in get_tile_mask_means: {exception}')
+        means = [0.0] * len(coords)
+    return means
+
+def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctranspath', qs=None):
+    try:
+        ad = loadAd(path, fname=f'features/false-{F}-{featset}_features.tsv.gz')[0]
+        ts = 56 * 2
+        mpp = 0.25
+        x, y, p = inferProb(ad, clf, qs, tsize=0.5*ts/mpp, R=2, verbose=False)
+        search = ad.obs.set_index(['pxl_col_in_wsi', 'pxl_row_in_wsi'])['original_barcode']
+        se_inf_dianne = pd.Series(index=search.loc[pd.MultiIndex.from_arrays([x, y], names=['pxl_col_in_wsi', 'pxl_row_in_wsi'])].values, data=p)
+
+        means = []
+        for i in range(len(ad)):
+            means.append(0.0)
+        se_anno = pd.Series(index=ad.obs.index, data=means)
+
+        msegfile = f'/projects/chuang-lab/USERS/domans/containers/local/segmenter/results/{case}-segmenter-mask.tiff'
+        means = get_tile_mask_means(msegfile, ts, mpp, ad.obsm['spatial'])
+        se_inf_segmenter = pd.Series(index=ad.obs.index, data=means)
+
+        cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-normal/{case}_attention_weights.csv'
+        se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
+
+        temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85)
+    except Exception as e:
+        temp = None
+        print(f'Error processing case {case}: {e}')
+    return temp
+
+def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, F=2, featset='ctranspath', qs=None):
+    mfile = annotationsPath + case + '_manual_annotation_tumor_mask.tiff'
+    if os.path.isfile(mfile):
+        m = tifffile.imread(mfile)
+
+        try:
+            ad = loadAd(path, fname=f'features/false-{F}-{featset}_features.tsv.gz')[0]
+            ts = 56 * 2
+            mpp = 0.25
+            x, y, p = inferProb(ad, clf, qs, tsize=0.5*ts/mpp, R=2, verbose=False)
+            search = ad.obs.set_index(['pxl_col_in_wsi', 'pxl_row_in_wsi'])['original_barcode']
+            se_inf_dianne = pd.Series(index=search.loc[pd.MultiIndex.from_arrays([x, y], names=['pxl_col_in_wsi', 'pxl_row_in_wsi'])].values, data=p)
+
+            means = get_tile_mask_means(mfile, ts, mpp, ad.obsm['spatial'])
+            se_anno = pd.Series(index=ad.obs.index, data=means)
+
+            msegfile = f'/projects/chuang-lab/USERS/domans/containers/local/segmenter/results/{case}-segmenter-mask.tiff'
+            means = get_tile_mask_means(msegfile, ts, mpp, ad.obsm['spatial'])
+            se_inf_segmenter = pd.Series(index=ad.obs.index, data=means)
+
+            cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-tumor/{case}_attention_weights.csv'
+            se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
+
+            temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85)
+        except Exception as e:
+            temp = None
+            print(f'Error processing case {case}: {e}')
+
+    return temp
 
 

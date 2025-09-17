@@ -427,10 +427,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                             else:
                                 num_columns = numColumns
                             cic_handles = []
-                            mkeys = sorted(list(ucolors.keys()), key=str.lower)
+                            mkeys = ['Transcripts'] + sorted(list(ucolors.keys()), key=str.lower)
                             for annotation in mkeys:
-                                color = ucolors[annotation]
-                                cic_handles.append(Line2D([0], [0], marker='o', color='w', label=annotation, markerfacecolor=color, markersize=10))
+                                color = ucolors[annotation] if not annotation=='Transcripts' else 'lime'
+                                cic_handles.append(Line2D([0], [0], marker='o', color='w', label=annotation, markerfacecolor=color, markersize=10 if not annotation=='Transcripts' else 5))
                             leg = axMain.legend(handles=cic_handles, bbox_to_anchor=(1, 0.5), loc='center left', ncol=num_columns, fancybox=False,
                                     frameon=False, fontsize=10, title='', title_fontsize=16)
                             leg.set_zorder(10**8)
@@ -473,10 +473,6 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                     axMain.scatter((coords_he[:, 0] - y1) / Ps,
                                     (coords_he[:, 1] - x1) / Ps,
                                     s=transcriptsSize, c=transcriptsColor, alpha=transcriptsAlpha, edgecolors='none')         
-            # print('Done')
-
-
-
 
         if checkbox.value and 'clf' in clfd:
             df_temp = patchCoordinatesFull.xs(p[0], level='sample', axis=0)

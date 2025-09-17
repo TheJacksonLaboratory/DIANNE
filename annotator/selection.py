@@ -11,7 +11,8 @@ import matplotlib.patheffects as path_effects
 import numpy as np
 import ipywidgets as widgets
 
-def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)], alpha=0.5, figsize=(7, 5), precision=2, downsample=8, fontsize=16):
+def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)], alpha=0.5, figsize=(7, 5), precision=2, downsample=8, fontsize=16,
+                addSuffix=True, clearInput=False, defaultSuffix=''):
 
     """Run ROI selection tool for a given image.
 
@@ -141,7 +142,8 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
         v_slider.value = y
         v_slider.observe(slider_moved, names='value')
 
-        input_text_savename.value = ''
+        if clearInput:
+            input_text_savename.value = ''
 
         the_output.clear_output()
 
@@ -154,8 +156,11 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
         nonlocal showOutOfSamplesMessage
         nonlocal h_slider, v_slider
 
-        suffix = input_text_savename.value
-        suffixp = '-0' if suffix == '' else f'-{suffix}'
+        if addSuffix:
+            suffix = input_text_savename.value
+            suffixp = '-0' if suffix == '' else f'{suffix}'
+        else:
+            suffixp = ''
 
         a = np.round(x[0], precision), np.round(y[0], precision)
         b = np.round(x[1] - x[0], precision), np.round(y[1] - y[0], precision)
@@ -163,12 +168,15 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
         with open(f'{thumbsPath}/{sample}{suffixp}.json', 'w') as outfile:
             outfile.write(json.dumps(roi))
 
-        input_text_savename.value = ''
+        if clearInput:
+            input_text_savename.value = ''
 
         return
 
 
     input_text_savename = widgets.Text(description='', placeholder='ROI suffix, e.g., 0', layout=widgets.Layout(width='150px'))
+    input_text_savename.value = defaultSuffix
+    
     save_button = widgets.Button(description="Save ROI")
     the_output = widgets.Output()
 
