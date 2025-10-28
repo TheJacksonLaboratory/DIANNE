@@ -15,6 +15,8 @@ from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn.base import clone
 from scipy.spatial.distance import pdist, squareform
 from scipy.ndimage import gaussian_filter
 import scipy
@@ -37,6 +39,19 @@ from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap
 
 import ipywidgets as widgets
+
+def crossval_deviation(X, y, clf, k=4, repeats=5):
+    rskf = RepeatedStratifiedKFold(n_splits=k, n_repeats=repeats, random_state=42)
+    deviation_scores = np.zeros(len(y), dtype=float)
+    counts = np.zeros(len(y), dtype=int)
+    for train_idx, val_idx in rskf.split(X, y):
+        clf_fold = clone(clf)
+        clf_fold.fit(X[train_idx], y[train_idx])
+        preds = clf_fold.predict(X[val_idx])
+        disagreement = (preds != y[val_idx]).astype(float)
+        deviation_scores[val_idx] += disagreement
+        counts[val_idx] += 1
+    return deviation_scores / counts
 
 def normalize_pseudo_channels(image, bounds):
     clipped_image = np.empty_like(image)
@@ -224,6 +239,14 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                                      pd.Series(index=curated_negative, data=0)]).loc[X_train.index]
             
             X_test = patchesCDFs.loc[uncurated]
+
+            if False:
+                scores_cutoff = 0.8
+                if len(y_train) >= 16:
+                    k = int(np.floor(len(y_train)/8))
+                    scores = crossval_deviation(X_train.values, y_train.values, clf, k=k)
+                    high_deviations = scores[scores > scores_cutoff]
+                    print(len(high_deviations), "of", len(y_train), "curated patches have high cross-validation deviation")
 
             clf.fit(X_train.values, y_train.values)
             clf.feat = X_train.columns.get_level_values(1) + '_' + pd.Index(np.round(X_train.columns.get_level_values(0), 2).astype(str))
