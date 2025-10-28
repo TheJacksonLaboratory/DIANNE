@@ -16,6 +16,8 @@ from sklearn.linear_model import LogisticRegression as LR
 from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
 from scipy.spatial.distance import pdist, squareform
+from scipy.ndimage import gaussian_filter
+import scipy
 
 from scipy.spatial import KDTree
 
@@ -23,6 +25,7 @@ from sklearn.cluster import KMeans
 
 from .stqutils import inferProb
 from .transcriptomics import fetch_xenium_zarr_cell_coords, fetch_cell_by_gene_matrix, extract_transcripts_from_grid_locs
+from .interpolation import interpolate_points
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -479,34 +482,36 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             infTiles = df_temp[df_temp['patch'] == p[1]].index.sort_values()
 
             tree = KDTree(df_temp[['x', 'y']])
-
             indices = tree.query_ball_point(df_temp.loc[infTiles][['x', 'y']], R * 2 * sh + 2)
             wrkTiles = df_temp.index[np.unique(np.concatenate(indices))]
             bndTiles = wrkTiles.difference(infTiles)
 
             ad_sub = ads[p[0]][wrkTiles].copy()
-            x_inf, y_inf, p_inf = inferProb(ad_sub, clfd['clf'], qs, tsize=2*sh, R=R, verbose=False, parallel=False)
+            x_inf, y_inf, p_inf = inferProb(ad_sub, clfd['clf'], qs, tsize=2*sh, R=R, verbose=False, parallel=False, erode=True)
 
-            df_inf = pd.DataFrame({'x': x_inf, 'y': y_inf, 'p': p_inf}, index=wrkTiles).loc[infTiles]
+            searchTiles = ads[p[0]].obs.set_index(['pxl_col_in_wsi', 'pxl_row_in_wsi'])['original_barcode'].loc[pd.MultiIndex.from_arrays([x_inf, y_inf], names=['pxl_col_in_wsi', 'pxl_row_in_wsi'])].values
+            df_inf = pd.DataFrame({'x': x_inf, 'y': y_inf, 'p': p_inf}, index=searchTiles).loc[infTiles]
 
             axDiff.imshow(img_, alpha=1.)
+            f = pyramidscale**L
 
             heatmap = np.zeros((dims[0], dims[1]), dtype=np.float32) * np.nan
-            for i, t in enumerate(df_inf.index):
-                x, y = df_inf.loc[t][['x', 'y']]
-                f = pyramidscale**L
-                heatmap[int((df_inf.loc[t, 'y']-x1-sh)/f):int((df_inf.loc[t, 'y']-x1+sh)/f),
-                        int((df_inf.loc[t, 'x']-y1-sh)/f):int((df_inf.loc[t, 'x']-y1+sh)/f)] = df_inf.loc[t, 'p']
+            idata = interpolate_points(df_inf['x'], df_inf['y'], df_inf['p'], multiplier=64)
+            for x_temp, y_temp, p_temp in zip(idata[0], idata[1], idata[2]):
+                heatmap[int((y_temp-x1-sh)/f):int((y_temp-x1+sh)/f),
+                        int((x_temp-y1-sh)/f):int((x_temp-y1+sh)/f)] = p_temp
+
+            # points_data = df_inf[['x', 'y', 'p']].values
+            # heatmap0 = np.zeros((dims[0], dims[1]), dtype=np.float32) * np.nan
+            # for x_temp, y_temp, p_temp in zip(points_data[:, 0], points_data[:, 1], points_data[:, 2]):
+            #     heatmap0[int((y_temp-x1-sh)/f):int((y_temp-x1+sh)/f),
+            #             int((x_temp-y1-sh)/f):int((x_temp-y1+sh)/f)] = p_temp  
+            # heatmap[np.isnan(heatmap0)] = np.nan
 
             cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
             pparams = dict(cmap=cmap, alpha=0.85, vmin=0, vmax=1)
-            if True:
-                # Display as heatmap
-                imh = axDiff.imshow(heatmap, **pparams)
-            else:
-                # Display as points
-                imh = axDiff.scatter((df_inf['x']-y1)/f, (df_inf['y']-x1)/f, c=df_inf['p'],
-                                    marker='s', s=250, **pparams)
+            imh = axDiff.imshow(heatmap, **pparams)
+
 
             plt.colorbar(imh, ax=axDiff, shrink=0.35)
             axDiff.axis('off')

@@ -23,6 +23,7 @@ from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.metrics import adjusted_rand_score as ARI
 
 from scipy.spatial import KDTree
+from scipy.ndimage import generic_filter
 from joblib import Parallel, delayed
 
 import tifffile
@@ -34,6 +35,37 @@ from matplotlib import cm
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
+
+def erodePointProbs(x, y, p, R=2):
+
+    def soft_erode_circle(prob_mask, radius=3):
+
+        def circular_footprint(radius):
+
+            y, x = np.ogrid[-radius:radius+1, -radius:radius+1]
+            mask = x**2 + y**2 <= radius**2
+            return mask
+
+        footprint = circular_footprint(radius)
+        eroded = generic_filter(prob_mask, np.nanmin, footprint=footprint)
+        return eroded
+
+    tspx = int(np.round(np.median(np.diff(np.unique(np.sort(x))))))
+
+    col = np.floor(np.array(x)/(tspx)).astype(int)
+    row = np.floor(np.array(y)/(tspx)).astype(int)
+    arr = np.zeros((int(max(row))+1, int(max(col))+1), dtype=np.float32) * np.nan
+
+    raw_prob = np.array(p)
+    for i in range(len(raw_prob)):
+        arr[row[i], col[i]] = raw_prob[i]
+    earr = soft_erode_circle(arr, radius=R-1)
+
+    ep = np.zeros_like(p)
+    for i in range(len(raw_prob)):
+        ep[i] = earr[row[i], col[i]]
+
+    return ep
 
 def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbose=False, useInputImagePath=False):
 
@@ -203,7 +235,7 @@ def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05, sample_id=None, ve
         print('Prepared patches:', df_temp_img_tiles['patch'].nunique())
     return df_temp_img_tiles
 
-def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, verbose=True, avgNegativePatchCDF=None):
+def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, verbose=True, avgNegativePatchCDF=None, erode=True):
 
     '''Infer the probability of each tile in the image using a trained classifier.
 
@@ -247,6 +279,18 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
 
     Nmax : int, optional
         Maximum number of tiles to process (default is 10^7).
+
+    parallel : bool, optional
+        If True, use parallel processing (default is True).
+
+    verbose : bool, optional
+        If True, print progress information (default is True).
+
+    avgNegativePatchCDF : DataFrame, optional
+        Average CDF of negative patches for adjustment (default is None).
+
+    erode : bool, optional
+        If True, apply erosion to the predicted probabilities (default is True).
 
     Returns
     -------
@@ -387,6 +431,9 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
         x.extend(results[(i, j)]['x'])
         y.extend(results[(i, j)]['y'])
         p.extend(results[(i, j)]['p'])
+
+    if erode:
+        p = erodePointProbs(x, y, p, R=R)
 
     return x, y, p
 
@@ -621,7 +668,7 @@ def showProbImg(x, y, p, f=1, ts=56, mpp=0.25, figsize=(3, 3), colorbar=True, fi
     def funcScale(x, f):
         xa = (np.array(x) / (ts/mpp))
         xa -= np.min(xa)
-        return xa.astype(int) * f
+        return np.round(xa * float(f)).astype(int)
 
     xa = funcScale(x, f)
     ya = funcScale(y, f)
@@ -681,8 +728,6 @@ def showGridProb(ads, clf, samples, qs, ts=56, mpp=0.25, R=2, dpi=150, size=3., 
     fig.tight_layout()
     plt.show()
     return
-
-
 
 def showMolecularData(sample, df_coordinates, se_color, figsize=(6, 6), cmap='coolwarm', vmin=0, vmax=15, shrink=0.5):
     
@@ -812,7 +857,7 @@ def makeManualAndAutomatedAnnotationComparison(ad, se_inf, se_anno, case, cmapCo
         def funcScale(x, f):
             xa = (np.array(x) / (ts/mpp))
             xa -= np.min(xa)
-            return xa.astype(int) * f
+            return np.round(xa * float(f)).astype(int)
 
         xa = funcScale(x, f)
         ya = funcScale(y, f)
@@ -883,8 +928,8 @@ def makeManualAndAutomatedAnnotationComparison(ad, se_inf, se_anno, case, cmapCo
 
     return
 
-def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, cmapColors=['lightcoral', 'gold', 'blue'], panel_size=3, aspect=1.,
-                filter=None, f=1, ts=56, mpp=0.25, vmin=0, vmax=1, verbose=False, threshold_for_metrics=0.5, plot=True, ysup=None, show_segmenter=True):
+def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, cmapColors=['lightcoral', 'gold', 'blue'], panel_size=2, aspect=1.,
+                filter=None, f=1, ts=56, mpp=0.25, vmin=0, vmax=1, verbose=False, threshold_for_metrics=0.5, plot=True, ysup=None, show_segmenter=True, flat=False, dpi=100):
 
     """Compare manual annotations with DIANNE inference results.
     Manual annotations are shown on the left, DIANNE inference results on the right.
@@ -940,7 +985,7 @@ def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, 
         def funcScale(x, f):
             xa = (np.array(x) / (ts/mpp))
             xa -= np.min(xa)
-            return xa.astype(int) * f
+            return np.round(xa * float(f)).astype(int)
 
         xa = funcScale(x, f)
         ya = funcScale(y, f)
@@ -999,7 +1044,12 @@ def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, 
 
     if plot:
         n_panels = 4 if show_segmenter else 3
-        fig, axs = plt.subplots(1, n_panels, figsize=(panel_size*f*n_panels*aspect, panel_size*f))
+
+        if flat:
+            fig, axs = plt.subplots(1, n_panels, figsize=(panel_size*f*n_panels*aspect, panel_size*f), dpi=dpi)
+        else:
+            fig, axs = plt.subplots(2, 2, figsize=(panel_size*f*2*aspect, panel_size*f*2), dpi=dpi)
+            axs = axs.flatten()
 
         cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
     
@@ -1063,7 +1113,7 @@ def makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, 
 
 
 
-        plt.suptitle(f'Case: {case}', fontsize=16, y=ysup)
+        # plt.suptitle(f'Case: {case}', fontsize=16, y=ysup)
         plt.tight_layout()
         plt.show()
 
@@ -1087,7 +1137,7 @@ def get_tile_mask_means(mfile, ts, mpp, coords):
         means = [0.0] * len(coords)
     return means
 
-def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctranspath', qs=None):
+def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctranspath', qs=None, f=1):
     try:
         ad = loadAd(path, fname=f'features/false-{F}-{featset}_features.tsv.gz')[0]
         ts = 56 * 2
@@ -1108,13 +1158,13 @@ def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctransp
         cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-normal/{case}_attention_weights.csv'
         se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
 
-        temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85)
+        temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85, f=f)
     except Exception as e:
         temp = None
         print(f'Error processing case {case}: {e}')
     return temp
 
-def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, F=2, featset='ctranspath', qs=None):
+def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, F=2, featset='ctranspath', qs=None, f=1, dpi=100):
     mfile = annotationsPath + case + '_manual_annotation_tumor_mask.tiff'
     if os.path.isfile(mfile):
         m = tifffile.imread(mfile)
@@ -1137,11 +1187,9 @@ def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, 
             cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-tumor/{case}_attention_weights.csv'
             se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
 
-            temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85)
+            temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=1.5, f=f, dpi=dpi)
         except Exception as e:
             temp = None
             print(f'Error processing case {case}: {e}')
 
     return temp
-
-

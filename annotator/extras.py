@@ -6,26 +6,26 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
 from matplotlib.patches import Patch
 
-def show_chosen_alpha_plot(path, F=2, alpha=0.80):
-    dfrn = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}.csv')
-    dfr = pd.read_csv(f'{path}/tumor-F{F}-{alpha:.2f}.csv')
+def show_chosen_alpha_plot(path, F=2, alpha=0.80, dpi=75):
+    dfrn = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}-None.csv')
+    dfr = pd.read_csv(f'{path}/tumor-F{F}-{alpha:.2f}-None.csv')
 
-    fix, axs = plt.subplots(1, 2, figsize=(7,4), gridspec_kw = {'width_ratios':[2, 3]})
-    ax = axs[0]
-    s = 10
-    ax.scatter(dfr['dianne_recall'], dfr['dianne_precision'], alpha=0.75, label='DIANNE', s=s, clip_on=False)
-    ax.scatter(dfr['clam_recall'], dfr['clam_precision'], alpha=0.75, label='CLAM', s=s, clip_on=False)
-    ax.scatter(dfr['segmenter_recall'], dfr['segmenter_precision'], alpha=0.75, label='Segmenter', s=s, clip_on=False, color='olive')
-    ax.set_xlabel('Recall', fontsize=14)
-    ax.set_ylabel('Precision', fontsize=14)
-    ax.set_aspect('equal', 'box')
-    ax.set_xlim(-0.025, 1.025)
-    ax.set_ylim(-0.025, 1.025)
-    ax.legend(fontsize=10, frameon=True, framealpha=0.35, loc='lower left')
+    fix, ax = plt.subplots(1, 1, figsize=(4,4), dpi=dpi)
+    # fix, axs = plt.subplots(1, 2, figsize=(7,4), gridspec_kw = {'width_ratios':[2, 3]}, dpi=dpi)
+    # ax = axs[0]
+    # s = 10
+    # ax.scatter(dfr['dianne_recall'], dfr['dianne_precision'], alpha=0.75, label='DIANNE', s=s, clip_on=False)
+    # ax.scatter(dfr['clam_recall'], dfr['clam_precision'], alpha=0.75, label='CLAM', s=s, clip_on=False)
+    # ax.scatter(dfr['segmenter_recall'], dfr['segmenter_precision'], alpha=0.75, label='Segmenter', s=s, clip_on=False, color='olive')
+    # ax.set_xlabel('Recall', fontsize=14)
+    # ax.set_ylabel('Precision', fontsize=14)
+    # ax.set_aspect('equal', 'box')
+    # ax.set_xlim(-0.025, 1.025)
+    # ax.set_ylim(-0.025, 1.025)
+    # ax.legend(fontsize=10, frameon=True, framealpha=0.35, loc='lower left')
 
     flierprops = dict(marker='o', markersize=4, markerfacecolor='grey', markeredgecolor='none')
 
-    ax = axs[1]
     dianne_boxes = ax.boxplot(
         [dfr['dianne_precision'].dropna(), dfr['dianne_recall'].dropna(), 1.-dfr['dianne_fpr'].dropna(), 1.-dfrn['dianne_fpr'].dropna()],
         tick_labels=['Precision', 'Recall', 'Specificity', 'Sp. normal'],
@@ -44,7 +44,9 @@ def show_chosen_alpha_plot(path, F=2, alpha=0.80):
         flierprops=flierprops
     )
 
-
+    # print(dfr.set_index('Unnamed: 0').loc['RMS2148.oid0'])
+    # print((1.-dfr['segmenter_fpr'].dropna()))
+    # print((1.-dfr['segmenter_fpr'].dropna().loc['RMS2148.oid0']))
     segmenter_boxes = ax.boxplot(
         [dfr['segmenter_precision'].dropna(), dfr['segmenter_recall'].dropna(), (1.-dfr['segmenter_fpr'].dropna()), (1.-dfrn['segmenter_fpr'].dropna())],
         tick_labels=['Precision', 'Recall', 'Specificity', 'Sp. normal'],
@@ -74,7 +76,7 @@ def show_chosen_alpha_plot(path, F=2, alpha=0.80):
     plt.show()
     return
 
-def show_alphas_plot(path, F=2):
+def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
     # ', '.join([f'{v:.2f}' for v in np.linspace(0.0, 1.0, 21, endpoint=True)])
     # ', '.join([f'{v:.2f}' for v in np.linspace(0.0, 0.15, 15, endpoint=True)])
 
@@ -111,7 +113,7 @@ def show_alphas_plot(path, F=2):
                                                         'dianne_fpr_normal': ['mean', 'std'],})], axis=1)
 
     r = 1.2 / 2.0
-    fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True, figsize=(9, 4.5), gridspec_kw={'wspace': 0.05, 'hspace': 0., 'width_ratios': [r, 1]})
+    fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True, figsize=figsize, gridspec_kw={'wspace': 0.05, 'hspace': 0., 'width_ratios': [r, 1]})
 
     ax1.set_xlim(-0.005, 0.155)
     ax2.set_xlim(0.145, 1.025)
@@ -159,3 +161,88 @@ def show_alphas_plot(path, F=2):
 
     plt.show()
     return
+
+def show_nmaxs_plot(path, F=2, alpha=0.8,
+                    nmaxs=[5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 
+                        125, 150, 175, 200, 250, 300, 400, 500, 600, 700, 750], figsize=(9, 4.5)):
+
+    dfs = []
+    for nmax in nmaxs:
+        df = pd.read_csv(f'{path}/tumor-F{F}-{alpha:.2f}-{nmax}.csv', index_col=0)
+        df['N'] = nmax
+        dfs.append(df)
+    dft = pd.concat(dfs)
+    dft['dianne_specificity'] = 1 - dft['dianne_fpr']
+
+    dfs = []
+    for nmax in nmaxs:
+        df = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}-{nmax}.csv', index_col=0)
+        df['N'] = nmax
+        dfs.append(df)
+    dfn = pd.concat(dfs)
+    dfn = dfn.rename(columns={'dianne_fpr': 'dianne_fpr_normal'}).fillna(0.)
+    dfn['dianne_specificity_normal'] = 1 - dfn['dianne_fpr_normal']
+
+    df_sub = dft.groupby('N').agg({
+        'dianne_precision': ['mean', 'std'],
+        'dianne_recall': ['mean', 'std'],
+        'dianne_accuracy': ['mean', 'std'],
+        'dianne_specificity': ['mean', 'std'],
+        'dianne_fpr': ['mean', 'std'],
+        'dianne_f1_score': ['mean', 'std'],
+    })
+
+    df_sub = pd.concat([df_sub, dfn.groupby('N').agg({'dianne_specificity_normal': ['mean', 'std'],
+                                                        'dianne_fpr_normal': ['mean', 'std'],})], axis=1)
+
+    r = 1.2 / 2.0
+    fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True, figsize=figsize, gridspec_kw={'wspace': 0.05, 'hspace': 0., 'width_ratios': [r, 1]})
+
+    ax1.set_xlim(-1, 105)
+    ax2.set_xlim(110, 800 + 10)
+
+    # hide the spines between ax and ax2
+    ax1.spines['right'].set_visible(False)
+    ax2.spines['left'].set_visible(False)
+    ax1.yaxis.tick_left()
+    ax1.tick_params(labelright='off')
+
+    d = 0.015
+    kwargs1 = dict(transform=ax1.transAxes, color='k', clip_on=False)
+    ax1.plot((1-d, 1+d), (-d, +d), **kwargs1)
+    ax1.plot((1-d, 1+d), (1-d, 1+d), **kwargs1)
+    kwargs2 = dict(transform=ax2.transAxes, color='k', clip_on=False)
+    ax2.plot((-d*r, +d*r), (1-d, 1+d), **kwargs2)
+    ax2.plot((-d*r, +d*r), (-d, +d), **kwargs2)
+
+
+    ax1.set_ylabel('Score', fontsize=16)
+
+    def plot_smooth(ax, x, y, err, color='navy', label='Precision', alpha=0.85):
+        x_smooth = np.linspace(x.min(), x.max(), 300)
+        spline = make_interp_spline(x, y)
+        y_smooth = gaussian_filter1d(y, sigma=1.5)
+        ax.errorbar(x, y, yerr=err, fmt='o', color=color, label=label, capsize=3, alpha=alpha)
+        ax.plot(x, y_smooth, color=color, alpha=alpha)
+        return
+
+    for ax in (ax1, ax2):
+        plot_smooth(ax, df_sub.index, df_sub['dianne_precision']['mean'], df_sub['dianne_precision']['std'], color='navy', label='Precision')
+        plot_smooth(ax, df_sub.index, df_sub['dianne_recall']['mean'], df_sub['dianne_recall']['std'], color='maroon', label='Recall')
+        plot_smooth(ax, df_sub.index, df_sub['dianne_specificity']['mean'], df_sub['dianne_specificity']['std'], color='black', label='Specificity')
+        plot_smooth(ax, df_sub.index, df_sub['dianne_specificity_normal']['mean'], df_sub['dianne_specificity_normal']['std'], color='darkgray', label='Sp. normal')
+
+        ax.grid()
+
+    ax1.tick_params(left=True, labelright=False)
+
+    ax2.legend(loc='lower right', fontsize=14)
+    # ax1.axvline(x=60, color='gold', linestyle='-', linewidth=7.0, alpha=0.5)
+    ax1.axvspan(58, 1000, alpha=0.5, color='lightgreen')
+    ax2.axvspan(58, 1000, alpha=0.5, color='lightgreen')
+
+    fig.text(0.5, 0.04, r'Maximum number of positive and negative slides, $N_{max}$', ha='center', va='top', fontsize=14)
+
+    plt.show()
+    return
+
