@@ -69,7 +69,7 @@ def getXy(curated_positive, curated_negative, patchesCDFs, alpha=None, augFunc=N
                             pd.Series(index=curated_negative, data=0)]).loc[X_train.index]
     return X_train, y_train
 
-def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_results, L=1, sh=112, pyramidscale=4, nInRow=4, startParams=None,
+def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_results, L=1, sh=112, pyramidscale=4, nInRow=4, startParams=None, verbose=False,
                             figsize=(5, 5), addOutline=True, minDiscrepancy=0.25, minN=8, samplesPerFold=4, nRepeats=10, alpha=0.5, augFunc=None, seed=None):
 
     np.random.seed(seed)
@@ -165,8 +165,9 @@ def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_re
         curated_positive = pd.MultiIndex.from_tuples(temp_positive) if len(temp_positive)>0 else emptyIndex
         temp_negative = [k for k in button_press_results.keys() if button_press_results[k]=='negative']
         curated_negative = pd.MultiIndex.from_tuples(temp_negative) if len(temp_negative)>0 else emptyIndex
-        # print('Positive: ', curated_positive.difference(emptyIndex).shape[0], end='\n')
-        # print('Negative: ', curated_negative.difference(emptyIndex).shape[0], end='\n')
+        if verbose:
+            print('Positive: ', curated_positive.difference(emptyIndex).shape[0], end='\n')
+            print('Negative: ', curated_negative.difference(emptyIndex).shape[0], end='\n')
 
         if (curated_positive.difference(emptyIndex).shape[0]>=minN) and (curated_negative.difference(emptyIndex).shape[0]>=minN):
             clf = LR(penalty='l2', C=10, class_weight='balanced', solver='liblinear', max_iter=1000)
@@ -175,7 +176,8 @@ def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_re
 
             effective_minN = min(curated_positive.difference(emptyIndex).shape[0], curated_negative.difference(emptyIndex).shape[0])
             n_folds = max(2, effective_minN // samplesPerFold)
-            # print('Number of folds:', n_folds)
+            if verbose:
+                print('Number of folds:', n_folds)
 
             deviation_scores = np.zeros(len(curated_positive) + len(curated_negative), dtype=float)
             counts = np.zeros(len(deviation_scores), dtype=int)
@@ -208,11 +210,10 @@ def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_re
 
             potentially_false_positive = se.index.intersection(curated_positive)
             potentially_false_negative = se.index.intersection(curated_negative)
-            # print("Potentially false positive patches:", potentially_false_positive)
-            # print("Potentially false negative patches:", potentially_false_negative)
-            # print('Total patches with discrepancies above threshold:', len(se))
-
-            nRows = int(np.ceil(len(se) / nInRow))
+            if verbose:
+                print("Potentially false positive patches:", potentially_false_positive)
+                print("Potentially false negative patches:", potentially_false_negative)
+                print('Total patches with discrepancies above threshold:', len(se))
 
         return
 
