@@ -15,8 +15,6 @@ from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegression as LR
 from sklearn.decomposition import PCA
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import RepeatedStratifiedKFold
-from sklearn.base import clone
 from scipy.spatial.distance import pdist, squareform
 from scipy.ndimage import gaussian_filter
 import scipy
@@ -40,19 +38,6 @@ from matplotlib.colors import ListedColormap
 
 import ipywidgets as widgets
 
-def crossval_deviation(X, y, clf, k=4, repeats=5):
-    rskf = RepeatedStratifiedKFold(n_splits=k, n_repeats=repeats, random_state=42)
-    deviation_scores = np.zeros(len(y), dtype=float)
-    counts = np.zeros(len(y), dtype=int)
-    for train_idx, val_idx in rskf.split(X, y):
-        clf_fold = clone(clf)
-        clf_fold.fit(X[train_idx], y[train_idx])
-        preds = clf_fold.predict(X[val_idx])
-        disagreement = (preds != y[val_idx]).astype(float)
-        deviation_scores[val_idx] += disagreement
-        counts[val_idx] += 1
-    return deviation_scores / counts
-
 def normalize_pseudo_channels(image, bounds):
     clipped_image = np.empty_like(image)
     for i in range(3):
@@ -60,6 +45,195 @@ def normalize_pseudo_channels(image, bounds):
         clipped_image[..., i] = np.clip(image[..., i], lower, upper)
         clipped_image[..., i] = ((clipped_image[..., i] - lower) / (upper - lower) * 255.)
     return clipped_image.astype(np.uint8)
+
+def getXy(curated_positive, curated_negative, patchesCDFs, alpha=None, augFunc=None):
+    if not alpha is None:
+        dpos = {}
+        for s_pos in curated_positive:
+            s_neg = np.random.choice(curated_negative)
+            df_pos = patchesCDFs.loc[s_pos].unstack()
+            df_neg = patchesCDFs.loc[s_neg].unstack()
+            assert df_pos.index.equals(df_neg.index)
+            acdf = augFunc(df_pos.index.values, df_pos.values, 
+                        df_neg.values, alpha=alpha, beta=1.-alpha)
+            acdf = pd.DataFrame(index=df_pos.index,
+                                columns=df_pos.columns,
+                                data=acdf)
+            dpos[s_pos] = acdf.T.sort_index().T.stack().rename(s_pos)
+        X_train = pd.concat([pd.DataFrame(dpos).T, patchesCDFs.loc[curated_negative]])
+        y_train = pd.concat([pd.Series(index=curated_positive, data=1),
+                            pd.Series(index=curated_negative, data=0)]).loc[X_train.index]
+    else:
+        X_train = patchesCDFs.loc[curated_positive.union(curated_negative)]
+        y_train = pd.concat([pd.Series(index=curated_positive, data=1),
+                            pd.Series(index=curated_negative, data=0)]).loc[X_train.index]
+    return X_train, y_train
+
+def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_results, L=1, sh=112, pyramidscale=4, nInRow=4, startParams=None,
+                            figsize=(5, 5), addOutline=True, minDiscrepancy=0.25, minN=8, samplesPerFold=4, nRepeats=10, alpha=0.5, augFunc=None, seed=None):
+
+    np.random.seed(seed)
+
+    patchCoordinatesFull = patchCoordinates.copy()
+    patchCoordinates = patchCoordinates.set_index('patch', append=True).droplevel('barcode', axis=0)
+    patchCoordinates = patchCoordinates.sort_index()
+
+    progress_bar = widgets.IntProgress(value=0, min=0, max=nRepeats, description='Calculating:',
+                                       bar_style='info', orientation='horizontal')
+    display(progress_bar)
+
+    potentially_false_positive = []
+    potentially_false_negative = []
+    p_ind = None
+    p = None
+
+    yes_button = widgets.Button(description='confirm', button_style='success')
+    no_button = widgets.Button(description='remove', button_style='Warning')
+    hbox = widgets.HBox([yes_button, no_button], layout=widgets.Layout(justify_content='flex-start'))
+    the_output = widgets.Output()
+    clear_output_widget = widgets.VBox([hbox, the_output])
+
+    def showOne():
+
+        nonlocal p
+        nonlocal p_ind
+        nonlocal potentially_false_positive
+        nonlocal potentially_false_negative
+
+        if p_ind is None:
+            p_ind = 0
+        elif p_ind > len(potentially_false_positive) + len(potentially_false_negative) - 1:
+            print(f'All {p_ind} patches inspected.')
+            hbox.layout.display = 'none'
+            return
+
+        print('Inspecting patch %d of %d' % (p_ind + 1, len(potentially_false_positive) + len(potentially_false_negative)))
+        if p_ind <= len(potentially_false_positive)-1:
+            p = potentially_false_positive[p_ind]
+            patchType = 'positive'
+        else:
+            p = potentially_false_negative[p_ind - len(potentially_false_positive)]
+            patchType = 'negative'
+
+        img_, x1, x2, y1, y2 = loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs)
+
+        if not startParams is None and 'mif_pca' in startParams.keys() and 'mif_bounds' in startParams.keys():
+            temp_imgp = startParams['mif_pca'].transform(img_.reshape(-1, img_.shape[-1]))
+            temp_imgp = temp_imgp.reshape(img_.shape[0], img_.shape[1], 3 * startParams['mif_nrep_pca'])
+            temp_imgp = np.dstack([temp_imgp[..., i::3].sum(axis=-1)[..., None] for i in range(3)])
+            img_ = normalize_pseudo_channels(temp_imgp, startParams['mif_bounds'])
+
+        dims = img_.shape
+        imgMarked = img_.copy()
+        if addOutline:
+            if patchType == 'positive':
+                color = np.array([50, 50, 200], dtype=np.uint8)
+            elif patchType == 'negative':
+                color = np.array([255, 0, 0], dtype=np.uint8)
+            else:
+                color = np.array([240, 150, 0], dtype=np.uint8)
+
+            borderWidth = max(1, int(0.01 * min(dims[0], dims[1])))
+            
+            if not color is None:
+                imgMarked[:borderWidth, :, :] = color
+                imgMarked[-borderWidth:, :, :] = color
+                imgMarked[:, :borderWidth, :] = color
+                imgMarked[:, -borderWidth:, :] = color
+
+        fig, axMain = plt.subplots(figsize=figsize)
+
+        axMain.imshow(imgMarked)
+        axMain.set_xlim([0, imgMarked.shape[1]])
+        axMain.set_ylim([imgMarked.shape[0], 0])
+        axMain.axis('off')
+        axMain.set_title(p)
+
+        plt.show()
+
+        p_ind += 1
+
+        return
+
+    def getSuspects():
+
+        nonlocal potentially_false_positive
+        nonlocal potentially_false_negative
+
+        emptyIndex = pd.MultiIndex.from_tuples([((), ())])
+        temp_positive = [k for k in button_press_results.keys() if button_press_results[k]=='positive']
+        curated_positive = pd.MultiIndex.from_tuples(temp_positive) if len(temp_positive)>0 else emptyIndex
+        temp_negative = [k for k in button_press_results.keys() if button_press_results[k]=='negative']
+        curated_negative = pd.MultiIndex.from_tuples(temp_negative) if len(temp_negative)>0 else emptyIndex
+        # print('Positive: ', curated_positive.difference(emptyIndex).shape[0], end='\n')
+        # print('Negative: ', curated_negative.difference(emptyIndex).shape[0], end='\n')
+
+        if (curated_positive.difference(emptyIndex).shape[0]>=minN) and (curated_negative.difference(emptyIndex).shape[0]>=minN):
+            clf = LR(penalty='l2', C=10, class_weight='balanced', solver='liblinear', max_iter=1000)
+            curated_positive = curated_positive.difference(emptyIndex)
+            curated_negative = curated_negative.difference(emptyIndex)
+
+            effective_minN = min(curated_positive.difference(emptyIndex).shape[0], curated_negative.difference(emptyIndex).shape[0])
+            n_folds = max(2, effective_minN // samplesPerFold)
+            # print('Number of folds:', n_folds)
+
+            deviation_scores = np.zeros(len(curated_positive) + len(curated_negative), dtype=float)
+            counts = np.zeros(len(deviation_scores), dtype=int)
+            df = []
+            for _ in range(nRepeats):
+                splits_positive = np.array_split(np.random.permutation(curated_positive), n_folds)
+                splits_negative = np.array_split(np.random.permutation(curated_negative), n_folds)
+
+                ses = []
+                for i in range(n_folds):
+                    X_test, y_test = getXy(splits_positive[i],
+                                        splits_negative[i],
+                                        patchesCDFs, alpha=alpha, augFunc=augFunc)
+                    X_train, y_train = getXy(curated_positive.difference(splits_positive[i]),
+                                            curated_negative.difference(splits_negative[i]),
+                                            patchesCDFs, alpha=alpha, augFunc=augFunc)
+                    clf.fit(X_train, y_train)
+                    preds = clf.predict(X_test)
+                    
+                    ses.append(y_test!=preds)
+                ses = pd.concat(ses).astype(int).sort_index()
+                df.append(ses)
+                progress_bar.value += 1
+
+            progress_bar.layout.display = 'none'
+
+            df = pd.concat(df, axis=1)
+            se = df.mean(axis=1)
+            se = se[se>minDiscrepancy]
+
+            potentially_false_positive = se.index.intersection(curated_positive)
+            potentially_false_negative = se.index.intersection(curated_negative)
+            # print("Potentially false positive patches:", potentially_false_positive)
+            # print("Potentially false negative patches:", potentially_false_negative)
+            # print('Total patches with discrepancies above threshold:', len(se))
+
+            nRows = int(np.ceil(len(se) / nInRow))
+
+        return
+
+    getSuspects()
+
+    def button_clicked(_button):
+        nonlocal p
+        the_output.clear_output()
+        if _button.description=='remove':
+            button_press_results.pop(p)
+        with the_output:
+            showOne()
+        return
+
+    with the_output:
+        showOne()
+    
+    yes_button.on_click(button_clicked)
+    no_button.on_click(button_clicked)
+
+    return clear_output_widget
 
 def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, ads=None, qs=None, L=1, sh=112, pyramidscale=4,
                 minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue'],
@@ -239,14 +413,6 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                                      pd.Series(index=curated_negative, data=0)]).loc[X_train.index]
             
             X_test = patchesCDFs.loc[uncurated]
-
-            if False:
-                scores_cutoff = 0.8
-                if len(y_train) >= 16:
-                    k = int(np.floor(len(y_train)/8))
-                    scores = crossval_deviation(X_train.values, y_train.values, clf, k=k)
-                    high_deviations = scores[scores > scores_cutoff]
-                    print(len(high_deviations), "of", len(y_train), "curated patches have high cross-validation deviation")
 
             clf.fit(X_train.values, y_train.values)
             clf.feat = X_train.columns.get_level_values(1) + '_' + pd.Index(np.round(X_train.columns.get_level_values(0), 2).astype(str))
@@ -524,23 +690,14 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                 heatmap[int((y_temp-x1-sh)/f):int((y_temp-x1+sh)/f),
                         int((x_temp-y1-sh)/f):int((x_temp-y1+sh)/f)] = p_temp
 
-            # points_data = df_inf[['x', 'y', 'p']].values
-            # heatmap0 = np.zeros((dims[0], dims[1]), dtype=np.float32) * np.nan
-            # for x_temp, y_temp, p_temp in zip(points_data[:, 0], points_data[:, 1], points_data[:, 2]):
-            #     heatmap0[int((y_temp-x1-sh)/f):int((y_temp-x1+sh)/f),
-            #             int((x_temp-y1-sh)/f):int((x_temp-y1+sh)/f)] = p_temp  
-            # heatmap[np.isnan(heatmap0)] = np.nan
-
             cmap = LinearSegmentedColormap.from_list(None, cmapColors, N=256)
             pparams = dict(cmap=cmap, alpha=0.85, vmin=0, vmax=1)
             imh = axDiff.imshow(heatmap, **pparams)
-
 
             plt.colorbar(imh, ax=axDiff, shrink=0.35)
             axDiff.axis('off')
             axDiff.set_aspect('equal')
             axDiff.set_title('Positive class probability')
-
 
         plt.tight_layout()
         plt.show()
