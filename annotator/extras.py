@@ -26,8 +26,10 @@ def show_chosen_alpha_plot(path, F=2, alpha=0.80, dpi=75):
 
     flierprops = dict(marker='o', markersize=4, markerfacecolor='grey', markeredgecolor='none')
 
+    data = [dfr['dianne_precision'].dropna(), dfr['dianne_recall'].dropna(), 1.-dfr['dianne_fpr'].dropna(), 1.-dfrn['dianne_fpr'].dropna()]
+    print(f'DIANNE medians.\tPrecision {np.median(data[0]):.3f}, Recall {np.median(data[1]):.3f}, Specificity {np.median(data[2]):.3f}, Sp. normal {np.median(data[3]):.3f}')
     dianne_boxes = ax.boxplot(
-        [dfr['dianne_precision'].dropna(), dfr['dianne_recall'].dropna(), 1.-dfr['dianne_fpr'].dropna(), 1.-dfrn['dianne_fpr'].dropna()],
+        data,
         tick_labels=['Precision', 'Recall', 'Specificity', 'Sp. normal'],
         positions=[1, 2, 3, 4],
         widths=0.6,
@@ -35,8 +37,10 @@ def show_chosen_alpha_plot(path, F=2, alpha=0.80, dpi=75):
         flierprops=flierprops
     )
 
+    data = [dfr['clam_precision'].dropna(), dfr['clam_recall'].dropna(), 1.-dfr['clam_fpr'].dropna(), 1.-dfrn['clam_fpr'].dropna()]
+    print(f'CLAM medians.\tPrecision {np.median(data[0]):.3f}, Recall {np.median(data[1]):.3f}, Specificity {np.median(data[2]):.3f}, Sp. normal {np.median(data[3]):.3f}')
     clam_boxes = ax.boxplot(
-        [dfr['clam_precision'].dropna(), dfr['clam_recall'].dropna(), 1.-dfr['clam_fpr'].dropna(), 1.-dfrn['clam_fpr'].dropna()],
+        data,
         tick_labels=['Precision', 'Recall', 'Specificity', 'Sp. normal'],
         positions=[8, 9, 10, 11],
         widths=0.6,
@@ -44,11 +48,10 @@ def show_chosen_alpha_plot(path, F=2, alpha=0.80, dpi=75):
         flierprops=flierprops
     )
 
-    # print(dfr.set_index('Unnamed: 0').loc['RMS2148.oid0'])
-    # print((1.-dfr['segmenter_fpr'].dropna()))
-    # print((1.-dfr['segmenter_fpr'].dropna().loc['RMS2148.oid0']))
+    data = [dfr['segmenter_precision'].dropna(), dfr['segmenter_recall'].dropna(), (1.-dfr['segmenter_fpr'].dropna()), (1.-dfrn['segmenter_fpr'].dropna())]
+    print(f'Segm. medians.\tPrecision {np.median(data[0]):.3f}, Recall {np.median(data[1]):.3f}, Specificity {np.median(data[2]):.3f}, Sp. normal {np.median(data[3]):.3f}')
     segmenter_boxes = ax.boxplot(
-        [dfr['segmenter_precision'].dropna(), dfr['segmenter_recall'].dropna(), (1.-dfr['segmenter_fpr'].dropna()), (1.-dfrn['segmenter_fpr'].dropna())],
+        data,
         tick_labels=['Precision', 'Recall', 'Specificity', 'Sp. normal'],
         positions=[15, 16, 17, 18],
         widths=0.6,
@@ -85,7 +88,7 @@ def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
 
     dfs = []
     for alpha in alphas:
-        df = pd.read_csv(f'{path}/tumor-F{F}-{alpha:.2f}.csv', index_col=0)
+        df = pd.read_csv(f'{path}/tumor-F{F}-{alpha:.2f}-None.csv', index_col=0)
         df['alpha'] = alpha
         dfs.append(df)
     dft = pd.concat(dfs)
@@ -93,7 +96,7 @@ def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
 
     dfs = []
     for alpha in alphas:
-        df = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}.csv', index_col=0)
+        df = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}-None.csv', index_col=0)
         df['alpha'] = alpha
         dfs.append(df)
     dfn = pd.concat(dfs)

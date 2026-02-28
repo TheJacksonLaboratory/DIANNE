@@ -38,6 +38,12 @@ from matplotlib.colors import ListedColormap
 
 import ipywidgets as widgets
 
+import warnings
+
+warnings.filterwarnings("ignore",
+    message="All-NaN slice encountered",
+    category=RuntimeWarning)
+
 def normalize_pseudo_channels(image, bounds):
     clipped_image = np.empty_like(image)
     for i in range(3):
@@ -237,9 +243,9 @@ def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_re
     return clear_output_widget
 
 def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clfd, plog, ads=None, qs=None, L=1, sh=112, pyramidscale=4,
-                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue'],
+                minN=2, alpha=0.5, augFunc=None, figsize=(5, 5), dpi=100, seed=None, randomness=1., addOutline=True, pcut=[0.25, 0.75], R=1, cmapColors=['red', 'blue'],
                 xeniumBundlePaths=None, xeniumMatrixPaths=None, selectedGenes=None, minCount=1, cmapGenes='viridis', numColumns='auto',
-                transcriptsAlpha=0.85, transcriptsColor='lime', transcriptsSize=2., startParams=None,
+                transcriptsAlpha=0.85, transcriptsColor='lime', transcriptsSize=2., startParams=None, do_uniform_curation=False,
                 loadCells=False, loadCellBoundaries=False, loadTranscripts=False, showAnnotations=False, annotations=None, annotationsPalette='tab20'):
 
     """
@@ -354,7 +360,9 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
     hbox = widgets.HBox([checkbox, widget_Radius])
 
     change_output_button = widgets.Button(description="Change output?")
-    the_output = widgets.Output()
+
+    figHeight = figsize[1] * dpi + 100
+    the_output = widgets.Output(layout=widgets.Layout(height=f'{figHeight}px'))
     clear_output_widget = widgets.VBox([h_1, h_2, the_output, hbox])
 
     def toggle_visibility(change):
@@ -372,6 +380,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
         nonlocal p
         nonlocal clfd
 
+        buffer = []
+        def bprint(msg):
+            buffer.append(str(msg))
+
         emptyIndex = pd.MultiIndex.from_tuples([((), ())])
 
         temp_positive = [k for k in button_press_results.keys() if button_press_results[k]=='positive']
@@ -384,10 +396,10 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
         curated_uncertain = pd.MultiIndex.from_tuples(temp_uncertain) if len(temp_uncertain)>0 else emptyIndex
 
         uncurated = all_patches.difference(curated_positive).difference(curated_negative).difference(curated_uncertain)
-        print('Positive: ', curated_positive.difference(emptyIndex).shape[0], end='\n')
-        print('Negative: ', curated_negative.difference(emptyIndex).shape[0], end='\n')
-        print('Uncertain: ', curated_uncertain.difference(emptyIndex).shape[0], end='\n')
-        print('Uncurated: ', uncurated.difference(emptyIndex).shape[0], end='\n')
+        bprint(f'Positive: {curated_positive.difference(emptyIndex).shape[0]}')
+        bprint(f'Negative: {curated_negative.difference(emptyIndex).shape[0]}')
+        bprint(f'Uncertain: {curated_uncertain.difference(emptyIndex).shape[0]}')
+        bprint(f'Uncurated: {uncurated.difference(emptyIndex).shape[0]}')
 
         if (curated_positive.difference(emptyIndex).shape[0]>=minN) and (curated_negative.difference(emptyIndex).shape[0]>=minN):
             clf = LR(penalty='l2', C=10, class_weight='balanced', solver='liblinear', max_iter=1000)
@@ -422,12 +434,12 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             if False:
                 y_predt = clf.predict_proba(X_train.values)[:, 1]
                 auroc_train = round(roc_auc_score(y_train.values, y_predt), 3)
-                print('ROC AUC Train:', auroc_train)
+                bprint(f'ROC AUC Train: {auroc_train}')
 
             if np.random.rand()>=randomness:
                 p = uncurated[np.random.choice(range(len(uncurated)))]
                 y_pred = clf.predict_proba(patchesCDFs.loc[[p]].values)[:, 1][0]
-                print('Suggested random patch: (%s)' % np.round(y_pred, 2))
+                bprint(f'Suggested random patch: ({np.round(y_pred, 2)})')
                 if y_pred >= pcut[1]:
                     patchType = 'positive'
                 elif y_pred <= pcut[0]:
@@ -437,20 +449,46 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             else:
                 # Predict all uncurated
                 y_pred = clf.predict_proba(X_test.values)[:, 1]
+
+                def get_least_represented_wh(curated_positive, all_patches, X_test, y_pred):
+                    se_ranked_curated = pd.Series(curated_positive.get_level_values(0)).value_counts()
+                    not_yet_curated = all_patches.get_level_values(0).unique().difference(se_ranked_curated.index)
+                    if len(not_yet_curated)>0:
+                        se_ranked_curated = pd.concat([se_ranked_curated, pd.Series(index=not_yet_curated, data=0)])
+                    se_ranked_curated /= se_ranked_curated.sum()
+                    se_ranked_curated = 1. - se_ranked_curated
+                    se_ranked_curated /= se_ranked_curated.sum()
+                    least_represented_sample = np.random.choice(se_ranked_curated.index, p=se_ranked_curated.values)
+                    return X_test.index.get_level_values(0)==least_represented_sample
+
                 if len(curated_positive)<len(curated_negative):
-                    # Suggest most positive for curation
-                    v = np.round(y_pred.max(), 2)
-                    print(f'Suggested positive patch ({v})')
-                    p = X_test.index[np.argmax(y_pred)]
+                    if do_uniform_curation:
+                        # Randomly pick sample weighted by least represented in curated positives
+                        wh = get_least_represented_wh(curated_positive, all_patches, X_test, y_pred)
+                        p = X_test.index[wh][np.argmax(y_pred[wh])]
+                        v = y_pred[wh].max()
+                    else:
+                        # Suggest most positive for curation
+                        v = np.round(y_pred.max(), 2)
+                        p = X_test.index[np.argmax(y_pred)]
+
+                    bprint(f'Suggested positive patch ({v})')
                     patchType = 'positive'
                 else:
-                    # Suggest most negative for curation
-                    v = np.round(y_pred.min(), 2)
-                    print(f'Suggested negative patch ({v})')
-                    p = X_test.index[np.argmin(y_pred)]
+                    if do_uniform_curation:
+                        # Randomly pick sample weighted by least represented in curated negatives
+                        wh = get_least_represented_wh(curated_negative, all_patches, X_test, y_pred)
+                        p = X_test.index[wh][np.argmin(y_pred[wh])]
+                        v = y_pred[wh].min()
+                    else:
+                        # Suggest most negative for curation
+                        v = np.round(y_pred.min(), 2)
+                        p = X_test.index[np.argmin(y_pred)]
+
+                    bprint(f'Suggested negative patch ({v})')
                     patchType = 'negative'
         else:
-            print('Suggested random patch')
+            bprint('Suggested random patch')
             p = uncurated[np.random.choice(range(len(uncurated)))]
             patchType = 'random'
 
@@ -481,13 +519,13 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
                 imgMarked[:, -borderWidth:, :] = color
     
         if checkbox.value and 'clf' in clfd:
-            fig = plt.figure(figsize=(figsize[0]*2, figsize[1]))
+            fig = plt.figure(figsize=(figsize[0]*2, figsize[1]), dpi=dpi)
             gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1.25])
 
             axMain = fig.add_subplot(gs[0])
             axDiff = fig.add_subplot(gs[1])
         else:
-            fig, axMain = plt.subplots(figsize=figsize)
+            fig, axMain = plt.subplots(figsize=figsize, dpi=dpi)
 
         axMain.imshow(imgMarked)
         axMain.set_xlim([0, imgMarked.shape[1]])
@@ -501,7 +539,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             return num_columns
 
         if (not loadCells is None) or (loadTranscripts is not None):
-            # print('Loading Xenium data...')
+            # bprint('Loading Xenium data...')
             if not xeniumBundlePaths is None:
                 bundle_path = xeniumBundlePaths[p[0]]
                 matrix_path = xeniumMatrixPaths[p[0]]
@@ -701,12 +739,16 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             axDiff.set_title('Positive class probability')
 
         plt.tight_layout()
+        fig.canvas.draw()
+        the_output.clear_output(wait=True)
+        print("\n".join(buffer))
         plt.show()
+        buffer.clear()
 
         return
 
     def button_clicked(_button):
-        the_output.clear_output()
+        # the_output.clear_output()
         if _button.description=='undo':
             button_press_results.pop(plog[-1])
             plog.pop(-1)
@@ -748,7 +790,8 @@ def loadPatch(p, patchCoordinates, L, sh, pyramidscale, imgs):
         # if the image is a path, connect to Zarr store, read the patch
         with tifffile.imread(imgs[p[0]], aszarr=True) as store:
             with zarr.open(store, mode='r') as zArray:
-                pyramidscale_zarr = int(round(zArray[0].shape[1] / zArray[L].shape[1]))
+                pyramidscale_zarr = int(round(zArray[0].shape[1] / zArray[1].shape[1]))
+                # print(f'Pyramid scale from Zarr: {pyramidscale_zarr}; Input pyramid scale: {pyramidscale}')
                 # TODO: Use pyramidscale input parameter only for ndarrays, not for zarr
                 # For Zarr, pyramidscale is determined automatically from the zarr store
                 # This is necessary to allow simultaneous use of Zarr images with different pyramid scales

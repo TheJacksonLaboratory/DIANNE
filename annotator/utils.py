@@ -1,4 +1,5 @@
 
+import os
 import psutil
 import tifffile
 import numpy as np
@@ -230,4 +231,3 @@ def maskPatchGrid(inshape, samplePatchCoordinates, downsampleFactor=4, ts=None, 
 #
 # f1conv = '/projects/activities/kappsen-tmc/USERS/domans/differential-annotator-dev/JAX_002_KD_C_conv.ome.tif'
 # # saveHEOMETIFF(img2, saveName=f1conv)
-

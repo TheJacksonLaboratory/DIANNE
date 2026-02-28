@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from tqdm import tqdm
+import scipy
 
 from numba import njit, prange
 from numpy.typing import NDArray
@@ -26,9 +27,11 @@ from scipy.spatial import KDTree
 from scipy.ndimage import generic_filter
 from joblib import Parallel, delayed
 
+import cv2
 import tifffile
 
 from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
+from .interpolation import interpolate_points
 
 import matplotlib
 from matplotlib import cm
@@ -312,6 +315,7 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
             se = df_feat[wh].quantile(qs).stack()
         else:
             iwh = tree.query_ball_point([i, j], R)
+            # print(len(iwh))
             se = df_feat.iloc[iwh].quantile(qs).stack()
 
         if not index:
@@ -473,7 +477,7 @@ def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
 
     return df
 
-def trainClassifier(annotation_results, patchesCDFs, alpha=None, seed=None, augFunc=None,
+def trainClassifier(annotation_results, patchesCDFs, alpha=None, seed=None, augFunc=None, repeats=1,
                     clfParams={'penalty': 'l2', 'C': 10, 'class_weight': 'balanced', 'solver': 'liblinear', 'max_iter': 1000}):
 
     """
@@ -515,27 +519,34 @@ def trainClassifier(annotation_results, patchesCDFs, alpha=None, seed=None, augF
     clf = LR(**clfParams)
 
     if (not alpha is None) and (not augFunc is None):
-        dpos = {}
+        dpos_v = []
         for s_pos in curated_positive:
-            s_neg = np.random.choice(curated_negative)
-            df_pos = patchesCDFs.loc[s_pos].unstack()
-            df_neg = patchesCDFs.loc[s_neg].unstack()
-            assert df_pos.index.equals(df_neg.index)
-            acdf = augFunc(df_pos.index.values, df_pos.values, 
-                            df_neg.values, alpha=alpha, beta=1.-alpha)
-            acdf = pd.DataFrame(index=df_pos.index,
-                                columns=df_pos.columns,
-                                data=acdf)
+            for i in range(repeats):
+                s_neg = np.random.choice(curated_negative)
+                df_pos = patchesCDFs.loc[s_pos].unstack()
+                df_neg = patchesCDFs.loc[s_neg].unstack()
+                assert df_pos.index.equals(df_neg.index)
+                acdf = augFunc(df_pos.index.values, df_pos.values, 
+                                df_neg.values, alpha=alpha, beta=1.-alpha)
+                acdf = pd.DataFrame(index=df_pos.index,
+                                    columns=df_pos.columns,
+                                    data=acdf)
+        
+                dpos_v.append(acdf.T.sort_index().T.stack().rename(s_pos))
+        dpos = pd.concat(dpos_v, axis=1).T
 
-            dpos[s_pos] = acdf.T.sort_index().T.stack().rename(s_pos)
-        X_train = pd.concat([pd.DataFrame(dpos).T, patchesCDFs.loc[curated_negative]])
-        y_train = pd.concat([pd.Series(index=curated_positive, data=1),
-                            pd.Series(index=curated_negative, data=0)]).loc[X_train.index]
+        X_train = pd.concat([dpos, patchesCDFs.loc[curated_negative]], sort=False)
+        y_train = pd.concat([pd.Series(index=dpos.index, data=1),
+                            pd.Series(index=curated_negative, data=0)])
     else:
         X_train = patchesCDFs.loc[curated_positive.union(curated_negative)]
         y_train = pd.concat([pd.Series(index=curated_positive, data=1),
                             pd.Series(index=curated_negative, data=0)]).loc[X_train.index]
+    # print(X_train.index)
+    # print(y_train.sort_values())
+    # print(X_train.head(5))
     
+    # print(X_train.shape)
     clf.fit(X_train.values, y_train.values)
     clf.feat = X_train.columns.get_level_values(1) + '_' + pd.Index(np.round(X_train.columns.get_level_values(0), 2).astype(str))
 
@@ -712,6 +723,7 @@ def showGridProb(ads, clf, samples, qs, ts=56, mpp=0.25, R=2, dpi=150, size=3., 
     for i in tqdm(range(len(samples)), desc='Inference progress', disable=not verbose):
         infSample  = samples[i]
         x, y, p = inferProb(ads[infSample], clf['clf'], qs, tsize=ts/mpp, R=R, verbose=False)
+        x, y, p = interpolate_points(x, y, p, multiplier=8)
         showProbImg(x, y, p, f=f, figsize=(3, 3), ts=ts, mpp=mpp, title=infSample, invert=False,
                     saveName=f'{infSample}.png', dpi=dpi)
 
@@ -1134,7 +1146,7 @@ def get_tile_mask_means(mfile, ts, mpp, coords):
             means.append(tv)
     except Exception as exception:
         print(f'Error in get_tile_mask_means: {exception}')
-        means = [0.0] * len(coords)
+        means = [np.nan] * len(coords)
     return means
 
 def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctranspath', qs=None, f=1):
@@ -1155,7 +1167,8 @@ def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctransp
         means = get_tile_mask_means(msegfile, ts, mpp, ad.obsm['spatial'])
         se_inf_segmenter = pd.Series(index=ad.obs.index, data=means)
 
-        cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-normal/{case}_attention_weights.csv'
+        # cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results_PCMA/heatmaps-normal-0.2/{case}_attention_weights.csv'
+        cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-normal-R1/{case}_attention_weights.csv'
         se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
 
         temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85, f=f)
@@ -1184,7 +1197,8 @@ def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, 
             means = get_tile_mask_means(msegfile, ts, mpp, ad.obsm['spatial'])
             se_inf_segmenter = pd.Series(index=ad.obs.index, data=means)
 
-            cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-tumor/{case}_attention_weights.csv'
+            # cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results_PCMA/heatmaps-tumor-0.2/{case}_attention_weights.csv'
+            cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-tumor-R1/{case}_attention_weights.csv'
             se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
 
             temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=1.5, f=f, dpi=dpi)
@@ -1193,3 +1207,128 @@ def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, 
             print(f'Error processing case {case}: {e}')
 
     return temp
+
+def checkOneSlide(ad, clf, qs=None, ts=None, mpp=None, mfile=None, annotation_threshold=0.1, threshold_for_metrics=0.5, erode=False):
+
+    def get_tile_mask_means(mfile, ts, mpp, coords):
+        try:
+            m = tifffile.imread(mfile)
+            means = []
+            for i in range(len(coords)):
+                x0, y0 = coords[i]
+                h = int(0.5 * ts / mpp)
+                temp = m[y0-h:y0+h, x0-h:x0+h]
+                if temp.shape[0]>0 and temp.shape[1]>0:
+                    tv = temp.mean() / 255.
+                else:
+                    tv = 0.0
+                means.append(tv)
+        except Exception as exception:
+            print(f'Error in get_tile_mask_means: {exception}')
+            means = [0.0] * len(coords)
+        return means
+
+    def get_metrics(se_inf_star, se_anno, th, annotation_threshold, prefix='method_name_', verbose=False):
+    
+        if se_inf_star.min()==se_inf_star.max():
+            se_inf_star.iloc[0] = 0.0
+
+        if (se_anno.values > annotation_threshold).astype(int).sum() == 0:
+            precision = np.nan
+            recall = np.nan
+            f1_score = np.nan
+        else:
+            precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > annotation_threshold).astype(int)) / np.sum(se_inf_star.values > th)
+            recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > annotation_threshold).astype(int)) / np.sum(se_anno.values > annotation_threshold)
+            f1_score = 2 * (precision * recall) / (precision + recall)
+
+        accuracy = (se_inf_star.values > th).astype(int) == (se_anno.values > annotation_threshold).astype(int)
+        accuracy = np.sum(accuracy) / len(accuracy)
+
+        fpr = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values <= annotation_threshold).astype(int)) / np.sum(se_anno.values <= annotation_threshold)
+
+        if verbose:
+            print(f'Precision: {precision:.2f}')
+            print(f'Recall: {recall:.2f}')
+            print(f'F1 Score: {f1_score:.2f}')
+            print(f'FPR: {fpr:.2f}')
+            print(f'Accuracy: {accuracy:.2f}')
+
+        return {f'{prefix}precision': precision, f'{prefix}recall': recall, f'{prefix}fpr': fpr, f'{prefix}f1_score': f1_score, f'{prefix}accuracy': accuracy}
+
+    
+    if os.path.isfile(mfile):
+        m = tifffile.imread(mfile)
+    means = get_tile_mask_means(mfile, ts, mpp, ad.obsm['spatial'])
+    se_anno = pd.Series(index=ad.obs.index, data=means)
+    result = {'manual_annotation': se_anno.mean()}
+
+    x, y, p = inferProb(ad, clf, qs, tsize=ts/mpp, R=2, erode=erode)
+    search = ad.obs.set_index(['pxl_col_in_wsi', 'pxl_row_in_wsi'])['original_barcode']
+    se_inf_dianne = pd.Series(index=search.loc[pd.MultiIndex.from_arrays([x, y], names=['pxl_col_in_wsi', 'pxl_row_in_wsi'])].values, data=p)
+
+    se_inf_star = se_inf_dianne.reindex(se_anno.index)
+    result.update(get_metrics(se_inf_star, se_anno, threshold_for_metrics, annotation_threshold, prefix='dianne_'))
+
+    return result
+
+def get_tile_mask_means3(mfile, ts, mpp, coords, scale=None):
+    try:
+        m = tifffile.imread(mfile)
+        if not scale is None:
+            m = cv2.resize(m, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+        m_labeled, num = scipy.ndimage.label(m)
+        print(f'Found {num} objects in mask')
+        means = []
+        objects = []
+        for i in range(len(coords)):
+            x0, y0 = coords[i]
+            h = int(0.5 * ts / mpp)
+            temp = m[y0-h:y0+h, x0-h:x0+h]
+            if temp.shape[0]>0 and temp.shape[1]>0:
+                tv = temp.mean() / 255.
+                temp2 = m_labeled[y0-h:y0+h, x0-h:x0+h]
+                l, c = np.unique(temp2[temp2!=0], return_counts=True)
+                if len(l) > 0:
+                    obj = l[np.argmax(c)]
+                else:
+                    obj = 0
+            else:
+                tv = 0.0
+                obj = 0
+            means.append(tv)
+            objects.append(obj)
+    except Exception as exception:
+        print(f'Error in get_tile_mask_means: {exception}')
+        means = [0.0] * len(coords)
+        m_labeled = None
+        objects = [0] * len(coords)
+    return m_labeled, means, objects
+
+def get_metrics(se_inf_star, se_anno, th, annotation_threshold, prefix='method_name_', verbose=False):
+
+    if se_inf_star.min()==se_inf_star.max():
+        se_inf_star.iloc[0] = 0.0
+
+    if (se_anno.values > annotation_threshold).astype(int).sum() == 0:
+        precision = np.nan
+        recall = np.nan
+        f1_score = np.nan
+    else:
+        precision = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > annotation_threshold).astype(int)) / np.sum(se_inf_star.values > th)
+        recall = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values > annotation_threshold).astype(int)) / np.sum(se_anno.values > annotation_threshold)
+        f1_score = 2 * (precision * recall) / (precision + recall)
+
+    accuracy = (se_inf_star.values > th).astype(int) == (se_anno.values > annotation_threshold).astype(int)
+    accuracy = np.sum(accuracy) / len(accuracy)
+
+    fpr = np.sum((se_inf_star.values > th).astype(int) & (se_anno.values <= annotation_threshold).astype(int)) / np.sum(se_anno.values <= annotation_threshold)
+
+    if verbose:
+        print(f'Precision: {precision:.2f}')
+        print(f'Recall: {recall:.2f}')
+        print(f'F1 Score: {f1_score:.2f}')
+        print(f'FPR: {fpr:.2f}')
+        print(f'Accuracy: {accuracy:.2f}')
+
+    return {f'{prefix}precision': precision, f'{prefix}recall': recall, f'{prefix}fpr': fpr, f'{prefix}f1_score': f1_score, f'{prefix}accuracy': accuracy}
