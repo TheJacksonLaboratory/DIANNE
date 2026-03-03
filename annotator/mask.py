@@ -72,7 +72,7 @@ def makeProbMask(ad, imgpath, x, y, p, ts=56, mpp=0.25, downfactor=16, savepath=
 
     return downsampled_map, fshape
 
-def extractContoursForQuPath(downsampled_map, fshape, cutoff=0.5, min_area=100, scalefactor=1.0, downfactor=16, annotation_name='Region', savepath=None, prefix='', sigma=224):
+def extractContoursForQuPath(downsampled_map, fshape, cutoff=0.5, min_area=100, scalefactor=1.0, downfactor=16, annotation_name='Region', savepath=None, prefix='', sigma=100):
 
     """Extract contours from the downsampled probability mask and convert them to original image coordinates.
 
@@ -146,7 +146,7 @@ def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime'
         None (displays the plot with contours overlaid on the image)
     """
 
-    fig, ax = plt.subplots(figsize=(5, 5))
+    fig, ax = plt.subplots(figsize=figsize)
     with tifffile.imread(imgpath, aszarr=True) as store:
         with zarr.open(store, mode='r') as zArray:
             img_ = np.moveaxis(zArray[level], 0, -1)
@@ -155,6 +155,7 @@ def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime'
         for i, ring in enumerate(feature["geometry"]["coordinates"]):
             ring = np.array(ring)
             ax.plot(ring[:, 0], ring[:, 1], color=contours_color if i == 0 else holes_color, linewidth=linewidth)
+    ax.axis('off')
     plt.show()
 
     return
