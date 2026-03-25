@@ -5,8 +5,9 @@ import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from packaging import version
 
-def makeProbMask(ad, imgpath, x, y, p, ts=56, mpp=0.25, downfactor=16, savepath=None, saveimg=True, prefix='', extension='png', savecsv=False, verbose=False):
+def makeProbMask(ad, imgpath, x, y, p, ts=56, mpp=0.25, downfactor=16, savepath=None, saveimg=True, prefix='', extension='jpeg', savecsv=False, verbose=False):
 
     """Create a downsampled probability mask from the inferred probabilities at the patch centers. The mask will have 
     the same dimensions as the downsampled WSI at the specified downfactor. Each pixel in the mask will have a value 
@@ -48,7 +49,12 @@ def makeProbMask(ad, imgpath, x, y, p, ts=56, mpp=0.25, downfactor=16, savepath=
 
     draw_tile_size = int(ts/mpp)
     with tifffile.TiffFile(imgpath) as tempfile:
-        fshape = tempfile.pages[0].shape[1:]
+        fshape = tempfile.pages[0].shape
+        if fshape[0] < 100:
+            fshape = (fshape[1], fshape[2])
+        else:
+            fshape = (fshape[0], fshape[1])
+    print('Original image shape:', fshape)
 
     downsampled_map = np.zeros(np.array(fshape)//downfactor, dtype=np.uint8)
     downsampled_halfsize = draw_tile_size // (2 * downfactor)
@@ -68,7 +74,13 @@ def makeProbMask(ad, imgpath, x, y, p, ts=56, mpp=0.25, downfactor=16, savepath=
         downsampled_map[y1:y2, x1:x2] = int(tp * 255)
 
     if saveimg and savepath is not None:
-        tifffile.imwrite(f'{savepath}/{prefix}map.{extension}', downsampled_map, compression='zlib')
+        kwargs = {'compression': 'jpeg'}
+        if version.parse(tifffile.__version__) >= version.parse('2022.2.2'):
+            kwargs['compressionargs'] = {'level': 90}
+        else:
+            kwargs['compression'] = ('jpeg', 90)
+
+        tifffile.imwrite(f'{savepath}/{prefix}map.{extension}', downsampled_map, **kwargs)
 
     return downsampled_map, fshape
 

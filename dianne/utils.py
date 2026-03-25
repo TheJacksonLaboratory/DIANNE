@@ -5,6 +5,16 @@ import tifffile
 import numpy as np
 import pandas as pd
 import cv2
+from tqdm import tqdm
+from IPython.display import display, HTML
+
+from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation
+
+def setNotebookWidth(widthPercent=100):
+    """Set the notebook container width in a Jupyter environment."""
+    display(HTML(f"""<style>:root {{ --jp-notebook-max-width: {widthPercent}%; }}
+body .container, div.container {{ width: {widthPercent}% !important; }}</style>"""))
+    return
 
 def findMyJupyterServer():
 
@@ -211,6 +221,61 @@ def maskPatchGrid(inshape, samplePatchCoordinates, downsampleFactor=4, ts=None, 
         cv2.rectangle(oimg, (min_x-sh, min_y-sh), (max_x+sh, max_y+sh), 255, thickness)
 
     return oimg
+
+def setupClassifierPaths(basePath='classifiers/'):
+
+    """Set up classifier paths."""
+
+    classifierPaths = basePath
+    if not os.path.exists(classifierPaths):
+        os.makedirs(classifierPaths)
+
+    return
+
+def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0.25, N=4):
+
+    """Load the STQ data for each sample, prepare the patch coordinates and get the patch SAMPLER representations for each sample.
+    The patch coordinates and representations are concatenated into single DataFrames for all samples.
+    The function returns the loaded AnnData objects, images, patch coordinates, patch representations, 
+    quantiles used for the representations, tile spacing and microns per pixel.
+    
+    Parameters:
+    - samples: list of sample identifiers to load and process
+    - outsSTQpath: path to the directory containing the STQ data for each sample
+    - fname: filename of the STQ data to load for each sample, e.g. 'features/false-1-ctranspath_features.tsv.gz'
+    - L: level of the WSI to load (if None, lazy loading with Zarr will be used)
+    - ts: center-to-center distance between tiles (not size of a tile)
+    - mpp: image pixel size in microns per pixel
+    - N: patch size in terms of number of tiles (e.g., 4 means
+        patches will be 4 by 4 tiles)
+
+    Returns:
+    - ads: dictionary of AnnData objects for each sample
+    - imgs: dictionary of images for each sample
+    - patchCoordinates: DataFrame containing the coordinates of the patches for all samples
+    - patchesCDFs: DataFrame containing the SAMPLER representations of the patches for all samples
+    - qs: quantiles used for the SAMPLER representations
+    - ts: tile spacing used for preparing the patches
+    - mpp: microns per pixel used for preparing the patches
+    """
+
+    # Load the STQ data for each sample
+    ads = {}
+    imgs = {}
+    for sample in tqdm(samples):
+        ads[sample], imgs[sample] = loadAd(f'{outsSTQpath}{sample}/', fname=fname, L=L)
+
+    # Prepare the patches coordinates for each sample and concatenate them into a single DataFrame
+    patchCoordinates = pd.concat([preparePatchesWSI(ads[sample].obs, N=N, spacing=ts/mpp, sample_id=sample) for sample in tqdm(samples)], axis=0)
+
+    # Get the patch SAMPLER representations for each sample and combine them into a single DataFrame
+    qs = np.linspace(0.05, 0.95, 10, endpoint=True)
+    patchesCDFs = pd.concat([getPatchRepresentation(ads[sample], patchCoordinates.xs(sample, level='sample', axis=0), 
+                                                           qs, sample_id=sample) for sample in tqdm(samples)], axis=0)
+
+    return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L
+
+
 
 # def saveHEOMETIFF(foimg, pyramidScale=2, tileSise=512, saveName=None, compression='deflate'):
 #
