@@ -275,7 +275,40 @@ def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0
 
     return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L
 
+def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctranspath-1.h5ad', samplesToSTQnames=None, L=None, ts=56, mpp=0.25, N=8):
 
+    if samplesToSTQnames is None:
+        samplesToSTQnames = {sample: sample for sample in samples}
+    ads = {sample: loadAd(outsSTQQpath + samplesToSTQnames[sample] + '/', L=L, fname=fname, suffix=None)[0] for sample in tqdm(samples)}
+
+    # Prepare the patches coordinates for each sample and concatenate them into a single DataFrame
+    patchCoordinates = pd.concat([preparePatchesWSI(ads[sample].obs, N=8, spacing=ts/mpp, sample_id=sample) for sample in tqdm(samples)], axis=0)
+
+    # Get the patch SAMPLER representations for each sample and combine them into a single DataFrame
+    qs = np.linspace(0.05, 0.95, 10, endpoint=True)
+    patchesCDFs = pd.concat([getPatchRepresentation(ads[sample], patchCoordinates.xs(sample, level='sample', axis=0), qs, sample_id=sample) for sample in tqdm(samples)], axis=0)
+
+    return ads, patchCoordinates, patchesCDFs, qs, ts, mpp, L
+
+def showGroundTruth2(id, ct, df_ct_tile, patchCoordinates, vmax=10):
+    se_color = df_ct_tile.xs(id, level='sample')[ct].droplevel('patch')
+    if se_color.ndim == 2:
+        se_color = se_color.sum(axis=1)
+    se_coor = patchCoordinates.xs(id, level='sample')[['x', 'y']]
+    ind = se_color.index.intersection(se_coor.index)
+    se_color = se_color.loc[ind]
+    se_coor = se_coor.loc[ind]
+    x, y, c = se_coor['x'].values, se_coor['y'].values, se_color.values
+    return x, y, c, vmax, pd.Series(index=ind, data=c)
+
+def showGroundTruth(id, ct, df_tile, patchCoordinates, vmax=10):
+    se_color = df_tile.xs(id, level='sample')[ct].droplevel('patch')
+    se_coor = patchCoordinates.xs(id, level='sample')[['x', 'y']]
+    ind = se_color.index.intersection(se_coor.index)
+    se_color = se_color.loc[ind]
+    se_coor = se_coor.loc[ind]
+    x, y, c = se_coor['x'].values, se_coor['y'].values, se_color.values
+    return x, y, c, vmax, pd.Series(index=ind, data=c)
 
 # def saveHEOMETIFF(foimg, pyramidScale=2, tileSise=512, saveName=None, compression='deflate'):
 #
