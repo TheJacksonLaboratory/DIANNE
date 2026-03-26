@@ -279,7 +279,12 @@ def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctrans
 
     if samplesToSTQnames is None:
         samplesToSTQnames = {sample: sample for sample in samples}
-    ads = {sample: loadAd(outsSTQQpath + samplesToSTQnames[sample] + '/', L=L, fname=fname, suffix=None)[0] for sample in tqdm(samples)}
+
+    # Load the STQ data for each sample
+    ads = {}
+    imgs = {}
+    for sample in tqdm(samples):
+        ads[sample], imgs[sample] = loadAd(outsSTQpath + samplesToSTQnames[sample] + '/', fname=fname, L=L)
 
     # Prepare the patches coordinates for each sample and concatenate them into a single DataFrame
     patchCoordinates = pd.concat([preparePatchesWSI(ads[sample].obs, N=8, spacing=ts/mpp, sample_id=sample) for sample in tqdm(samples)], axis=0)
@@ -288,7 +293,7 @@ def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctrans
     qs = np.linspace(0.05, 0.95, 10, endpoint=True)
     patchesCDFs = pd.concat([getPatchRepresentation(ads[sample], patchCoordinates.xs(sample, level='sample', axis=0), qs, sample_id=sample) for sample in tqdm(samples)], axis=0)
 
-    return ads, patchCoordinates, patchesCDFs, qs, ts, mpp, L
+    return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L
 
 def showGroundTruth2(id, ct, df_ct_tile, patchCoordinates, vmax=10):
     se_color = df_ct_tile.xs(id, level='sample')[ct].droplevel('patch')

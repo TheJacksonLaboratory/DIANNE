@@ -6,5 +6,6 @@ from .interpolation import interpolate_points as interpolatePoints
 from .mask import makeProbMask, extractContoursForQuPath, viewContoursOnImage
 from .download import downloadZIPFromZenodo
 from .selection import runSelection, viewSelection
+from .colors import Set123
 
 __version__ = "0.1.0"
