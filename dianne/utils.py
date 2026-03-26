@@ -7,6 +7,7 @@ import pandas as pd
 import cv2
 from tqdm import tqdm
 from IPython.display import display, HTML
+import pickle
 
 from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation
 
@@ -232,6 +233,42 @@ def setupClassifierPaths(basePath='classifiers/'):
 
     return
 
+def saveClassifier(clf, classifierPaths, clfname, outsSTQpath, samples, patchesCDFs, L, ts, mpp, N, fname, qs, startParams, plog, bp, ext='pklz'):
+
+    """Save the classifier and its associated information to a file."""
+
+    clf.update({'outsSTQpath': outsSTQpath, 'samples': samples, 'patches': patchesCDFs.index,
+                'L': L, 'ts': ts, 'mpp': mpp, 'N': N, 'fname': fname, 'qs': qs,
+                'startParams': startParams, 'plog': plog, 'bp': bp,
+                'uncurated': len(patchesCDFs) - len(bp), 'total': len(patchesCDFs)})
+    clf.update({cat: len([v for k, v in bp.items() if v==cat]) for cat in ['positive', 'negative', 'uncertain']})
+    clf.update({'distribution-' + cat: dict(zip(*np.unique([k[0] for k, v in bp.items() if v == cat], return_counts=True))) for cat in ['positive', 'negative', 'uncertain']})
+    clf.update({'distribution-' + 'all': dict(zip(*np.unique([k for k in patchesCDFs.index.get_level_values(0)], return_counts=True)))})
+
+    with open(f'{classifierPaths}/{clfname}.{ext}', 'wb') as tempfile:
+        pickle.dump(clf, tempfile)
+
+    return
+
+def loadClassifier(classifierPaths, clfname, ext='pklz'):
+
+    """Load a classifier and its associated information from a file."""
+
+    try:
+        with open(f'{classifierPaths}/{clfname}.{ext}', 'rb') as tempfile:
+            clf = pickle.load(tempfile)
+        bp = clf.pop('bp', {})
+        plog = clf.pop('plog', [])
+        startParams = clf.pop('startParams', {})
+    except FileNotFoundError:
+        print(f"Classifier file '{clfname}' not found in '{classifierPaths}'. Returning an empty classifier.")
+        clf = {}
+        bp = {}
+        plog = []
+        startParams = {}
+
+    return clf, bp, plog, startParams
+
 def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0.25, N=4):
 
     """Load the STQ data for each sample, prepare the patch coordinates and get the patch SAMPLER representations for each sample.
@@ -273,7 +310,7 @@ def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0
     patchesCDFs = pd.concat([getPatchRepresentation(ads[sample], patchCoordinates.xs(sample, level='sample', axis=0), 
                                                            qs, sample_id=sample) for sample in tqdm(samples)], axis=0)
 
-    return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L
+    return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N
 
 def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctranspath-1.h5ad', samplesToSTQnames=None, L=None, ts=56, mpp=0.25, N=8):
 
@@ -287,13 +324,13 @@ def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctrans
         ads[sample], imgs[sample] = loadAd(outsSTQpath + samplesToSTQnames[sample] + '/', fname=fname, L=L)
 
     # Prepare the patches coordinates for each sample and concatenate them into a single DataFrame
-    patchCoordinates = pd.concat([preparePatchesWSI(ads[sample].obs, N=8, spacing=ts/mpp, sample_id=sample) for sample in tqdm(samples)], axis=0)
+    patchCoordinates = pd.concat([preparePatchesWSI(ads[sample].obs, N=N, spacing=ts/mpp, sample_id=sample) for sample in tqdm(samples)], axis=0)
 
     # Get the patch SAMPLER representations for each sample and combine them into a single DataFrame
     qs = np.linspace(0.05, 0.95, 10, endpoint=True)
     patchesCDFs = pd.concat([getPatchRepresentation(ads[sample], patchCoordinates.xs(sample, level='sample', axis=0), qs, sample_id=sample) for sample in tqdm(samples)], axis=0)
 
-    return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L
+    return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N
 
 def showGroundTruth2(id, ct, df_ct_tile, patchCoordinates, vmax=10):
     se_color = df_ct_tile.xs(id, level='sample')[ct].droplevel('patch')

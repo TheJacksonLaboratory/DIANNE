@@ -23,3 +23,20 @@ def downloadZIPFromZenodo(targetDir, url, file, extract=True):
         print(f"Data '{targetDir}' already exists. Skipping download.")
     return
 
+def downloadFromZenodo(targetDir, url, zip_file='dataset.zip'):
+    
+    """Download the dataset from Zenodo and extracts it to the specified directory."""
+
+    if not os.path.isdir(targetDir):
+        def reporthook(a, b, c):
+            print(f"\rDownloading: {(a * b) // 1024**2} MB", end='')
+        urllib.request.urlretrieve(url, zip_file, reporthook)
+        print()
+        os.makedirs(targetDir, exist_ok=True)
+        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+            zip_ref.extractall(targetDir)
+        os.remove(zip_file)
+        print(f"Downloaded and extracted dataset into '{targetDir}'.")
+    else:
+        print(f"Directory '{targetDir}' already exists. Skipping download.")
+    return
