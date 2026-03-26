@@ -76,7 +76,7 @@ def getXy(curated_positive, curated_negative, patchesCDFs, alpha=None, augFunc=N
     return X_train, y_train
 
 def inspectAnnotatedPatches(patchCoordinates, patchesCDFs, imgs, button_press_results, L=1, sh=112, pyramidscale=4, nInRow=4, startParams=None, verbose=False,
-                            figsize=(5, 5), addOutline=True, minDiscrepancy=0.25, minN=8, samplesPerFold=4, nRepeats=10, alpha=0.5, augFunc=None, seed=None):
+                            figsize=(5, 5), addOutline=True, minDiscrepancy=0.25, minN=10, samplesPerFold=4, nRepeats=10, alpha=0.5, augFunc=None, seed=None):
 
     np.random.seed(seed)
 
