@@ -4,5 +4,6 @@ from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, inferPr
 from .utils import findMyJupyterServer, setupClassifierPaths, loadDataAndPreparePatches, setNotebookWidth
 from .interpolation import interpolate_points as interpolatePoints
 from .mask import makeProbMask, extractContoursForQuPath, viewContoursOnImage
+from .download import downloadZIPFromZenodo
 
 __version__ = "0.1.0"
