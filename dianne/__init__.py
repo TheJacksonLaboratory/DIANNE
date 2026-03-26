@@ -5,5 +5,6 @@ from .utils import findMyJupyterServer, setupClassifierPaths, loadDataAndPrepare
 from .interpolation import interpolate_points as interpolatePoints
 from .mask import makeProbMask, extractContoursForQuPath, viewContoursOnImage
 from .download import downloadZIPFromZenodo
+from .selection import runSelection, viewSelection
 
 __version__ = "0.1.0"

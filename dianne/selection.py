@@ -67,7 +67,11 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
 
         nonlocal initCoords
 
-        sample = samples[currentSample]
+        try:
+            sample = samples[currentSample]
+        except IndexError:
+            return None, None, None, None, None
+
         img = plt.imread(f"{thumbsPath}/{sample}.{ext}")
         
         if not downsample is None:
@@ -105,7 +109,7 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
         orientation='horizontal',
         readout=False,
         readout_format='.1f',
-        layout=widgets.Layout(width=f'{1.75*img.shape[1]}px'))
+        layout=widgets.Layout(width=f'{1.*img.shape[1]}px'))
 
     v_slider = widgets.FloatRangeSlider(
         value=[y[0], y[1]],
@@ -118,21 +122,30 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
         orientation='vertical',
         readout=False,
         readout_format='.1f',
-        layout=widgets.Layout(height=f'{1.85*img.shape[0]}px'))    
+        layout=widgets.Layout(height=f'{1.*img.shape[0]}px'))    
 
     def next_button_clicked(_button):
         nonlocal currentSample, x, y, write, img, sample, N
         nonlocal showOutOfSamplesMessage
         nonlocal h_slider, v_slider
-
         if currentSample == N-1:
+            the_output.clear_output()
+            h_slider.layout.display = 'none'
+            v_slider.layout.display = 'none'
+            save_button.layout.display = 'none'
+            next_button.layout.display = 'none'
+            input_text_savename.layout.display = 'none'
             if showOutOfSamplesMessage:
-                print("No more samples.")
+                with the_output:
+                    print("Done processing all samples.")
                 showOutOfSamplesMessage = False
             return
 
         currentSample += 1
         x, y, write, img, sample = prepSample(currentSample)
+        if img is None:
+            the_output.clear_output()
+            return
 
         h_slider.unobserve(slider_moved, names='value')
         h_slider.value = x
@@ -237,7 +250,7 @@ def runSelection(thumbsPath, samples, ext='tiff', initCoords=[(0., 1.), (0., 1.)
 
     return clear_output_widget
 
-def viewSelection(thumbsPath, sample, downsample=8, c='crimson', ext='tiff', fontsize=12):
+def viewSelection(thumbsPath, sample, selection, downsample=8, c='crimson', ext='tiff', fontsize=12):
 
     """
     Load JSON annotation and display a selected region of an image.
@@ -248,6 +261,9 @@ def viewSelection(thumbsPath, sample, downsample=8, c='crimson', ext='tiff', fon
 
     sample (str):
         Name of the sample file.
+
+    selection (str):
+        Name of the selection JSON file.
 
     downsample (int):
         Factor by which to downsample the image.
@@ -265,11 +281,11 @@ def viewSelection(thumbsPath, sample, downsample=8, c='crimson', ext='tiff', fon
     None
     """
 
-    if not os.path.isfile(thumbsPath + f'/{sample}.json'):
-        print(f'No annotation found for {sample}.')
+    if not os.path.isfile(thumbsPath + f'/{selection}.json'):
+        print(f'No annotation found for {selection}.')
         return
 
-    with open(thumbsPath + f'/{sample}.json', 'r') as tempfile:
+    with open(thumbsPath + f'/{selection}.json', 'r') as tempfile:
         infodata = json.loads(tempfile.read())
     
     if not os.path.isfile(thumbsPath + f'/{sample}.{ext}'):
@@ -301,7 +317,7 @@ def viewSelection(thumbsPath, sample, downsample=8, c='crimson', ext='tiff', fon
     y2 = y1 + infodata['1']['size']*img.shape[0]
     ax.plot([x1, x1, x2, x2, x1], [y1, y2, y2, y1, y1], linewidth=1.0, c=c)
     
-    tx = ax.text((x1+x2)/2, (y1+y2)/2, sample.split('.')[0], fontsize=8 * fontsize / downsample, ha='center', va='center', fontweight='bold', c='w')
+    tx = ax.text((x1+x2)/2, (y1+y2)/2, selection, fontsize=8 * fontsize / downsample, ha='center', va='center', fontweight='bold', c='w')
     tx.set_path_effects([path_effects.Stroke(linewidth=2., foreground='k'), path_effects.Normal()])
     
     plt.tight_layout()
