@@ -1,0 +1,176 @@
+from pathlib import Path
+
+import fsspec
+import numpy as np
+import zarr
+
+
+class XeniumTranscripts:
+    """
+    Read transcript coordinates from a Xenium transcripts.zarr.zip pyramid.
+
+    Transcript grids are addressed by integer index where grid 0 is the finest
+    resolution. Requests are served in image-space tile regions so the frontend
+    can cache them similarly to image tiles.
+
+    Optional affine transform between H&E pixel space and Xenium transcript
+    coordinate space (in µm):
+        Forward (H&E px → Xenium µm):  xe = (he @ M.T + Tr) * xenium_mpp
+        Inverse (Xenium µm → H&E px):  he = (xe / xenium_mpp - Tr) @ inv(M).T
+    """
+
+    def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=1.0):
+        self.bundle_path = Path(bundle_path)
+        self.image_metadata = image_metadata
+        self.tile_size = int(image_metadata['tile_size'])
+
+        # optional affine transform (H&E px ↔ Xenium µm)
+        self._M  = None
+        self._Tr = None
+        self._Mi = None
+        self._mpp = float(xenium_mpp)
+        if matrix_path is not None:
+            import pandas as pd
+            mat = pd.read_csv(matrix_path, index_col=None, header=None).values
+            self._M  = mat[:2, :2].astype(float)
+            self._Tr = mat[:2, -1].astype(float)
+            self._Mi = np.linalg.inv(self._M)
+
+        zip_fs = fsspec.filesystem('zip', fo=str(self.bundle_path / 'transcripts.zarr.zip'))
+        store = zip_fs.get_mapper('')
+        self._root = zarr.open(store, mode='r')
+
+        raw_gene_map = dict(self._root.attrs['gene_index_map'])
+        self.gene_to_index = {str(gene): int(idx) for gene, idx in raw_gene_map.items()}
+        self.index_to_gene = {idx: gene for gene, idx in self.gene_to_index.items()}
+        self.gene_names = [
+            gene for gene, _ in sorted(self.gene_to_index.items(), key=lambda item: item[1])
+        ]
+
+        grids_group = self._root['grids']
+        self.grid_keys = sorted(grids_group.keys(), key=lambda key: int(key))
+        raw_grid_sizes = list(grids_group.attrs.get('grid_size', []))
+        base_spacing = float(raw_grid_sizes[0]) if raw_grid_sizes else 1.0
+
+        self.grids = {}
+        for idx, key in enumerate(self.grid_keys):
+            spacing = float(raw_grid_sizes[idx]) if idx < len(raw_grid_sizes) else base_spacing * (2 ** idx)
+            self.grids[idx] = {
+                'key': key,
+                'spacing': spacing,
+                'downsample': spacing / base_spacing,
+            }
+
+    @property
+    def metadata(self):
+        return {
+            'genes': self.gene_names,
+            'n_grids': len(self.grids),
+            'grids': {
+                idx: {
+                    'key': meta['key'],
+                    'spacing': meta['spacing'],
+                    'downsample': meta['downsample'],
+                }
+                for idx, meta in self.grids.items()
+            },
+        }
+
+    def get_tile_transcripts(self, grid, level, row, col, genes):
+        if not genes:
+            return []
+
+        grid = int(grid)
+        level = int(level)
+        row = int(row)
+        col = int(col)
+
+        if grid not in self.grids:
+            raise ValueError(f'grid {grid} out of range 0-{len(self.grids) - 1}')
+        if level not in self.image_metadata['levels']:
+            raise ValueError(f'level {level} out of range')
+
+        gene_indices = np.array(
+            [self.gene_to_index[gene] for gene in genes if gene in self.gene_to_index],
+            dtype=np.int64,
+        )
+        if gene_indices.size == 0:
+            return []
+
+        # Tile region in H&E level-0 pixel space
+        x0_he, y0_he, x1_he, y1_he = self._tile_bounds(level, row, col)
+
+        # Transform the four HE corners → Xenium space to get query bounding box
+        he_corners = np.array([
+            [x0_he, y0_he], [x1_he, y0_he],
+            [x0_he, y1_he], [x1_he, y1_he],
+        ])
+        xe_corners = self._he_to_xe(he_corners)
+        x0_xe, y0_xe = xe_corners.min(axis=0)
+        x1_xe, y1_xe = xe_corners.max(axis=0)
+
+        grid_meta = self.grids[grid]
+        grid_group = self._root['grids'][grid_meta['key']]
+
+        points = []
+        for loc in self._grid_locs_for_box(x0_xe, y0_xe, x1_xe, y1_xe, grid_meta['spacing']):
+            if loc not in grid_group:
+                continue
+
+            cell = grid_group[loc]
+            coords = np.asarray(cell['location'][:])
+            if coords.size == 0:
+                continue
+            coords = coords[:, :2]
+
+            gene_ids = np.asarray(cell['gene_identity'][:]).reshape(-1)
+            mask = (
+                (coords[:, 0] >= x0_xe) & (coords[:, 0] < x1_xe) &
+                (coords[:, 1] >= y0_xe) & (coords[:, 1] < y1_xe) &
+                np.isin(gene_ids, gene_indices)
+            )
+            if not np.any(mask):
+                continue
+
+            # Transform XE coords back to H&E pixel space for rendering
+            he_coords = self._xe_to_he(coords[mask])
+            for he_coord, gene_id in zip(he_coords, gene_ids[mask]):
+                points.append({
+                    'x': float(he_coord[0]),
+                    'y': float(he_coord[1]),
+                    'gene': self.index_to_gene[int(gene_id)],
+                })
+
+        return points
+
+    def _he_to_xe(self, coords):
+        """Transform (N, 2) H&E px coords to Xenium µm space."""
+        if self._M is None:
+            return coords
+        return (np.dot(coords, self._M.T) + self._Tr) * self._mpp
+
+    def _xe_to_he(self, coords):
+        """Transform (N, 2) Xenium µm coords to H&E px space."""
+        if self._M is None:
+            return coords
+        return np.dot(coords / self._mpp - self._Tr, self._Mi.T)
+
+    def _tile_bounds(self, level, row, col):
+        level_meta = self.image_metadata['levels'][level]
+        downsample = float(level_meta['downsample'])
+        width = float(level_meta['width'])
+        height = float(level_meta['height'])
+
+        x0 = col * self.tile_size * downsample
+        y0 = row * self.tile_size * downsample
+        x1 = min(width * downsample, x0 + self.tile_size * downsample)
+        y1 = min(height * downsample, y0 + self.tile_size * downsample)
+        return x0, y0, x1, y1
+
+    def _grid_locs_for_box(self, x0, y0, x1, y1, spacing):
+        lower = np.floor(np.array([x0, y0]) / spacing).astype(int)
+        upper = np.floor(np.array([max(x0, x1 - 1), max(y0, y1 - 1)]) / spacing).astype(int)
+
+        for i in range(lower[0], upper[0] + 1):
+            for j in range(lower[1], upper[1] + 1):
+                yield f'{i},{j}'
