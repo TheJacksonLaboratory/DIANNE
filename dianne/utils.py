@@ -9,7 +9,193 @@ from tqdm import tqdm
 from IPython.display import display, HTML
 import pickle
 
-from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation
+from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, trainClassifier
+
+import numpy as np
+import cv2
+import pandas as pd
+from matplotlib import pyplot as plt
+from matplotlib.patches import Rectangle
+from matplotlib.collections import PatchCollection
+
+def getTilesInContour(contour, df_grid, tile_size=224, body_overlap=0.25, debug=False, patch_size=8):
+    """Get a dict mapping patch index to a list of tile_ids from df_grid whose corresponding
+    tiles overlap with the contour by at least body_overlap fraction.
+    Tiles are grouped into spatially contiguous patches of patch_size**2 tiles arranged in a
+    patch_size x patch_size grid. Only complete patches (all patch_size**2 tiles present) are returned.
+
+    Parameters:
+    contour:      Nx2 array of (x, y) points defining the contour polygon.
+    df_grid:      DataFrame with columns 'x' and 'y' for tile center coordinates, indexed by tile_id.
+    tile_size:    Size of the square tile in pixels (default 224).
+    body_overlap: Minimum fraction of tile area covered by contour to include a tile (default 0.25).
+    patch_size:   Side length of each patch in tiles; each patch contains patch_size**2 tiles (default 8).
+
+    Returns:
+    dict: { patch_index (int): [tile_id, ...] } where each list has exactly patch_size**2 tile_ids,
+          arranged in row-major order (top-left to bottom-right within the patch).
+          Returns {} on failure.
+    """
+    try:
+        c = np.asarray(contour, dtype=int)
+        (x_min, y_min), (x_max, y_max) = c.min(axis=0), c.max(axis=0)
+        mask = np.zeros((y_max - y_min, x_max - x_min), dtype=np.uint8)
+        cv2.fillPoly(mask, [c - [x_min, y_min]], 1)
+
+        # Summed area table — O(1) rectangle sum queries
+        integral = cv2.integral(mask)  # shape: (H+1, W+1)
+        half = tile_size // 2
+
+        df_sel = df_grid[
+            (df_grid['x'] + half > x_min) & (df_grid['x'] - half < x_max) &
+            (df_grid['y'] + half > y_min) & (df_grid['y'] - half < y_max)
+        ]
+        xs, ys = df_sel['x'].values, df_sel['y'].values
+
+        # Clamped corners in integral image coords (integral is 1-indexed)
+        cx0 = np.clip(xs - half - x_min, 0, mask.shape[1])
+        cx1 = np.clip(xs + half - x_min, 0, mask.shape[1])
+        cy0 = np.clip(ys - half - y_min, 0, mask.shape[0])
+        cy1 = np.clip(ys + half - y_min, 0, mask.shape[0])
+        valid = (cx1 > cx0) & (cy1 > cy0)
+
+        # Vectorized rectangle sums via integral image
+        sums = integral[cy1, cx1] - integral[cy0, cx1] - integral[cy1, cx0] + integral[cy0, cx0]
+        threshold = body_overlap * tile_size ** 2
+        mask_hits = valid & (sums > threshold)
+
+        df_hits = df_sel[mask_hits].copy()
+        if df_hits.empty:
+            return {}
+
+        # --- Adaptive spatial binning ---
+        T = patch_size ** 2
+        xs_h, ys_h = df_hits['x'].values, df_hits['y'].values
+        span_x = max(xs_h.max() - xs_h.min() + tile_size, tile_size)
+        span_y = max(ys_h.max() - ys_h.min() + tile_size, tile_size)
+        n = max(1, round(len(df_hits) / T))
+        asp = span_x / span_y
+        ncols, nrows = max(1, round((n * asp) ** 0.5)), max(1, round(n / max(1, round((n * asp) ** 0.5))))
+
+        df_hits = df_hits.copy()
+        df_hits['_r'] = np.clip(((ys_h - ys_h.min()) / span_y * nrows).astype(int), 0, nrows - 1)
+        df_hits['_c'] = np.clip(((xs_h - xs_h.min()) / span_x * ncols).astype(int), 0, ncols - 1)
+
+        cells = {k: g.sort_values(['y','x']).index.tolist()
+                 for k, g in df_hits.groupby(['_r','_c'])}
+
+        # Merge cells below T into an adjacent neighbor (4-connected, fallback 8-connected)
+        def adjacent(k, cells, diag=False):
+            r, c = k
+            nb4 = [(r-1,c),(r+1,c),(r,c-1),(r,c+1)]
+            nb8 = [(r-1,c-1),(r-1,c+1),(r+1,c-1),(r+1,c+1)]
+            cands = [n for n in (nb4 + (nb8 if diag else [])) if n in cells and n != k]
+            return min(cands, key=lambda n: len(cells[n]), default=None)
+
+        while True:
+            small = [k for k, v in cells.items() if len(v) < T]
+            if not small: break
+            if len(small) == len(cells):  # all small — pool all
+                cells = {(0,0): [t for v in cells.values() for t in v]}; break
+            merged_any = False
+            for sk in sorted(small, key=lambda k: len(cells[k])):
+                if sk not in cells: continue
+                best = adjacent(sk, cells) or adjacent(sk, cells, diag=True)
+                if best is None: continue  # isolated — will be caught next iteration
+                cells[best].extend(cells.pop(sk)); merged_any = True
+            if not merged_any: break  # no progress possible
+
+        return {i: df_hits.loc[ids,['x','y']].sort_values(['y','x']).index.tolist()
+                for i, (_, ids) in enumerate(sorted(cells.items()))}
+
+    except Exception as e:
+        if debug:
+            print(f"Error in getTilesInContour: {e}")
+        return {}
+
+def preparePatchesFromStrokes(strokes, df_grid, tile_size=224, body_overlap=0.25, patch_size=8, debug=False):
+
+    """Prepare patches from strokes.
+
+    Args:
+        strokes (dict): Dictionary containing positive and negative strokes.
+        df_grid (DataFrame): DataFrame containing grid information.
+        tile_size (int): Size of each tile.
+        body_overlap (float): Overlap threshold for body.
+        patch_size (int): Size of each patch.
+
+    Returns:
+        dict: Dictionary containing patches for positive and negative strokes.
+    """
+
+    contours = {'positive': {}, 'negative': {}}
+    for s in strokes['strokes_negative']:
+        contours['negative'][s['id']] = np.array([[p['x'], p['y']] for p in s['points']])
+    for s in strokes['strokes_positive']:
+        contours['positive'][s['id']] = np.array([[p['x'], p['y']] for p in s['points']])
+    len(contours), contours['positive'].keys()
+
+    data = {}
+    for cl in ['positive', 'negative']:
+        data[cl] = {}
+        for contour_id in contours[cl].keys():
+            contour = contours[cl][contour_id]
+            indices = getTilesInContour(contour, df_grid, tile_size, body_overlap, patch_size=patch_size, debug=debug)
+            if debug:
+                print(f"Number of patches in {cl} contour {contour_id}: {len(indices)}")
+            data[cl].update({f"A{contour_id}-P{patch_idx}": tile_ids for patch_idx, tile_ids in indices.items()})
+
+    return data
+
+def visualizePatches(dataPS, df_grid, tile_size, figsize=(5, 5), lw=0.1, alpha=0.9,
+                    edgecolors={'positive': 'red', 'negative': 'blue'}, verbose=False, fontsize=6):
+    fig, ax = plt.subplots(figsize=figsize)
+    x_min, y_min = df_grid[['x', 'y']].min().values - tile_size
+    x_max, y_max = df_grid[['x', 'y']].max().values + tile_size
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    ax.set_aspect('equal')
+    ax.invert_yaxis()
+    for cl in ['positive', 'negative']:
+        for patch_id in dataPS[cl].keys():
+            indices = dataPS[cl][patch_id]
+            if verbose:
+                print(f"Number of tiles in {cl} patch {patch_id}: {len(indices)}")
+            patches = []
+            patch_color = np.random.rand(3,)
+            for tile_id in indices:
+                row = df_grid.loc[tile_id]
+                rect = Rectangle((row['x'] - tile_size // 2, row['y'] - tile_size // 2),
+                                tile_size, tile_size, edgecolor=edgecolors[cl],
+                                facecolor=patch_color, lw=lw, alpha=alpha)
+                patches.append(rect)
+            patch_center = df_grid.loc[indices][['x', 'y']].mean().values
+            ax.text(patch_center[0], patch_center[1], str(patch_id), color='white', fontsize=fontsize, ha='center', va='center')
+            ax.add_collection(PatchCollection(patches, match_original=True))
+    plt.show()
+    return
+
+def getClassifierForFromStrokes(strokes, patchCoordinates, tile_size, body_overlap, patch_size, ads, samples, qs, augFunc=None, alpha=0.8, seed=0):    
+    dataPS = preparePatchesFromStrokes(strokes, patchCoordinates[['x', 'y']], tile_size=tile_size,
+                                            body_overlap=body_overlap, patch_size=patch_size, debug=False)
+    if False:
+        visualizePatches(dataPS, patchCoordinates[['x', 'y']], tile_size=tile_size, fontsize=6)
+
+    # Create a dataframe with the patch representations and the corresponding annotations for training a classifier
+    se = pd.concat([pd.Series({tile: patch for patch, tiles in dataPS[cl].items() for tile in tiles}) for cl in ['positive', 'negative']])
+    se.index.names = ['sample', 'barcode']
+    patchCoordinatesMod = patchCoordinates[['x', 'y']].loc[se.index].copy()
+    patchCoordinatesMod['patch'] = se.values
+    patchesCDFsMod = pd.concat([getPatchRepresentation(ads[sample], patchCoordinatesMod.xs(sample, level='sample', axis=0), 
+                                                            qs, sample_id=sample) for sample in tqdm(samples)], axis=0)
+
+    # Create annotations for training a classifier
+    annotations = {(v[0][0], k): 'positive' for k, v in dataPS['positive'].items()}
+    annotations.update({(v[0][0], k): 'negative' for k, v in dataPS['negative'].items()})
+
+    # Train a classifier using the static annotations and the features in the dataframe
+    clf = trainClassifier(annotations, patchesCDFsMod, alpha=alpha, seed=seed, augFunc=augFunc)
+    return clf
 
 def setNotebookWidth(widthPercent=100):
     """Set the notebook container width in a Jupyter environment."""
