@@ -181,21 +181,41 @@ def getClassifierForFromStrokes(strokes, patchCoordinates, tile_size, body_overl
     if False:
         visualizePatches(dataPS, patchCoordinates[['x', 'y']], tile_size=tile_size, fontsize=6)
 
+    if len(strokes['strokes_positive']) == 0 and len(strokes['strokes_negative']) == 0:
+        print("No positive and negative annotations provided.")
+        return None, None, None
+
+    no_pos = len(strokes['strokes_positive']) == 0
+    no_neg = len(strokes['strokes_negative']) == 0
+    if no_pos and no_neg:
+        print("No positive and negative annotations available.")
+        return None, None, None
+    elif no_pos:
+        print("No positive annotations available.")
+        return None, None, None
+    elif no_neg:
+        print("No negative annotations available.")
+        return None, None, None
+
     # Create a dataframe with the patch representations and the corresponding annotations for training a classifier
     se = pd.concat([pd.Series({tile: patch for patch, tiles in dataPS[cl].items() for tile in tiles}) for cl in ['positive', 'negative']])
     se.index.names = ['sample', 'barcode']
     patchCoordinatesMod = patchCoordinates[['x', 'y']].loc[se.index].copy()
     patchCoordinatesMod['patch'] = se.values
     patchesCDFsMod = pd.concat([getPatchRepresentation(ads[sample], patchCoordinatesMod.xs(sample, level='sample', axis=0), 
-                                                            qs, sample_id=sample) for sample in tqdm(samples)], axis=0)
+                                                    qs, sample_id=sample) for sample in samples], axis=0)
 
     # Create annotations for training a classifier
     annotations = {(v[0][0], k): 'positive' for k, v in dataPS['positive'].items()}
     annotations.update({(v[0][0], k): 'negative' for k, v in dataPS['negative'].items()})
 
     # Train a classifier using the static annotations and the features in the dataframe
-    clf = trainClassifier(annotations, patchesCDFsMod, alpha=alpha, seed=seed, augFunc=augFunc)
-    return clf
+    try:
+        clf = trainClassifier(annotations, patchesCDFsMod, alpha=alpha, seed=seed, augFunc=augFunc)
+    except Exception as e:
+        print(f"Error training classifier: {e}")
+        clf = None
+    return clf, patchesCDFsMod, annotations
 
 def setNotebookWidth(widthPercent=100):
     """Set the notebook container width in a Jupyter environment."""
