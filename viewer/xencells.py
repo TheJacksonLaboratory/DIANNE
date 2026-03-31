@@ -36,8 +36,20 @@ class XeniumCells:
             self._Tr = mat[:2, -1].astype(float)
             self._Mi = np.linalg.inv(self._M)
 
-        self.cell_id_to_category = dict(cell_id_to_category or {})
-        self.category_colors = dict(category_colors or {})
+        if cell_id_to_category is None:
+            self.cell_id_to_category = {}
+        elif hasattr(cell_id_to_category, 'to_dict'):
+            # Supports pandas Series/DataFrame-like mappings passed from notebooks.
+            self.cell_id_to_category = dict(cell_id_to_category.to_dict())
+        else:
+            self.cell_id_to_category = dict(cell_id_to_category)
+
+        if category_colors is None:
+            self.category_colors = {}
+        elif hasattr(category_colors, 'to_dict'):
+            self.category_colors = dict(category_colors.to_dict())
+        else:
+            self.category_colors = dict(category_colors)
 
         zip_fs = fsspec.filesystem('zip', fo=str(self.bundle_path / 'cells.zarr.zip'))
         store = zip_fs.get_mapper('')

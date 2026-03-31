@@ -18,10 +18,39 @@ class ViewerServer:
             POST /strokes       → {strokes_positive:[...], strokes_negative:[...]}
     """
 
-    def __init__(self, image, host=None, port=None, xenium=None, xenium_cells=None):
-        self.image   = image
-        self.xenium  = xenium
-        self.xenium_cells = xenium_cells
+    def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
+                 xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None):
+        if images is None:
+            if image is None:
+                raise ValueError('ViewerServer requires image or images')
+            default_name = str(chosen_sample) if chosen_sample is not None else 'default'
+            images = {default_name: image}
+
+        self.images = dict(images)
+        if not self.images:
+            raise ValueError('ViewerServer requires at least one sample image')
+
+        if chosen_sample is None:
+            self.chosen_sample = next(iter(self.images.keys()))
+        else:
+            self.chosen_sample = str(chosen_sample)
+            if self.chosen_sample not in self.images:
+                raise ValueError(f"unknown chosen_sample '{self.chosen_sample}'")
+
+        self.image   = self.images[self.chosen_sample]
+
+        # Backward compatibility: allow either a single xenium object or per-sample maps.
+        self.xenium_by_sample = {str(k): v for k, v in (xenium_by_sample or {}).items()}
+        self.xenium_cells_by_sample = {str(k): v for k, v in (xenium_cells_by_sample or {}).items()}
+        if xenium is not None and not self.xenium_by_sample:
+            for sample in self.images.keys():
+                self.xenium_by_sample[sample] = xenium
+        if xenium_cells is not None and not self.xenium_cells_by_sample:
+            for sample in self.images.keys():
+                self.xenium_cells_by_sample[sample] = xenium_cells
+
+        self.xenium = self.xenium_by_sample.get(self.chosen_sample)
+        self.xenium_cells = self.xenium_cells_by_sample.get(self.chosen_sample)
         if host:
             self.host = host
         else:
@@ -30,9 +59,9 @@ class ViewerServer:
             except socket.gaierror:
                 self.host = '127.0.0.1'
         self.clicks  = []
-        self.strokes = {
-            'strokes_positive': [],
-            'strokes_negative': [],
+        self.strokes_by_sample = {
+            sample: {'strokes_positive': [], 'strokes_negative': []}
+            for sample in self.images.keys()
         }
 
         if port is None:
@@ -55,6 +84,24 @@ class ViewerServer:
     def base_url(self):
         return f"http://{self.host}:{self.port}"
 
+    @property
+    def strokes(self):
+        """Backward-compat property: return strokes for current sample."""
+        return self.strokes_by_sample.get(self.chosen_sample, {'strokes_positive': [], 'strokes_negative': []})
+
+    def set_sample(self, sample):
+        sample_name = str(sample)
+        if sample_name not in self.images:
+            raise KeyError(sample_name)
+        self.chosen_sample = sample_name
+        self.image = self.images[sample_name]
+        self.xenium = self.xenium_by_sample.get(sample_name)
+        self.xenium_cells = self.xenium_cells_by_sample.get(sample_name)
+
+    def _sample_from_qs(self, qs):
+        requested = qs.get('sample', [self.chosen_sample])[0]
+        return str(requested)
+
     # ── handler factory (closure over self) ───────────────────────────────────
 
     def _make_handler(self):
@@ -68,23 +115,38 @@ class ViewerServer:
             def do_GET(self):
                 parsed = urlparse(self.path)
                 qs     = parse_qs(parsed.query)
+                sample_name = srv._sample_from_qs(qs)
+                image = srv.images.get(sample_name)
+
+                if image is None and parsed.path in ('/meta', '/tile'):
+                    self._respond(404, b'unknown sample')
+                    return
 
                 if parsed.path == '/meta':
-                    body = json.dumps(srv.image.metadata).encode()
+                    body = json.dumps(image.metadata).encode()
+                    self._respond(200, body, 'application/json')
+
+                elif parsed.path == '/samples':
+                    body = json.dumps({
+                        'chosen_sample': srv.chosen_sample,
+                        'samples': list(srv.images.keys()),
+                    }).encode()
                     self._respond(200, body, 'application/json')
 
                 elif parsed.path == '/xenium_meta':
-                    if srv.xenium is None:
+                    xenium = srv.xenium_by_sample.get(sample_name)
+                    if xenium is None:
                         self._respond(404)
                     else:
-                        body = json.dumps(srv.xenium.metadata).encode()
+                        body = json.dumps(xenium.metadata).encode()
                         self._respond(200, body, 'application/json')
 
                 elif parsed.path == '/xenium_cells_meta':
-                    if srv.xenium_cells is None:
+                    xenium_cells = srv.xenium_cells_by_sample.get(sample_name)
+                    if xenium_cells is None:
                         self._respond(404)
                     else:
-                        body = json.dumps(srv.xenium_cells.metadata).encode()
+                        body = json.dumps(xenium_cells.metadata).encode()
                         self._respond(200, body, 'application/json')
 
                 elif parsed.path == '/tile':
@@ -92,13 +154,14 @@ class ViewerServer:
                         level = int(qs['level'][0])
                         row   = int(qs['row'][0])
                         col   = int(qs['col'][0])
-                        data  = srv.image.get_tile(level, row, col)
+                        data  = image.get_tile(level, row, col)
                         self._respond(200, data, 'image/jpeg')
                     except Exception as e:
                         self._respond(400, str(e).encode())
 
                 elif parsed.path == '/xenium_tile':
-                    if srv.xenium is None:
+                    xenium = srv.xenium_by_sample.get(sample_name)
+                    if xenium is None:
                         self._respond(404)
                     else:
                         try:
@@ -108,14 +171,15 @@ class ViewerServer:
                             col = int(qs['col'][0])
                             genes = [gene for gene in qs.get('genes', [''])[0].split(',') if gene]
                             body = json.dumps({
-                                'points': srv.xenium.get_tile_transcripts(grid, level, row, col, genes)
+                                'points': xenium.get_tile_transcripts(grid, level, row, col, genes)
                             }).encode()
                             self._respond(200, body, 'application/json')
                         except Exception as e:
                             self._respond(400, str(e).encode())
 
                 elif parsed.path == '/xenium_cells':
-                    if srv.xenium_cells is None:
+                    xenium_cells = srv.xenium_cells_by_sample.get(sample_name)
+                    if xenium_cells is None:
                         self._respond(404)
                     else:
                         try:
@@ -123,7 +187,7 @@ class ViewerServer:
                             row = int(qs['row'][0])
                             col = int(qs['col'][0])
                             body = json.dumps({
-                                'cells': srv.xenium_cells.get_tile_cells(level, row, col)
+                                'cells': xenium_cells.get_tile_cells(level, row, col)
                             }).encode()
                             self._respond(200, body, 'application/json')
                         except Exception as e:
@@ -155,19 +219,43 @@ class ViewerServer:
                     srv.clicks.extend(next_clicks)
 
                 elif parsed.path == '/strokes':
-                    next_positive = []
-                    next_negative = []
-                    if isinstance(data, dict):
-                        next_positive = list(data.get('strokes_positive', []))
-                        next_negative = list(data.get('strokes_negative', []))
-                    elif isinstance(data, list):
-                        # Backward compatibility with legacy single-list payload.
-                        next_positive = list(data)
+                    if isinstance(data, dict) and 'by_sample' in data:
+                        # New format: strokes organized by sample
+                        by_sample = data.get('by_sample', {})
+                        for sample, sample_strokes_data in by_sample.items():
+                            if sample in srv.strokes_by_sample:
+                                pos = list(sample_strokes_data.get('strokes_positive', []))
+                                neg = list(sample_strokes_data.get('strokes_negative', []))
+                                srv.strokes_by_sample[sample]['strokes_positive'] = pos
+                                srv.strokes_by_sample[sample]['strokes_negative'] = neg
+                    else:
+                        # Legacy format: single sample strokes
+                        next_positive = []
+                        next_negative = []
+                        if isinstance(data, dict):
+                            next_positive = list(data.get('strokes_positive', []))
+                            next_negative = list(data.get('strokes_negative', []))
+                        elif isinstance(data, list):
+                            # Backward compatibility with legacy single-list payload.
+                            next_positive = list(data)
 
-                    srv.strokes['strokes_positive'].clear()
-                    srv.strokes['strokes_positive'].extend(next_positive)
-                    srv.strokes['strokes_negative'].clear()
-                    srv.strokes['strokes_negative'].extend(next_negative)
+                        sample_strokes = srv.strokes_by_sample.get(srv.chosen_sample)
+                        if sample_strokes:
+                            sample_strokes['strokes_positive'].clear()
+                            sample_strokes['strokes_positive'].extend(next_positive)
+                            sample_strokes['strokes_negative'].clear()
+                            sample_strokes['strokes_negative'].extend(next_negative)
+
+                elif parsed.path == '/choose_sample':
+                    sample = data.get('sample') if isinstance(data, dict) else None
+                    if sample is None:
+                        self._respond(400, b'missing sample')
+                        return
+                    try:
+                        srv.set_sample(sample)
+                    except KeyError:
+                        self._respond(404, b'unknown sample')
+                        return
 
                 self._respond(200, b'ok')
 

@@ -19,6 +19,9 @@ function createViewport(container, imageWidth, imageHeight) {
   const MIN_SCALE = 0.01;
   const MAX_SCALE = 2.0;
 
+  let imgWidth = imageWidth;
+  let imgHeight = imageHeight;
+
   let scale = 1, ox = 0, oy = 0;
   const listeners = [];
 
@@ -26,10 +29,20 @@ function createViewport(container, imageWidth, imageHeight) {
   function reset() {
     const cw = container.clientWidth;
     const ch = container.clientHeight;
-    scale = Math.min(cw / imageWidth, ch / imageHeight);
-    ox    = (cw - imageWidth  * scale) / 2;
-    oy    = (ch - imageHeight * scale) / 2;
+    scale = Math.min(cw / imgWidth, ch / imgHeight);
+    ox    = (cw - imgWidth  * scale) / 2;
+    oy    = (ch - imgHeight * scale) / 2;
     _notify();
+  }
+
+  function setImageSize(width, height, doReset = true) {
+    imgWidth = Number(width);
+    imgHeight = Number(height);
+    if (doReset) {
+      reset();
+    } else {
+      _notify();
+    }
   }
 
   // ── mutators ───────────────────────────────────────────────────────────────
@@ -81,5 +94,5 @@ function createViewport(container, imageWidth, imageHeight) {
   // fit on creation
   reset();
 
-  return { panBy, zoomAt, reset, toImageSpace, toScreenSpace, getTransform, onChange };
+  return { panBy, zoomAt, reset, setImageSize, toImageSpace, toScreenSpace, getTransform, onChange };
 }

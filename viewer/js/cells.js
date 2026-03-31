@@ -2,21 +2,21 @@
  * cells.js
  *
  * Viewport-driven Xenium cell overlay with per-tile caching.
- * Cells are fetched from the Xenium bundle and rendered as either
- * boundary polygons (if cell count < max_cells) or simple dots (if > max_cells).
- *
- * Supports optional category coloring via cell_id→category mapping and
- * category→color palette.
+ * Supports sample switching and per-sample enable/disable at runtime.
  */
 
-function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow) {
-  const TILE = imageMeta.tile_size;
+function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow, sampleName = null) {
   const MAX_CACHED = 200;
   const PREFETCH = 1;
-  let POINT_RADIUS = 6;
   const BOUNDARY_LINE_WIDTH = 1.5;
+  let POINT_RADIUS = 6;
+
   let drawToken = 0;
   let redrawQueued = false;
+  let currentSample = sampleName;
+  let currentImageMeta = imageMeta;
+  let currentCellsMeta = cellsMeta;
+  let enabled = !!currentCellsMeta;
 
   const layer = document.createElement('canvas');
   layer.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2.5;';
@@ -32,12 +32,11 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     'background:rgba(0,0,0,0.55)', 'color:#eee',
     'font:12px monospace',
   ].join(';');
-  // prepend so cells button sits LEFT of the genes button in the shared row
   if (sharedRow) sharedRow.insertBefore(controls, sharedRow.firstChild);
   else container.appendChild(controls);
 
   const toggleBtn = document.createElement('button');
-  toggleBtn.textContent = 'cells';
+  toggleBtn.textContent = 'Cells';
   toggleBtn.title = 'Toggle cell categories panel';
   toggleBtn.style.cssText = [
     'background:transparent', 'border:1px solid #888',
@@ -54,20 +53,31 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   ].join(';');
   controls.appendChild(panel);
 
-  // ── category state ────────────────────────────────────────────────────────
-  // If annotations provided, keys are category names; otherwise use "All".
-  const _hasCategories = cellsMeta.has_categories;
-  const _initColors = (_hasCategories && Object.keys(cellsMeta.category_colors).length)
-    ? Object.assign({}, cellsMeta.category_colors)
-    : { All: '#888888' };
-  const categoryColors = Object.assign({}, _initColors);  // mutable per-category colors
-  const selectedCategories = new Set();   // all off by default
-
   const cache = new Map();
   const inflight = new Map();
 
   let isVisible = true;
-  let currentLevel = bestImageLevel(viewport.getTransform().scale);
+  let currentLevel = 0;
+  let hasCategories = false;
+  let categoryColors = { All: '#888888' };
+  const selectedCategories = new Set();
+
+  function applyMeta(meta) {
+    currentCellsMeta = meta;
+    enabled = !!currentCellsMeta;
+    hasCategories = !!(enabled && currentCellsMeta.has_categories);
+    if (enabled && hasCategories && currentCellsMeta.category_colors && Object.keys(currentCellsMeta.category_colors).length) {
+      categoryColors = Object.assign({}, currentCellsMeta.category_colors);
+    } else {
+      categoryColors = { All: '#888888' };
+    }
+    selectedCategories.clear();
+  }
+
+  function clearCache() {
+    cache.clear();
+    inflight.clear();
+  }
 
   function resizeLayer() {
     layer.width = container.clientWidth;
@@ -78,16 +88,17 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   resizeLayer();
 
   function bestImageLevel(scale) {
-    for (let i = 0; i < imageMeta.n_levels; i++) {
-      if (scale >= 1 / imageMeta.levels[i].downsample) return i;
+    for (let i = 0; i < currentImageMeta.n_levels; i++) {
+      if (scale >= 1 / currentImageMeta.levels[i].downsample) return i;
     }
-    return imageMeta.n_levels - 1;
+    return currentImageMeta.n_levels - 1;
   }
 
   function visibleRange(level, transform, pad) {
+    const TILE = currentImageMeta.tile_size;
     const { scale, ox, oy } = transform;
-    const lm = imageMeta.levels[level];
-    const l0 = imageMeta.levels[0];
+    const lm = currentImageMeta.levels[level];
+    const l0 = currentImageMeta.levels[0];
     const cw = container.clientWidth;
     const ch = container.clientHeight;
 
@@ -98,12 +109,12 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
 
     const c0 = Math.max(0, Math.floor(x0 / TILE) - pad);
     const r0 = Math.max(0, Math.floor(y0 / TILE) - pad);
-    const c1 = Math.min(lm.width / TILE, Math.ceil(x1 / TILE) + pad);
-    const r1 = Math.min(lm.height / TILE, Math.ceil(y1 / TILE) + pad);
+    const c1 = Math.min(lm.n_tiles_x - 1, Math.floor(x1 / TILE) + pad);
+    const r1 = Math.min(lm.n_tiles_y - 1, Math.floor(y1 / TILE) + pad);
 
     const tiles = [];
-    for (let r = r0; r < r1; r++) {
-      for (let c = c0; c < c1; c++) {
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
         tiles.push({ level, row: r, col: c });
       }
     }
@@ -111,16 +122,16 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   }
 
   function cacheKey(tile) {
-    return `${tile.level},${tile.row},${tile.col}`;
+    return `${currentSample}|${tile.level},${tile.row},${tile.col}`;
   }
 
   function fetchTile(tile) {
     const key = cacheKey(tile);
     if (cache.has(key)) return Promise.resolve(cache.get(key));
-    if (inflight.has(key)) return inflight.get(key);
+    if (inflight.has(key) || !enabled) return Promise.resolve([]);
 
     const promise = fetch(
-      `${baseUrl}/xenium_cells?level=${tile.level}&row=${tile.row}&col=${tile.col}`
+      `${baseUrl}/xenium_cells?sample=${encodeURIComponent(currentSample)}&level=${tile.level}&row=${tile.row}&col=${tile.col}`
     )
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -131,14 +142,12 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
         cache.set(key, cells);
         inflight.delete(key);
 
-        // LRU eviction
         if (cache.size > MAX_CACHED) {
           const firstKey = cache.keys().next().value;
           cache.delete(firstKey);
         }
 
         requestDraw();
-
         return cells;
       })
       .catch((err) => {
@@ -160,55 +169,8 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     });
   }
 
-  function draw(transform) {
-    const token = ++drawToken;
-    if (!isVisible) {
-      ctx.clearRect(0, 0, layer.width, layer.height);
-      return;
-    }
-
-    ctx.clearRect(0, 0, layer.width, layer.height);
-
-    currentLevel = bestImageLevel(transform.scale);
-    const tiles = visibleRange(currentLevel, transform, PREFETCH);
-    for (const tile of tiles) {
-      const key = cacheKey(tile);
-      if (!cache.has(key)) {
-        fetchTile(tile);
-        continue;
-      }
-
-      const cells = cache.get(key) || [];
-      cache.delete(key);
-      cache.set(key, cells);
-
-      for (const cell of cells) {
-        // category filter — resolve effective category first
-        const cat = resolveCategory(cell);
-        if (!selectedCategories.has(cat)) continue;
-
-        const sp = viewport.toScreenSpace(cell.x, cell.y);
-        if (sp.x < -20 || sp.x > layer.width + 20 || sp.y < -20 || sp.y > layer.height + 20) {
-          continue;
-        }
-
-        const color = categoryColors[cat] || '#888888';
-        if (cell.is_dot) {
-          drawDot(sp.x, sp.y, POINT_RADIUS, color);
-        } else if (cell.boundary) {
-          drawBoundary(cell.boundary, color);
-        } else {
-          drawDot(sp.x, sp.y, POINT_RADIUS, color);
-        }
-      }
-    }
-
-    if (token !== drawToken) return;
-  }
-
   function resolveCategory(cell) {
-    // When no annotations provided every cell maps to "All"
-    if (!_hasCategories) return 'All';
+    if (!hasCategories) return 'All';
     return (cell.category != null) ? String(cell.category) : 'All';
   }
 
@@ -220,6 +182,15 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 0.5;
     ctx.stroke();
+  }
+
+  function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? [
+      parseInt(result[1], 16),
+      parseInt(result[2], 16),
+      parseInt(result[3], 16),
+    ] : [128, 128, 128];
   }
 
   function drawBoundary(boundaryCoords, color) {
@@ -245,27 +216,68 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     ctx.stroke();
   }
 
-  function hexToRgb(hex) {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? [
-      parseInt(result[1], 16),
-      parseInt(result[2], 16),
-      parseInt(result[3], 16),
-    ] : [128, 128, 128];
+  function draw(transform) {
+    const token = ++drawToken;
+    if (!isVisible || !enabled) {
+      ctx.clearRect(0, 0, layer.width, layer.height);
+      return;
+    }
+
+    ctx.clearRect(0, 0, layer.width, layer.height);
+    currentLevel = bestImageLevel(transform.scale);
+    const tiles = visibleRange(currentLevel, transform, PREFETCH);
+
+    for (const tile of tiles) {
+      const key = cacheKey(tile);
+      if (!cache.has(key)) {
+        fetchTile(tile);
+        continue;
+      }
+
+      const cells = cache.get(key) || [];
+      cache.delete(key);
+      cache.set(key, cells);
+
+      for (const cell of cells) {
+        const cat = resolveCategory(cell);
+        if (!selectedCategories.has(cat)) continue;
+
+        const sp = viewport.toScreenSpace(cell.x, cell.y);
+        if (sp.x < -20 || sp.x > layer.width + 20 || sp.y < -20 || sp.y > layer.height + 20) {
+          continue;
+        }
+
+        const color = categoryColors[cat] || '#888888';
+        if (cell.is_dot) {
+          drawDot(sp.x, sp.y, POINT_RADIUS, color);
+        } else if (cell.boundary) {
+          drawBoundary(cell.boundary, color);
+        } else {
+          drawDot(sp.x, sp.y, POINT_RADIUS, color);
+        }
+      }
+    }
+
+    if (token !== drawToken) return;
   }
 
-  // ── category panel ────────────────────────────────────────────────────────
-
   function updateButton() {
+    if (!enabled) {
+      toggleBtn.textContent = 'Cells (off)';
+      return;
+    }
     const total = Object.keys(categoryColors).length;
     const on = selectedCategories.size;
-    toggleBtn.textContent = total === 1
-      ? 'Cells'
-      : `Cells (${on}/${total})`;
+    toggleBtn.textContent = total === 1 ? 'Cells' : `Cells (${on}/${total})`;
   }
 
   function rebuildCategoryPanel() {
     panel.innerHTML = '';
+    if (!enabled) {
+      updateButton();
+      return;
+    }
+
     const cats = Object.keys(categoryColors);
 
     const sizeRow = document.createElement('div');
@@ -288,25 +300,28 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     if (cats.length > 1) {
       const allRow = document.createElement('div');
       allRow.style.cssText = 'display:flex;gap:6px;padding:2px 0 4px;border-bottom:1px solid rgba(255,255,255,0.12);margin-bottom:2px;';
-      const _btnStyle = [
+      const btnStyle = [
         'background:transparent', 'border:1px solid #666',
         'color:#ccc', 'border-radius:3px', 'padding:1px 6px',
         'cursor:pointer', 'font-size:11px', 'line-height:1.4',
       ].join(';');
+
       const allBtn = document.createElement('button');
       allBtn.textContent = 'all';
-      allBtn.style.cssText = _btnStyle;
+      allBtn.style.cssText = btnStyle;
       allBtn.addEventListener('click', () => {
         cats.forEach(c => selectedCategories.add(c));
         rebuildCategoryPanel(); updateButton(); requestDraw();
       });
+
       const noneBtn = document.createElement('button');
       noneBtn.textContent = 'none';
-      noneBtn.style.cssText = _btnStyle;
+      noneBtn.style.cssText = btnStyle;
       noneBtn.addEventListener('click', () => {
         selectedCategories.clear();
         rebuildCategoryPanel(); updateButton(); requestDraw();
       });
+
       allRow.appendChild(allBtn);
       allRow.appendChild(noneBtn);
       panel.appendChild(allRow);
@@ -350,23 +365,43 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
       row.appendChild(label);
       panel.appendChild(row);
     }
+
+    updateButton();
   }
 
-  // Toggle panel open/closed (not layer visibility)
+  function setVisible(v) {
+    isVisible = v;
+    const on = isVisible && enabled;
+    layer.style.display = on ? '' : 'none';
+    controls.style.display = on ? 'flex' : 'none';
+    if (!on) panel.style.display = 'none';
+    requestDraw();
+  }
+
+  function setContext(sample, imageMetaNext, cellsMetaNext) {
+    currentSample = sample;
+    currentImageMeta = imageMetaNext;
+    applyMeta(cellsMetaNext);
+    clearCache();
+    rebuildCategoryPanel();
+    setVisible(true);
+  }
+
   toggleBtn.addEventListener('click', () => {
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
   });
 
-  rebuildCategoryPanel();
-  updateButton();
-
-  // Redraw on viewport change
   viewport.onChange(() => {
     requestDraw();
   });
 
+  applyMeta(cellsMeta);
+  rebuildCategoryPanel();
+  setVisible(true);
+
   return {
-    setVisible: (v) => { isVisible = v; requestDraw(); },
+    setVisible,
+    setContext,
     getVisible: () => isVisible,
     getSelectedCategories: () => [...selectedCategories],
   };

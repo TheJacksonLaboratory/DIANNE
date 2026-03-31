@@ -158,6 +158,38 @@ function createDraw(container, viewport) {
     };
   }
 
+  function setStrokes(positive, negative) {
+    strokesPositive.length = 0;
+    strokesNegative.length = 0;
+    active = null;
+
+    if (Array.isArray(positive)) {
+      for (const s of positive) {
+        if (s && Array.isArray(s.points)) {
+          strokesPositive.push({
+            id: s.id || strokeId++,
+            kind: 'positive',
+            points: s.points.map(p => ({ x: p.x, y: p.y })),
+          });
+        }
+      }
+    }
+
+    if (Array.isArray(negative)) {
+      for (const s of negative) {
+        if (s && Array.isArray(s.points)) {
+          strokesNegative.push({
+            id: s.id || strokeId++,
+            kind: 'negative',
+            points: s.points.map(p => ({ x: p.x, y: p.y })),
+          });
+        }
+      }
+    }
+
+    redraw();
+  }
+
   // ── rendering ──────────────────────────────────────────────────────────────
   function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -196,6 +228,7 @@ function createDraw(container, viewport) {
     onMouseUp,
     setMode,
     getStrokes,
+    setStrokes,
     undoLast,
     clear,
     setColor,

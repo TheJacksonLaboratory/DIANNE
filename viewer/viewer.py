@@ -14,9 +14,9 @@ def _read_js(name):
     return (_JS_DIR / name).read_text()
 
 
-def create_viewer(image_path, width="100%", height="700px", host=None, port=None,
-                  xenium_bundle_path=None, matrix_csv=None, xenium_mpp=1.0,
-                  cell_id_to_category=None, category_colors=None, max_cells=2000):
+def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
+                  xenium_mpp=1.0, category_colors=None, max_cells=2000,
+                  xenium_bundle_paths=None, matrices=None, annotations=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -29,14 +29,15 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
 
     Parameters
     ----------
-    image_path : str | Path
+    samples : list of str | Path
+    images : dict of str | Path
     width, height : CSS strings for the viewer div
     host : IP reachable from the browser (auto-detected if None)
     port : HTTP port for the tile/click server (random if None)
-    xenium_bundle_path : optional path to a Xenium bundle with transcripts.zarr.zip
-    matrix_csv : optional path to a 3×3 CSV affine matrix (H&E px → Xenium µm)
+    xenium_bundle_paths : optional dict[sample] -> Xenium bundle path or None
+    matrices : optional dict[sample] -> 3×3 CSV affine matrix path or None
     xenium_mpp : Xenium microns-per-pixel (default 1.0); scales coords after apply matrix
-    cell_id_to_category : optional dict mapping cell IDs to category strings (e.g., cell_type)
+    annotations : optional dict[sample] -> cell-id->category mapping
     category_colors : optional dict mapping category names to hex colors
     max_cells : maximum number of cells to display per tile (default 2000)
     Returns
@@ -48,25 +49,86 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
           image-space coords
     stop    : callable — shuts down the background HTTP server
     """
-    image  = PyramidImage(image_path)
-    xenium = XeniumTranscripts(xenium_bundle_path, image.metadata,
-                               matrix_path=matrix_csv,
-                               xenium_mpp=xenium_mpp) if xenium_bundle_path else None
-    xenium_cells = XeniumCells(xenium_bundle_path, image.metadata,
-                               matrix_path=matrix_csv,
-                               xenium_mpp=xenium_mpp,
-                               cell_id_to_category=cell_id_to_category,
-                               category_colors=category_colors,
-                               max_cells=max_cells) if xenium_bundle_path else None
-    server = ViewerServer(image, host=host, port=port, xenium=xenium, xenium_cells=xenium_cells)
+    if isinstance(samples, (list, tuple)):
+      sample_list = [str(s) for s in samples]
+    else:
+      sample_list = [str(samples)]
+    if not sample_list:
+      raise ValueError('create_viewer requires at least one sample')
+
+    missing = [s for s in sample_list if s not in images]
+    if missing:
+      raise KeyError(f'missing image path(s) for sample(s): {missing}')
+
+    chosen_sample = sample_list[0]
+    sample_images = {s: PyramidImage(images[s]) for s in sample_list}
+    image  = sample_images[chosen_sample]
+
+    if xenium_bundle_paths is None:
+      xenium_bundle_paths = {}
+    elif not isinstance(xenium_bundle_paths, dict):
+      raise TypeError('xenium_bundle_paths must be a dict[sample] -> path|None')
+    else:
+      xenium_bundle_paths = {str(k): v for k, v in xenium_bundle_paths.items()}
+
+    if matrices is None:
+      matrices = {}
+    elif not isinstance(matrices, dict):
+      raise TypeError('matrices must be a dict[sample] -> matrix_csv_path|None')
+    else:
+      matrices = {str(k): v for k, v in matrices.items()}
+
+    if annotations is None:
+      annotations = {}
+    elif not isinstance(annotations, dict):
+      raise TypeError('annotations must be a dict[sample] -> cell_id_to_category')
+    else:
+      annotations = {str(k): v for k, v in annotations.items()}
+
+    xenium_by_sample = {}
+    xenium_cells_by_sample = {}
+    sample_xenium_meta = {s: None for s in sample_list}
+    sample_cells_meta = {s: None for s in sample_list}
+
+    for sample in sample_list:
+      bundle_path = xenium_bundle_paths.get(sample)
+      if bundle_path is None:
+        continue
+
+      matrix_path = matrices.get(sample)
+      sample_annotations = annotations.get(sample)
+      sample_colors = category_colors.get(sample) if isinstance(category_colors, dict) and sample in category_colors else category_colors
+
+      sample_xenium = XeniumTranscripts(bundle_path, sample_images[sample].metadata,
+                        matrix_path=matrix_path,
+                        xenium_mpp=xenium_mpp)
+      sample_cells = XeniumCells(bundle_path, sample_images[sample].metadata,
+                     matrix_path=matrix_path,
+                     xenium_mpp=xenium_mpp,
+                     cell_id_to_category=sample_annotations,
+                     category_colors=sample_colors,
+                     max_cells=max_cells)
+      xenium_by_sample[sample] = sample_xenium
+      xenium_cells_by_sample[sample] = sample_cells
+      sample_xenium_meta[sample] = sample_xenium.metadata
+      sample_cells_meta[sample] = sample_cells.metadata
+
+    server = ViewerServer(images=sample_images, chosen_sample=chosen_sample,
+          host=host, port=port,
+          xenium_by_sample=xenium_by_sample,
+          xenium_cells_by_sample=xenium_cells_by_sample)
     server.start()
+
+    server.chosen_sample = chosen_sample
 
     # output widget for server-side log (optional, hidden by default)
     out = widgets.Output(layout=widgets.Layout(display='none'))
 
     meta_json = json.dumps(image.metadata)
-    xenium_meta_json = json.dumps(xenium.metadata) if xenium else 'null'
-    cells_meta_json = json.dumps(xenium_cells.metadata) if xenium_cells else 'null'
+    samples_json = json.dumps(sample_list)
+    sample_meta_json = json.dumps({s: sample_images[s].metadata for s in sample_list})
+    sample_xenium_meta_json = json.dumps(sample_xenium_meta)
+    sample_cells_meta_json = json.dumps(sample_cells_meta)
     base_url  = server.base_url
 
     # inline all JS files
@@ -80,9 +142,34 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
     ])
 
     html = """
+<div id="iv-shell" style="
+  width: __WIDTH__;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+">
+  <div id="iv-samples" style="
+    width: 10%;
+    min-width: 170px;
+    max-width: 260px;
+    height: __HEIGHT__;
+    overflow-y: auto;
+    background: #161616;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    box-sizing: border-box;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  "></div>
+  <div id="iv-main" style="
+    width: 90%;
+    min-width: 0;
+  ">
 <div id="iv-root" style="
   position: relative;
-  width: __WIDTH__;
+  width: 100%;
   height: __HEIGHT__;
   overflow: hidden;
   background: #111;
@@ -99,15 +186,21 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
   border-radius: 0 0 6px 6px;
   margin-bottom: 6px;
 ">initializing…</div>
+  </div>
+</div>
 
 <script>
 (function () {
   const root     = document.getElementById('iv-root');
   const status   = document.getElementById('iv-status');
+  const samplesRibbon = document.getElementById('iv-samples');
   const BASE_URL = __BASE_URL__;
-  const META     = __META__;
-  const XENIUM_META = __XENIUM_META__;
-  const CELLS_META = __CELLS_META__;
+  const SAMPLES  = __SAMPLES__;
+  const SAMPLE_META = __SAMPLE_META__;
+  const SAMPLE_XENIUM_META = __SAMPLE_XENIUM_META__;
+  const SAMPLE_CELLS_META = __SAMPLE_CELLS_META__;
+  let ACTIVE_SAMPLE = SAMPLES[0];
+  let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
   function log(msg) { status.textContent = msg; }
 
@@ -151,7 +244,7 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
 
   const l0       = META.levels[0];
   const viewport = createViewport(root, l0.width, l0.height);
-  const tiles    = createTiles(tileLayer, BASE_URL, META, viewport);
+  const tiles    = createTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE);
   // shared row: [cells button] [genes controls] — both top-right, side by side
   const rightControlsRow = document.createElement('div');
   rightControlsRow.dataset.ivUi = 'true';
@@ -161,14 +254,34 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
   ].join(';');
   root.appendChild(rightControlsRow);
 
-  const transcripts = XENIUM_META
-    ? createXeTranscripts(root, BASE_URL, META, XENIUM_META, viewport, log, rightControlsRow)
-    : null;
-  const cells = CELLS_META
-    ? createXeCells(root, BASE_URL, META, CELLS_META, viewport, log, rightControlsRow)
-    : null;
+  const transcripts = createXeTranscripts(
+    root,
+    BASE_URL,
+    META,
+    SAMPLE_XENIUM_META[ACTIVE_SAMPLE],
+    viewport,
+    log,
+    rightControlsRow,
+    ACTIVE_SAMPLE
+  );
+  const cells = createXeCells(
+    root,
+    BASE_URL,
+    META,
+    SAMPLE_CELLS_META[ACTIVE_SAMPLE],
+    viewport,
+    log,
+    rightControlsRow,
+    ACTIVE_SAMPLE
+  );
   const draw     = createDraw(root, viewport);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL);
+
+  // per-sample stroke storage
+  const strokesBySample = {};
+  for (const sample of SAMPLES) {
+    strokesBySample[sample] = { strokes_positive: [], strokes_negative: [] };
+  }
 
   // prediction overlay layer (Python-driven)
   const predLayer = document.createElement('canvas');
@@ -285,7 +398,131 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
     log('Overlay cleared');
   };
 
+  // Expose setActiveSample to window for external calls (e.g., set_overlay_points)
+  window.setActiveSample = setActiveSample;
+
   syncOverlayControls();
+
+  function setActiveSample(sampleName) {
+    if (!SAMPLE_META[sampleName]) return;
+    const changed = sampleName !== ACTIVE_SAMPLE;
+    if (changed) {
+      // Save strokes from previous sample before switching
+      strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
+
+      fetch(BASE_URL + '/choose_sample', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sample: sampleName }),
+      }).catch(() => {});
+
+      ACTIVE_SAMPLE = sampleName;
+      META = SAMPLE_META[sampleName];
+      const l0Sample = META.levels[0];
+      viewport.setImageSize(l0Sample.width, l0Sample.height, true);
+      tiles.setSample(ACTIVE_SAMPLE);
+      tiles.setMeta(META);
+      transcripts.setContext(ACTIVE_SAMPLE, META, SAMPLE_XENIUM_META[ACTIVE_SAMPLE]);
+      cells.setContext(ACTIVE_SAMPLE, META, SAMPLE_CELLS_META[ACTIVE_SAMPLE]);
+      predPoints = [];
+      drawPredLayer();
+
+      // Load strokes for new sample
+      const savedStrokes = strokesBySample[ACTIVE_SAMPLE];
+      draw.setStrokes(savedStrokes.strokes_positive, savedStrokes.strokes_negative);
+    }
+
+    for (const card of samplesRibbon.querySelectorAll('[data-sample-card]')) {
+      const isActive = card.dataset.sampleName === sampleName;
+      card.style.outline = isActive ? '2px solid #53d9ff' : 'none';
+      card.style.background = isActive ? '#272727' : '#1d1d1d';
+    }
+    log('Sample: ' + sampleName);
+  }
+
+  function buildSampleRibbon() {
+    samplesRibbon.innerHTML = '';
+
+    const legend = document.createElement('div');
+    legend.style.cssText = [
+      'display:flex', 'gap:6px', 'align-items:center', 'flex-wrap:wrap',
+      'padding:2px 0 6px 0', 'border-bottom:1px solid #2f2f2f',
+      'margin-bottom:2px',
+    ].join(';');
+
+    function makeLegendBadge(text, borderColor, fgColor, bgColor, title) {
+      const b = document.createElement('span');
+      b.textContent = text;
+      b.title = title;
+      b.style.cssText = [
+        'font:10px monospace', 'padding:1px 6px', 'border-radius:999px',
+        'border:1px solid ' + borderColor,
+        'color:' + fgColor,
+        'background:' + bgColor,
+      ].join(';');
+      return b;
+    }
+
+    // legend.appendChild(makeLegendBadge('XE', '#1f7a3a', '#8cffb1', 'rgba(31,122,58,0.2)', 'Xenium overlays available'));
+    // legend.appendChild(makeLegendBadge('HE', '#555', '#bdbdbd', 'rgba(80,80,80,0.25)', 'H&E image only'));
+    samplesRibbon.appendChild(legend);
+
+    for (const sampleName of SAMPLES) {
+      const hasXe = !!(SAMPLE_XENIUM_META[sampleName] || SAMPLE_CELLS_META[sampleName]);
+      const card = document.createElement('button');
+      card.dataset.sampleCard = 'true';
+      card.dataset.sampleName = sampleName;
+      card.type = 'button';
+      card.style.cssText = [
+        'width:100%', 'text-align:left', 'cursor:pointer',
+        'border:1px solid #4a4a4a', 'border-radius:6px',
+        'background:#1d1d1d', 'color:#e6e6e6', 'padding:6px',
+        'display:flex', 'flex-direction:column', 'gap:6px',
+      ].join(';');
+
+      const thumbWrap = document.createElement('div');
+      thumbWrap.style.cssText = [
+        'width:100%', 'aspect-ratio:1/1', 'overflow:hidden',
+        'border-radius:4px', 'background:#0f0f0f',
+        'border:1px solid #303030',
+      ].join(';');
+      const m = SAMPLE_META[sampleName];
+      const thumbLevel = Math.max(3, Number(m.n_levels) - 2);
+      const img = document.createElement('img');
+      img.src = BASE_URL + '/tile?sample=' + encodeURIComponent(sampleName)
+        + '&level=' + thumbLevel + '&row=0&col=0';
+      img.alt = sampleName;
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+      thumbWrap.appendChild(img);
+
+      const label = document.createElement('div');
+      label.textContent = sampleName;
+      label.style.cssText = [
+        'font:12px monospace', 'line-height:1.3',
+        'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
+      ].join(';');
+
+      const badge = document.createElement('div');
+      badge.textContent = hasXe ? 'XE' : 'HE';
+      badge.title = hasXe ? 'Xenium overlays available' : 'H&E image only';
+      badge.style.cssText = [
+        'font:10px monospace', 'align-self:flex-start',
+        'padding:1px 6px', 'border-radius:999px',
+        'border:1px solid ' + (hasXe ? '#1f7a3a' : '#555'),
+        'color:' + (hasXe ? '#8cffb1' : '#bdbdbd'),
+        'background:' + (hasXe ? 'rgba(31,122,58,0.2)' : 'rgba(80,80,80,0.25)'),
+      ].join(';');
+
+      card.appendChild(thumbWrap);
+      card.appendChild(label);
+      card.appendChild(badge);
+      card.addEventListener('click', () => setActiveSample(sampleName));
+      samplesRibbon.appendChild(card);
+    }
+    setActiveSample(ACTIVE_SAMPLE);
+  }
+
+  buildSampleRibbon();
 
   // trigger initial tile load now that all listeners are wired
   tiles.update(viewport.getTransform());
@@ -299,17 +536,27 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
     cross.style.display = 'block';
   });
 
-  // flush strokes to Python
+  // flush all strokes from all samples to Python
   window.ivFlushStrokes = function() {
-    const s = draw.getStrokes();
+    // Save current sample's strokes before flushing
+    strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
+
+    // Send all strokes organized by sample
+    const payload = { by_sample: strokesBySample };
+
+    // Count total strokes for log
+    let totalPos = 0, totalNeg = 0;
+    for (const sample in strokesBySample) {
+      totalPos += (strokesBySample[sample].strokes_positive || []).length;
+      totalNeg += (strokesBySample[sample].strokes_negative || []).length;
+    }
+
     fetch(BASE_URL + '/strokes', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(s),
+      body:    JSON.stringify(payload),
     }).then(() => {
-      const pos = (s.strokes_positive || []).length;
-      const neg = (s.strokes_negative || []).length;
-      log('Annotations transferred (+ ' + pos + ', - ' + neg + ')');
+      log('All annotations transferred (' + totalPos + ' pos, ' + totalNeg + ' neg across all samples)');
     })
       .catch(err => log('Transfer error: ' + err));
   };
@@ -322,28 +569,30 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
     for (let i = 0; i < META.n_levels; i++) {
       if (t.scale >= 1 / lvl[i].downsample) { level = i; break; }
     }
-    log('zoom ' + t.scale.toFixed(3) + 'x  |  level ' + level
+    log('sample ' + ACTIVE_SAMPLE + '  |  zoom ' + t.scale.toFixed(3) + 'x  |  level ' + level
       + '  (' + lvl[level].width + 'x' + lvl[level].height + ')');
   });
 
-  log('Ready');
+  log('Ready: ' + ACTIVE_SAMPLE);
 })();
 </script>
 """.replace('__WIDTH__',   width) \
    .replace('__HEIGHT__',  height) \
    .replace('__BASE_URL__', json.dumps(base_url)) \
+   .replace('__SAMPLES__', samples_json) \
+   .replace('__SAMPLE_META__', sample_meta_json) \
+  .replace('__SAMPLE_XENIUM_META__', sample_xenium_meta_json) \
+  .replace('__SAMPLE_CELLS_META__', sample_cells_meta_json) \
    .replace('__META__',    meta_json) \
-   .replace('__XENIUM_META__', xenium_meta_json) \
-   .replace('__CELLS_META__', cells_meta_json) \
    .replace('__JS__',      js)
 
     display(HTML(html))
     display(out)
 
-    return server.clicks, server.strokes, server.stop
+    return server.clicks, server.strokes_by_sample, server.stop
 
 
-def set_overlay_points(xi, yi=None, pi=None, delta=28, alpha=0.55,
+def set_overlay_points(xi, yi=None, pi=None, sample=None, delta=28, alpha=0.55,
                        color_low='#0b4dff', color_high='#ff2a2a'):
     """
     Push prediction points into the active viewer overlay layer.
@@ -353,6 +602,7 @@ def set_overlay_points(xi, yi=None, pi=None, delta=28, alpha=0.55,
     xi, yi, pi : arrays of equal length in image coordinates with probabilities in [0, 1].
                  For backward compatibility you may pass a single iterable of
                  dicts {xi, yi, pi} as the first argument and leave yi/pi as None.
+    sample : optional sample name to switch to before setting overlay points
     delta : side length of each heatmap square tile in image pixels
     alpha : overlay transparency in [0, 1]
     color_low, color_high : hex colors used for p=0 and p=1 interpolation
@@ -379,15 +629,21 @@ def set_overlay_points(xi, yi=None, pi=None, delta=28, alpha=0.55,
         'colorLow': color_low,
         'colorHigh': color_high,
     })
+
+    sample_switch_js = ''
+    if sample is not None:
+        sample_js = json.dumps(str(sample))
+        sample_switch_js = f'  if (typeof window.setActiveSample === "function") {{\n    window.setActiveSample({sample_js});\n  }}\n'
+
     display(Javascript(
-        """
-(function () {
-  if (typeof window.ivSetOverlayPoints !== 'function') {
+        f"""
+(function () {{
+{sample_switch_js}  if (typeof window.ivSetOverlayPoints !== 'function') {{
     console.warn('Viewer overlay API is not available. Run create_viewer(...) first.');
     return;
-  }
+  }}
   window.ivSetOverlayPoints(__POINTS__, __STYLE__);
-})();
+}})();
 """.replace('__POINTS__', payload).replace('__STYLE__', style)
     ))
 

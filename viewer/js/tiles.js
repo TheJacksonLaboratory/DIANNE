@@ -16,7 +16,9 @@
  *   tiles.setLevel(n)         force a specific level (optional override)
  */
 
-function createTiles(tileLayer, baseUrl, meta, viewport) {
+function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null) {
+  let currentMeta = meta;
+  let activeSample = sampleName;
   const TILE      = meta.tile_size;   // 512
   const MAX_CACHED = 200;
   const PREFETCH   = 1;               // tiles outside viewport to prefetch
@@ -35,17 +37,17 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
   // Pick the finest level whose downsampled pixel is still >= 1 screen pixel.
   // i.e. we want  TILE * scale / downsample  to be reasonably sized.
   function bestLevel(scale) {
-    for (let i = 0; i < meta.n_levels; i++) {
-      if (scale >= 1 / meta.levels[i].downsample) return i;
+    for (let i = 0; i < currentMeta.n_levels; i++) {
+      if (scale >= 1 / currentMeta.levels[i].downsample) return i;
     }
-    return meta.n_levels - 1;
+    return currentMeta.n_levels - 1;
   }
 
   // ── visible tile range ─────────────────────────────────────────────────────
   function visibleRange(level, transform, pad) {
     const { scale, ox, oy } = transform;
-    const lm  = meta.levels[level];
-    const l0  = meta.levels[0];
+    const lm  = currentMeta.levels[level];
+    const l0  = currentMeta.levels[0];
     const cw  = tileLayer.parentElement.clientWidth;
     const ch  = tileLayer.parentElement.clientHeight;
 
@@ -69,8 +71,8 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
   // Tiles are positioned in level-0 image space scaled to screen space.
   function positionTile(img, level, row, col, transform) {
     const { scale, ox, oy } = transform;
-    const lm        = meta.levels[level];
-    const l0        = meta.levels[0];
+    const lm        = currentMeta.levels[level];
+    const l0        = currentMeta.levels[0];
     const downsample = l0.width / lm.width;
 
     const imgX   = col * TILE * downsample;
@@ -121,7 +123,8 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
     const ctrl = new AbortController();
     inflight.set(k, ctrl);
 
-    const url = `${baseUrl}/tile?level=${level}&row=${row}&col=${col}`;
+    const sampleQuery = activeSample == null ? '' : `&sample=${encodeURIComponent(activeSample)}`;
+    const url = `${baseUrl}/tile?level=${level}&row=${row}&col=${col}${sampleQuery}`;
     fetch(url, { signal: ctrl.signal })
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -191,13 +194,39 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
 
   function chooseFallbackLevel(transform, targetLevel) {
     // Prefer nearest cached level with at least one visible tile present.
-    for (let d = 1; d < meta.n_levels; d++) {
+    for (let d = 1; d < currentMeta.n_levels; d++) {
       const lower = targetLevel - d;
       const upper = targetLevel + d;
       if (lower >= 0 && hasVisibleCachedTile(lower, transform)) return lower;
-      if (upper < meta.n_levels && hasVisibleCachedTile(upper, transform)) return upper;
+      if (upper < currentMeta.n_levels && hasVisibleCachedTile(upper, transform)) return upper;
     }
     return fallbackLevel;
+  }
+
+  function clearCache() {
+    for (const [, entry] of cache) {
+      if (entry.img.parentElement === tileLayer) tileLayer.removeChild(entry.img);
+      URL.revokeObjectURL(entry.img.src);
+    }
+    cache.clear();
+    for (const [, ctrl] of inflight) {
+      ctrl.abort();
+    }
+    inflight.clear();
+  }
+
+  function setMeta(nextMeta) {
+    currentMeta = nextMeta;
+    currentLevel = currentMeta.n_levels - 1;
+    fallbackLevel = currentLevel;
+    clearCache();
+    scheduleUpdate(viewport.getTransform());
+  }
+
+  function setSample(nextSample) {
+    activeSample = nextSample;
+    clearCache();
+    scheduleUpdate(viewport.getTransform());
   }
 
   function hasVisibleCachedTile(level, transform) {
@@ -264,5 +293,7 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
   return {
     update: scheduleUpdate,
     setLevel: l => { currentLevel = l; },
+    setMeta,
+    setSample,
   };
 }

@@ -175,46 +175,82 @@ def visualizePatches(dataPS, df_grid, tile_size, figsize=(5, 5), lw=0.1, alpha=0
     plt.show()
     return
 
-def getClassifierForFromStrokes(sample, strokes, patchCoordinates, tile_size, body_overlap, patch_size, ads, samples, qs, augFunc=None, alpha=0.8, seed=0, showPatches=False):    
-    dataPS = preparePatchesFromStrokes(strokes, patchCoordinates[['x', 'y']].xs(sample, level='sample', axis=0, drop_level=False), tile_size=tile_size,
-                                        body_overlap=body_overlap, patch_size=patch_size, debug=False)
+def getClassifierForFromStrokes(strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size, ads, samples, qs, augFunc=None, alpha=0.8, seed=0, showPatches=False):
 
-    if len(strokes['strokes_positive']) == 0 and len(strokes['strokes_negative']) == 0:
-        print("No positive and negative annotations provided.")
+    # Identify samples that carry at least one annotation
+    active_samples = [
+        s for s in samples
+        if s in strokes_by_sample and (
+            len(strokes_by_sample[s].get('strokes_positive', [])) > 0 or
+            len(strokes_by_sample[s].get('strokes_negative', [])) > 0
+        )
+    ]
+
+    if not active_samples:
+        print("No annotations provided for any sample.")
         return None, None, None
 
-    no_pos = len(strokes['strokes_positive']) == 0
-    no_neg = len(strokes['strokes_negative']) == 0
-    if no_pos and no_neg:
-        print("No positive and negative annotations available.")
+    has_any_pos = any(len(strokes_by_sample[s].get('strokes_positive', [])) > 0 for s in active_samples)
+    has_any_neg = any(len(strokes_by_sample[s].get('strokes_negative', [])) > 0 for s in active_samples)
+
+    if not has_any_pos:
+        print("No positive annotations available across any sample.")
         return None, None, None
-    elif no_pos:
-        print("No positive annotations available.")
-        return None, None, None
-    elif no_neg:
-        print("No negative annotations available.")
+    if not has_any_neg:
+        print("No negative annotations available across any sample.")
         return None, None, None
 
-    if showPatches:
-        visualizePatches(dataPS, patchCoordinates[['x', 'y']], tile_size=tile_size, fontsize=6)
+    all_patchesCDFsMod = []
+    all_annotations = {}
 
-    # Create a dataframe with the patch representations and the corresponding annotations for training a classifier
-    se = pd.concat([pd.Series({tile: patch for patch, tiles in dataPS[cl].items() for tile in tiles}) for cl in ['positive', 'negative']])
-    se.index.names = ['sample', 'barcode']
-    patchCoordinatesMod = patchCoordinates[['x', 'y']].loc[se.index].copy()
-    patchCoordinatesMod['patch'] = se.values
-    patchesCDFsMod = getPatchRepresentation(ads[sample], patchCoordinatesMod.xs(sample, level='sample', axis=0), qs, sample_id=sample)
+    for sample in active_samples:
+        strokes = strokes_by_sample[sample]
+        sample_coords = patchCoordinates[['x', 'y']].xs(sample, level='sample', axis=0, drop_level=False)
 
-    # Create annotations for training a classifier
-    annotations = {(v[0][0], k): 'positive' for k, v in dataPS['positive'].items()}
-    annotations.update({(v[0][0], k): 'negative' for k, v in dataPS['negative'].items()})
+        dataPS = preparePatchesFromStrokes(strokes, sample_coords, tile_size=tile_size,
+                                           body_overlap=body_overlap, patch_size=patch_size, debug=False)
 
-    # Train a classifier using the static annotations and the features in the dataframe
+        if showPatches:
+            visualizePatches(dataPS, sample_coords, tile_size=tile_size, fontsize=6)
+
+        # Build tile→patch mapping and retrieve coordinates for annotated patches
+        se = pd.concat([
+            pd.Series({tile: patch for patch, tiles in dataPS[cl].items() for tile in tiles})
+            for cl in ['positive', 'negative']
+        ])
+        if not isinstance(se.index, pd.MultiIndex):
+            assert len(se.index[0])==2, "Expected tile index to be a tuple of (sample, barcode)"
+            # Convert to multiindex with 'sample' and 'barcode' levels
+            se.index = pd.MultiIndex.from_tuples(se.index, names=['sample', 'barcode'])
+        else:
+            se.index.names = ['sample', 'barcode']
+
+        patchCoordinatesMod = patchCoordinates[['x', 'y']].loc[se.index].copy()
+        patchCoordinatesMod['patch'] = se.values
+
+        patchesCDFs_sample = getPatchRepresentation(
+            ads[sample], patchCoordinatesMod.xs(sample, level='sample', axis=0), qs, sample_id=sample
+        )
+        all_patchesCDFsMod.append(patchesCDFs_sample)
+
+        # Accumulate annotations for this sample
+        sample_annotations = {(v[0][0], k): 'positive' for k, v in dataPS['positive'].items()}
+        sample_annotations.update({(v[0][0], k): 'negative' for k, v in dataPS['negative'].items()})
+        all_annotations.update(sample_annotations)
+
+    if not all_patchesCDFsMod:
+        print("No patch representations could be built.")
+        return None, None, None
+
+    patchesCDFsMod = pd.concat(all_patchesCDFsMod)
+    annotations = all_annotations
+
     try:
         clf = trainClassifier(annotations, patchesCDFsMod, alpha=alpha, seed=seed, augFunc=augFunc)
     except Exception as e:
         print(f"Error training classifier: {e}")
         clf = None
+
     return clf, patchesCDFsMod, annotations
 
 def setNotebookWidth(widthPercent=100):

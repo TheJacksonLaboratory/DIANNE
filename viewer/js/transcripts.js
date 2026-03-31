@@ -2,16 +2,19 @@
  * transcripts.js
  *
  * Viewport-driven Xenium transcript overlay with per-tile caching.
- * Selected genes are fetched from the coarsest appropriate Xenium grid and
- * rendered in image space so they stay aligned during pan/zoom.
+ * Supports sample switching and per-sample enable/disable at runtime.
  */
 
-function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, viewport, log, sharedRow) {
-  const TILE = imageMeta.tile_size;
+function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, viewport, log, sharedRow, sampleName = null) {
   const MAX_CACHED = 300;
   const PREFETCH = 1;
   let POINT_RADIUS = 2;
-  const SEARCH_PLACEHOLDER_COLOR = 'rgba(247, 245, 245, 0.35)';  // configurable placeholder opacity
+  const SEARCH_PLACEHOLDER_COLOR = 'rgba(247, 245, 245, 0.35)';
+
+  let currentSample = sampleName;
+  let currentImageMeta = imageMeta;
+  let currentTranscriptMeta = transcriptMeta;
+  let enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes);
 
   const layer = document.createElement('canvas');
   layer.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2;';
@@ -64,10 +67,9 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   sizeRow.appendChild(transcriptSizeSlider);
   panel.appendChild(sizeRow);
 
-  // inject ::placeholder color rule once per page so the constant is respected
-  const _phStyle = document.createElement('style');
-  _phStyle.textContent = `.iv-gene-search::placeholder { color: ${SEARCH_PLACEHOLDER_COLOR}; opacity: 1; }`;
-  document.head.appendChild(_phStyle);
+  const phStyle = document.createElement('style');
+  phStyle.textContent = `.iv-gene-search::placeholder { color: ${SEARCH_PLACEHOLDER_COLOR}; opacity: 1; }`;
+  document.head.appendChild(phStyle);
 
   const searchRow = document.createElement('div');
   searchRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin:0 0 4px 0;flex-shrink:0;';
@@ -86,7 +88,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   searchRow.appendChild(searchInput);
 
   const searchClear = document.createElement('button');
-  searchClear.textContent = '\u00d7';  // × character
+  searchClear.textContent = '\u00d7';
   searchClear.title = 'Clear search';
   searchClear.style.cssText = [
     'display:none', 'flex-shrink:0',
@@ -103,11 +105,12 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   const cache = new Map();
   const inflight = new Map();
   const selectedGenes = new Set();
-  const filteredGenes = transcriptMeta.genes.filter(gene => !/(Control|Unassigned)/i.test(gene));
-  let geneFilter = '';
+  const geneColors = {};
 
-  let currentGrid = bestGrid(viewport.getTransform().scale);
-  let currentLevel = bestImageLevel(viewport.getTransform().scale);
+  let filteredGenes = [];
+  let geneFilter = '';
+  let currentGrid = 0;
+  let currentLevel = 0;
   let currentGeneKey = '';
 
   function resizeLayer() {
@@ -118,24 +121,31 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   window.addEventListener('resize', resizeLayer);
   resizeLayer();
 
+  function clearCache() {
+    cache.clear();
+    for (const [, ctrl] of inflight) ctrl.abort();
+    inflight.clear();
+  }
+
   function bestImageLevel(scale) {
-    for (let i = 0; i < imageMeta.n_levels; i++) {
-      if (scale >= 1 / imageMeta.levels[i].downsample) return i;
+    for (let i = 0; i < currentImageMeta.n_levels; i++) {
+      if (scale >= 1 / currentImageMeta.levels[i].downsample) return i;
     }
-    return imageMeta.n_levels - 1;
+    return currentImageMeta.n_levels - 1;
   }
 
   function bestGrid(scale) {
-    for (let i = 0; i < transcriptMeta.n_grids; i++) {
-      if (scale >= 1 / transcriptMeta.grids[i].downsample) return i;
+    for (let i = 0; i < currentTranscriptMeta.n_grids; i++) {
+      if (scale >= 1 / currentTranscriptMeta.grids[i].downsample) return i;
     }
-    return transcriptMeta.n_grids - 1;
+    return currentTranscriptMeta.n_grids - 1;
   }
 
   function visibleRange(level, transform, pad) {
+    const TILE = currentImageMeta.tile_size;
     const { scale, ox, oy } = transform;
-    const lm = imageMeta.levels[level];
-    const l0 = imageMeta.levels[0];
+    const lm = currentImageMeta.levels[level];
+    const l0 = currentImageMeta.levels[0];
     const cw = container.clientWidth;
     const ch = container.clientHeight;
 
@@ -152,13 +162,9 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     };
   }
 
-  // per-gene color map (populated lazily, mutable via color pickers)
-  const geneColors = {};
-
   function defaultColor(gene) {
     let hash = 0;
     for (let i = 0; i < gene.length; i++) hash = ((hash * 31) + gene.charCodeAt(i)) % 360;
-    // convert HSL → hex via a 1-pixel off-screen canvas
     const tmp = document.createElement('canvas');
     tmp.width = tmp.height = 1;
     const tc = tmp.getContext('2d');
@@ -178,12 +184,12 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   }
 
   function cacheKey(grid, level, row, col, genes) {
-    return `${genes}|${grid}|${level}|${row}|${col}`;
+    return `${currentSample}|${genes}|${grid}|${level}|${row}|${col}`;
   }
 
   function draw(transform) {
     ctx.clearRect(0, 0, layer.width, layer.height);
-    if (selectedGenes.size === 0) return;
+    if (!enabled || selectedGenes.size === 0) return;
 
     const vis = visibleRange(currentLevel, transform, 0);
     for (let r = vis.r0; r <= vis.r1; r++) {
@@ -207,11 +213,11 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
 
   function fetchTile(grid, level, row, col, genes) {
     const k = cacheKey(grid, level, row, col, genes);
-    if (cache.has(k) || inflight.has(k) || !genes) return;
+    if (cache.has(k) || inflight.has(k) || !genes || !enabled) return;
 
     const ctrl = new AbortController();
     inflight.set(k, ctrl);
-    const url = `${baseUrl}/xenium_tile?grid=${grid}&level=${level}&row=${row}&col=${col}&genes=${encodeURIComponent(genes)}`;
+    const url = `${baseUrl}/xenium_tile?sample=${encodeURIComponent(currentSample)}&grid=${grid}&level=${level}&row=${row}&col=${col}&genes=${encodeURIComponent(genes)}`;
     fetch(url, { signal: ctrl.signal })
       .then(r => r.json())
       .then(data => {
@@ -244,7 +250,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
 
   function updateButton() {
     const total = filteredGenes.length;
-    toggleBtn.textContent = `Genes (${selectedGenes.size}/${total})`;
+    toggleBtn.textContent = enabled ? `Genes (${selectedGenes.size}/${total})` : 'Genes (off)';
   }
 
   function applyGeneFilter() {
@@ -257,6 +263,13 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
 
   function rebuildGenePanel() {
     geneList.innerHTML = '';
+    filteredGenes = enabled
+      ? currentTranscriptMeta.genes.filter(gene => !/(Control|Unassigned)/i.test(gene))
+      : [];
+
+    selectedGenes.clear();
+    clearCache();
+
     for (const gene of filteredGenes) {
       const row = document.createElement('div');
       row.dataset.gene = gene;
@@ -298,9 +311,34 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     }
 
     applyGeneFilter();
+    updateButton();
+  }
+
+  function setVisible(visible) {
+    const on = visible && enabled;
+    layer.style.display = on ? '' : 'none';
+    controls.style.display = on ? 'flex' : 'none';
+    if (!on) panel.style.display = 'none';
+    draw(viewport.getTransform());
+  }
+
+  function setContext(sample, imageMetaNext, transcriptMetaNext) {
+    currentSample = sample;
+    currentImageMeta = imageMetaNext;
+    currentTranscriptMeta = transcriptMetaNext;
+    enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes);
+    rebuildGenePanel();
+    setVisible(true);
+    update(viewport.getTransform());
   }
 
   function update(transform) {
+    if (!enabled) {
+      abortStale(new Set());
+      draw(transform);
+      return;
+    }
+
     currentGrid = bestGrid(transform.scale);
     currentLevel = bestImageLevel(transform.scale);
     currentGeneKey = geneKey();
@@ -344,16 +382,14 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     searchInput.focus();
   });
 
-  rebuildGenePanel();
-  updateButton();
   viewport.onChange(update);
+  rebuildGenePanel();
+  setVisible(true);
   update(viewport.getTransform());
 
   return {
     getSelectedGenes: () => [...selectedGenes],
-    setVisible: visible => {
-      layer.style.display = visible ? '' : 'none';
-      controls.style.display = visible ? 'flex' : 'none';
-    },
+    setVisible,
+    setContext,
   };
 }
