@@ -175,11 +175,9 @@ def visualizePatches(dataPS, df_grid, tile_size, figsize=(5, 5), lw=0.1, alpha=0
     plt.show()
     return
 
-def getClassifierForFromStrokes(strokes, patchCoordinates, tile_size, body_overlap, patch_size, ads, samples, qs, augFunc=None, alpha=0.8, seed=0):    
-    dataPS = preparePatchesFromStrokes(strokes, patchCoordinates[['x', 'y']], tile_size=tile_size,
-                                            body_overlap=body_overlap, patch_size=patch_size, debug=False)
-    if False:
-        visualizePatches(dataPS, patchCoordinates[['x', 'y']], tile_size=tile_size, fontsize=6)
+def getClassifierForFromStrokes(sample, strokes, patchCoordinates, tile_size, body_overlap, patch_size, ads, samples, qs, augFunc=None, alpha=0.8, seed=0, showPatches=False):    
+    dataPS = preparePatchesFromStrokes(strokes, patchCoordinates[['x', 'y']].xs(sample, level='sample', axis=0, drop_level=False), tile_size=tile_size,
+                                        body_overlap=body_overlap, patch_size=patch_size, debug=False)
 
     if len(strokes['strokes_positive']) == 0 and len(strokes['strokes_negative']) == 0:
         print("No positive and negative annotations provided.")
@@ -197,13 +195,15 @@ def getClassifierForFromStrokes(strokes, patchCoordinates, tile_size, body_overl
         print("No negative annotations available.")
         return None, None, None
 
+    if showPatches:
+        visualizePatches(dataPS, patchCoordinates[['x', 'y']], tile_size=tile_size, fontsize=6)
+
     # Create a dataframe with the patch representations and the corresponding annotations for training a classifier
     se = pd.concat([pd.Series({tile: patch for patch, tiles in dataPS[cl].items() for tile in tiles}) for cl in ['positive', 'negative']])
     se.index.names = ['sample', 'barcode']
     patchCoordinatesMod = patchCoordinates[['x', 'y']].loc[se.index].copy()
     patchCoordinatesMod['patch'] = se.values
-    patchesCDFsMod = pd.concat([getPatchRepresentation(ads[sample], patchCoordinatesMod.xs(sample, level='sample', axis=0), 
-                                                    qs, sample_id=sample) for sample in samples], axis=0)
+    patchesCDFsMod = getPatchRepresentation(ads[sample], patchCoordinatesMod.xs(sample, level='sample', axis=0), qs, sample_id=sample)
 
     # Create annotations for training a classifier
     annotations = {(v[0][0], k): 'positive' for k, v in dataPS['positive'].items()}
