@@ -511,6 +511,35 @@ def loadClassifier(classifierPaths, clfname, ext='pklz'):
 
     return clf, bp, plog, startParams
 
+def saveGUIClassifier(clf, classifierPaths, clfname, samples, ts, mpp, patch_size, tile_size, body_overlap, qs, patchesCDFsMod, annotationsMod, drawings, ext='pklz'):
+
+    """Save the classifier and its associated information to a file."""
+
+    data = {}
+    data.update({'clf': clf, 'samples': samples, 'patches': patchesCDFsMod.index,
+                'ts': ts, 'mpp': mpp, 'N': patch_size,'qs': qs, 'tile_size': tile_size, 'drawings': drawings,
+                'body_overlap': body_overlap, 'annotations': annotationsMod})
+
+    with open(f'{classifierPaths}/{clfname}.{ext}', 'wb') as tempfile:
+        pickle.dump(data, tempfile)
+
+    return
+
+def loadGUIClassifier(classifierPaths, clfname, ext='pklz'):
+
+    """Load a classifier and its associated information from a file."""
+
+    try:
+        with open(f'{classifierPaths}/{clfname}.{ext}', 'rb') as tempfile:
+            data = pickle.load(tempfile)
+    except FileNotFoundError:
+        print(f"Classifier file '{clfname}' not found in '{classifierPaths}'. Returning an empty classifier.")
+        data = {}
+
+    clf = data.get('clf', {})
+
+    return clf
+
 def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0.25, N=4):
 
     """Load the STQ data for each sample, prepare the patch coordinates and get the patch SAMPLER representations for each sample.
