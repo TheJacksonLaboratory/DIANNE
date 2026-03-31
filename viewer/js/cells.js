@@ -260,8 +260,8 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     const total = Object.keys(categoryColors).length;
     const on = selectedCategories.size;
     toggleBtn.textContent = total === 1
-      ? 'cells'
-      : `cells (${on}/${total})`;
+      ? 'Cells'
+      : `Cells (${on}/${total})`;
   }
 
   function rebuildCategoryPanel() {

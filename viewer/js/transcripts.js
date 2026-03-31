@@ -31,7 +31,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   else container.appendChild(controls);
 
   const toggleBtn = document.createElement('button');
-  toggleBtn.textContent = 'genes (0)';
+  toggleBtn.textContent = 'Genes (0)';
   toggleBtn.title = 'Select transcript genes';
   toggleBtn.style.cssText = [
     'background:transparent', 'border:1px solid #888',
@@ -103,6 +103,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   const cache = new Map();
   const inflight = new Map();
   const selectedGenes = new Set();
+  const filteredGenes = transcriptMeta.genes.filter(gene => !/(Control|Unassigned)/i.test(gene));
   let geneFilter = '';
 
   let currentGrid = bestGrid(viewport.getTransform().scale);
@@ -242,8 +243,8 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   }
 
   function updateButton() {
-    const total = transcriptMeta.genes.length;
-    toggleBtn.textContent = `genes (${selectedGenes.size}/${total})`;
+    const total = filteredGenes.length;
+    toggleBtn.textContent = `Genes (${selectedGenes.size}/${total})`;
   }
 
   function applyGeneFilter() {
@@ -256,7 +257,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
 
   function rebuildGenePanel() {
     geneList.innerHTML = '';
-    for (const gene of transcriptMeta.genes) {
+    for (const gene of filteredGenes) {
       const row = document.createElement('div');
       row.dataset.gene = gene;
       row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;';

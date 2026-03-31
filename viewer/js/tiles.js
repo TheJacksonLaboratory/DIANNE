@@ -27,8 +27,9 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
   const inflight = new Map();
 
   let currentLevel = meta.n_levels - 1;
-  let prevLevel    = null;   // keep visible until new level is ready
+  let fallbackLevel = currentLevel; // keep visible until new level is ready
   let frameRequested = false;
+  let pendingTransform = null;
 
   // ── level selection ────────────────────────────────────────────────────────
   // Pick the finest level whose downsampled pixel is still >= 1 screen pixel.
@@ -88,14 +89,15 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
 
   // ── reposition all cached tiles (called after every pan/zoom) ─────────────
   function repositionAll(transform) {
+    const ready = newLevelReady(transform);
     for (const [k, entry] of cache) {
       const [l, r, c] = k.split('-').map(Number);
       positionTile(entry.img, l, r, c, transform);
-      // show current level always; show prev level only until current is ready
+      // show current level always; show fallback level only until current is ready
       if (l === currentLevel) {
         entry.img.style.display = 'block';
-      } else if (l === prevLevel) {
-        entry.img.style.display = newLevelReady(transform) ? 'none' : 'block';
+      } else if (l === fallbackLevel) {
+        entry.img.style.display = ready ? 'none' : 'block';
       } else {
         entry.img.style.display = 'none';
       }
@@ -112,7 +114,7 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
   }
 
   // ── fetch one tile ─────────────────────────────────────────────────────────
-  function fetchTile(level, row, col, transform) {
+  function fetchTile(level, row, col) {
     const k = key(level, row, col);
     if (cache.has(k) || inflight.has(k)) return;
 
@@ -121,7 +123,10 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
 
     const url = `${baseUrl}/tile?level=${level}&row=${row}&col=${col}`;
     fetch(url, { signal: ctrl.signal })
-      .then(r => r.blob())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.blob();
+      })
       .then(blob => {
         inflight.delete(k);
         const img      = document.createElement('img');
@@ -131,15 +136,20 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
         img.style.display = (level === currentLevel) ? 'block' : 'none';
         tileLayer.appendChild(img);
         cache.set(k, { img, lastUsed: Date.now() });
-        evict();
+        evict(viewport.getTransform());
+
+        // If current level became ready, hide fallback immediately.
+        if (newLevelReady(viewport.getTransform())) {
+          repositionAll(viewport.getTransform());
+        }
       })
       .catch(() => { inflight.delete(k); });   // aborted or failed — silent
   }
 
   // ── abort inflight requests not in the visible+prefetch set ───────────────
-  function abortStale(visibleKeys) {
+  function abortStale(requestedKeys) {
     for (const [k, ctrl] of inflight) {
-      if (!visibleKeys.has(k)) {
+      if (!requestedKeys.has(k)) {
         ctrl.abort();
         inflight.delete(k);
       }
@@ -147,15 +157,57 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
   }
 
   // ── LRU eviction ──────────────────────────────────────────────────────────
-  function evict() {
+  function evict(transform) {
     if (cache.size <= MAX_CACHED) return;
+
+    // Protect visible tiles of current and fallback levels from eviction.
+    const protectedKeys = new Set();
+    const currentVis = visibleRange(currentLevel, transform, 0);
+    for (let r = currentVis.r0; r <= currentVis.r1; r++) {
+      for (let c = currentVis.c0; c <= currentVis.c1; c++) {
+        protectedKeys.add(key(currentLevel, r, c));
+      }
+    }
+    if (fallbackLevel !== currentLevel) {
+      const fallbackVis = visibleRange(fallbackLevel, transform, 0);
+      for (let r = fallbackVis.r0; r <= fallbackVis.r1; r++) {
+        for (let c = fallbackVis.c0; c <= fallbackVis.c1; c++) {
+          protectedKeys.add(key(fallbackLevel, r, c));
+        }
+      }
+    }
+
     const sorted = [...cache.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-    const toRemove = sorted.slice(0, cache.size - MAX_CACHED);
-    for (const [k, entry] of toRemove) {
-      tileLayer.removeChild(entry.img);
+    let needRemove = cache.size - MAX_CACHED;
+    for (const [k, entry] of sorted) {
+      if (needRemove <= 0) break;
+      if (protectedKeys.has(k)) continue;
+      if (entry.img.parentElement === tileLayer) tileLayer.removeChild(entry.img);
       URL.revokeObjectURL(entry.img.src);
       cache.delete(k);
+      needRemove -= 1;
     }
+  }
+
+  function chooseFallbackLevel(transform, targetLevel) {
+    // Prefer nearest cached level with at least one visible tile present.
+    for (let d = 1; d < meta.n_levels; d++) {
+      const lower = targetLevel - d;
+      const upper = targetLevel + d;
+      if (lower >= 0 && hasVisibleCachedTile(lower, transform)) return lower;
+      if (upper < meta.n_levels && hasVisibleCachedTile(upper, transform)) return upper;
+    }
+    return fallbackLevel;
+  }
+
+  function hasVisibleCachedTile(level, transform) {
+    const vis = visibleRange(level, transform, 0);
+    for (let r = vis.r0; r <= vis.r1; r++) {
+      for (let c = vis.c0; c <= vis.c1; c++) {
+        if (cache.has(key(level, r, c))) return true;
+      }
+    }
+    return false;
   }
 
   // ── main update — called on every viewport change ─────────────────────────
@@ -163,38 +215,54 @@ function createTiles(tileLayer, baseUrl, meta, viewport) {
     const newLevel = bestLevel(transform.scale);
 
     if (newLevel !== currentLevel) {
-      for (const [k, ctrl] of inflight) {
-        if (k.startsWith(currentLevel + '-')) { ctrl.abort(); inflight.delete(k); }
-      }
-      prevLevel    = currentLevel;
+      fallbackLevel = chooseFallbackLevel(transform, newLevel);
       currentLevel = newLevel;
     }
 
     // touch last-used for visible cached tiles
-    const vis   = visibleRange(currentLevel, transform, 0);
-    const visKeys = new Set();
+    const vis = visibleRange(currentLevel, transform, 0);
     for (let r = vis.r0; r <= vis.r1; r++) {
       for (let c = vis.c0; c <= vis.c1; c++) {
         const k = key(currentLevel, r, c);
-        visKeys.add(k);
         if (cache.has(k)) cache.get(k).lastUsed = Date.now();
       }
     }
 
     repositionAll(transform);
-    abortStale(visKeys);
 
-    // fetch visible tiles (immediate) then prefetch border
+    // Fetch visible tiles + prefetch border and keep exactly those inflight.
+    const requestedKeys = new Set();
     const all = visibleRange(currentLevel, transform, PREFETCH);
     for (let r = all.r0; r <= all.r1; r++) {
       for (let c = all.c0; c <= all.c1; c++) {
-        fetchTile(currentLevel, r, c, transform);
+        const k = key(currentLevel, r, c);
+        requestedKeys.add(k);
+        fetchTile(currentLevel, r, c);
       }
     }
+    abortStale(requestedKeys);
+    evict(transform);
+  }
+
+  function scheduleUpdate(transform) {
+    pendingTransform = transform;
+    if (frameRequested) return;
+    frameRequested = true;
+    requestAnimationFrame(() => {
+      frameRequested = false;
+      if (pendingTransform) {
+        update(pendingTransform);
+        pendingTransform = null;
+      }
+    });
   }
 
   // wire into viewport
-  viewport.onChange(update);
+  viewport.onChange(scheduleUpdate);
+  scheduleUpdate(viewport.getTransform());
 
-  return { update, setLevel: l => { currentLevel = l; } };
+  return {
+    update: scheduleUpdate,
+    setLevel: l => { currentLevel = l; },
+  };
 }
