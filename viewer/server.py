@@ -13,13 +13,15 @@ class ViewerServer:
       GET  /tile?level=&row=&col=  → JPEG bytes
             GET  /xenium_meta   → transcript metadata JSON
             GET  /xenium_tile?grid=&level=&row=&col=&genes=  → transcript JSON
+            GET  /xenium_cells?level=&row=&col=  → cells JSON
       POST /click         → {img_x, img_y, vp_x, vp_y, zoom}
             POST /strokes       → {strokes_positive:[...], strokes_negative:[...]}
     """
 
-    def __init__(self, image, host=None, port=None, xenium=None):
+    def __init__(self, image, host=None, port=None, xenium=None, xenium_cells=None):
         self.image   = image
         self.xenium  = xenium
+        self.xenium_cells = xenium_cells
         if host:
             self.host = host
         else:
@@ -78,6 +80,13 @@ class ViewerServer:
                         body = json.dumps(srv.xenium.metadata).encode()
                         self._respond(200, body, 'application/json')
 
+                elif parsed.path == '/xenium_cells_meta':
+                    if srv.xenium_cells is None:
+                        self._respond(404)
+                    else:
+                        body = json.dumps(srv.xenium_cells.metadata).encode()
+                        self._respond(200, body, 'application/json')
+
                 elif parsed.path == '/tile':
                     try:
                         level = int(qs['level'][0])
@@ -100,6 +109,21 @@ class ViewerServer:
                             genes = [gene for gene in qs.get('genes', [''])[0].split(',') if gene]
                             body = json.dumps({
                                 'points': srv.xenium.get_tile_transcripts(grid, level, row, col, genes)
+                            }).encode()
+                            self._respond(200, body, 'application/json')
+                        except Exception as e:
+                            self._respond(400, str(e).encode())
+
+                elif parsed.path == '/xenium_cells':
+                    if srv.xenium_cells is None:
+                        self._respond(404)
+                    else:
+                        try:
+                            level = int(qs['level'][0])
+                            row = int(qs['row'][0])
+                            col = int(qs['col'][0])
+                            body = json.dumps({
+                                'cells': srv.xenium_cells.get_tile_cells(level, row, col)
                             }).encode()
                             self._respond(200, body, 'application/json')
                         except Exception as e:

@@ -1,0 +1,373 @@
+/**
+ * cells.js
+ *
+ * Viewport-driven Xenium cell overlay with per-tile caching.
+ * Cells are fetched from the Xenium bundle and rendered as either
+ * boundary polygons (if cell count < max_cells) or simple dots (if > max_cells).
+ *
+ * Supports optional category coloring via cell_id→category mapping and
+ * category→color palette.
+ */
+
+function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow) {
+  const TILE = imageMeta.tile_size;
+  const MAX_CACHED = 200;
+  const PREFETCH = 1;
+  let POINT_RADIUS = 6;
+  const BOUNDARY_LINE_WIDTH = 1.5;
+  let drawToken = 0;
+  let redrawQueued = false;
+
+  const layer = document.createElement('canvas');
+  layer.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2.5;';
+  container.appendChild(layer);
+  const ctx = layer.getContext('2d');
+
+  const controls = document.createElement('div');
+  controls.dataset.ivUi = 'true';
+  controls.style.cssText = [
+    ...(sharedRow ? [] : ['position:absolute', 'top:86px', 'right:8px', 'z-index:11']),
+    'display:flex', 'flex-direction:column', 'gap:4px',
+    'padding:4px 6px', 'border-radius:6px',
+    'background:rgba(0,0,0,0.55)', 'color:#eee',
+    'font:12px monospace',
+  ].join(';');
+  // prepend so cells button sits LEFT of the genes button in the shared row
+  if (sharedRow) sharedRow.insertBefore(controls, sharedRow.firstChild);
+  else container.appendChild(controls);
+
+  const toggleBtn = document.createElement('button');
+  toggleBtn.textContent = 'cells';
+  toggleBtn.title = 'Toggle cell categories panel';
+  toggleBtn.style.cssText = [
+    'background:transparent', 'border:1px solid #888',
+    'color:#eee', 'border-radius:4px', 'padding:3px 7px',
+    'cursor:pointer', 'font-size:12px', 'line-height:1.4', 'text-align:left',
+  ].join(';');
+  toggleBtn.dataset.ivUi = 'true';
+  controls.appendChild(toggleBtn);
+
+  const panel = document.createElement('div');
+  panel.style.cssText = [
+    'display:none', 'max-height:220px', 'overflow-y:auto',
+    'padding-top:2px', 'border-top:1px solid rgba(255,255,255,0.12)',
+  ].join(';');
+  controls.appendChild(panel);
+
+  // ── category state ────────────────────────────────────────────────────────
+  // If annotations provided, keys are category names; otherwise use "All".
+  const _hasCategories = cellsMeta.has_categories;
+  const _initColors = (_hasCategories && Object.keys(cellsMeta.category_colors).length)
+    ? Object.assign({}, cellsMeta.category_colors)
+    : { All: '#888888' };
+  const categoryColors = Object.assign({}, _initColors);  // mutable per-category colors
+  const selectedCategories = new Set();   // all off by default
+
+  const cache = new Map();
+  const inflight = new Map();
+
+  let isVisible = true;
+  let currentLevel = bestImageLevel(viewport.getTransform().scale);
+
+  function resizeLayer() {
+    layer.width = container.clientWidth;
+    layer.height = container.clientHeight;
+    draw(viewport.getTransform());
+  }
+  window.addEventListener('resize', resizeLayer);
+  resizeLayer();
+
+  function bestImageLevel(scale) {
+    for (let i = 0; i < imageMeta.n_levels; i++) {
+      if (scale >= 1 / imageMeta.levels[i].downsample) return i;
+    }
+    return imageMeta.n_levels - 1;
+  }
+
+  function visibleRange(level, transform, pad) {
+    const { scale, ox, oy } = transform;
+    const lm = imageMeta.levels[level];
+    const l0 = imageMeta.levels[0];
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+
+    const x0 = Math.max(0, (-ox / scale) / (l0.width / lm.width));
+    const y0 = Math.max(0, (-oy / scale) / (l0.height / lm.height));
+    const x1 = Math.min(lm.width, (cw - ox) / scale / (l0.width / lm.width));
+    const y1 = Math.min(lm.height, (ch - oy) / scale / (l0.height / lm.height));
+
+    const c0 = Math.max(0, Math.floor(x0 / TILE) - pad);
+    const r0 = Math.max(0, Math.floor(y0 / TILE) - pad);
+    const c1 = Math.min(lm.width / TILE, Math.ceil(x1 / TILE) + pad);
+    const r1 = Math.min(lm.height / TILE, Math.ceil(y1 / TILE) + pad);
+
+    const tiles = [];
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) {
+        tiles.push({ level, row: r, col: c });
+      }
+    }
+    return tiles;
+  }
+
+  function cacheKey(tile) {
+    return `${tile.level},${tile.row},${tile.col}`;
+  }
+
+  function fetchTile(tile) {
+    const key = cacheKey(tile);
+    if (cache.has(key)) return Promise.resolve(cache.get(key));
+    if (inflight.has(key)) return inflight.get(key);
+
+    const promise = fetch(
+      `${baseUrl}/xenium_cells?level=${tile.level}&row=${tile.row}&col=${tile.col}`
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        const cells = data.cells || [];
+        cache.set(key, cells);
+        inflight.delete(key);
+
+        // LRU eviction
+        if (cache.size > MAX_CACHED) {
+          const firstKey = cache.keys().next().value;
+          cache.delete(firstKey);
+        }
+
+        requestDraw();
+
+        return cells;
+      })
+      .catch((err) => {
+        log(`cells fetch error: ${err.message}`);
+        inflight.delete(key);
+        return [];
+      });
+
+    inflight.set(key, promise);
+    return promise;
+  }
+
+  function requestDraw() {
+    if (redrawQueued) return;
+    redrawQueued = true;
+    requestAnimationFrame(() => {
+      redrawQueued = false;
+      draw(viewport.getTransform());
+    });
+  }
+
+  function draw(transform) {
+    const token = ++drawToken;
+    if (!isVisible) {
+      ctx.clearRect(0, 0, layer.width, layer.height);
+      return;
+    }
+
+    ctx.clearRect(0, 0, layer.width, layer.height);
+
+    currentLevel = bestImageLevel(transform.scale);
+    const tiles = visibleRange(currentLevel, transform, PREFETCH);
+    for (const tile of tiles) {
+      const key = cacheKey(tile);
+      if (!cache.has(key)) {
+        fetchTile(tile);
+        continue;
+      }
+
+      const cells = cache.get(key) || [];
+      cache.delete(key);
+      cache.set(key, cells);
+
+      for (const cell of cells) {
+        // category filter — resolve effective category first
+        const cat = resolveCategory(cell);
+        if (!selectedCategories.has(cat)) continue;
+
+        const sp = viewport.toScreenSpace(cell.x, cell.y);
+        if (sp.x < -20 || sp.x > layer.width + 20 || sp.y < -20 || sp.y > layer.height + 20) {
+          continue;
+        }
+
+        const color = categoryColors[cat] || '#888888';
+        if (cell.is_dot) {
+          drawDot(sp.x, sp.y, POINT_RADIUS, color);
+        } else if (cell.boundary) {
+          drawBoundary(cell.boundary, color);
+        } else {
+          drawDot(sp.x, sp.y, POINT_RADIUS, color);
+        }
+      }
+    }
+
+    if (token !== drawToken) return;
+  }
+
+  function resolveCategory(cell) {
+    // When no annotations provided every cell maps to "All"
+    if (!_hasCategories) return 'All';
+    return (cell.category != null) ? String(cell.category) : 'All';
+  }
+
+  function drawDot(vpX, vpY, radius, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(vpX, vpY, radius, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+  }
+
+  function drawBoundary(boundaryCoords, color) {
+    if (!boundaryCoords || boundaryCoords.length < 3) return;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = BOUNDARY_LINE_WIDTH;
+    ctx.fillStyle = `rgba(${hexToRgb(color).join(',')},0.1)`;
+
+    ctx.beginPath();
+    let isFirst = true;
+    for (const [x, y] of boundaryCoords) {
+      const sp = viewport.toScreenSpace(x, y);
+      if (isFirst) {
+        ctx.moveTo(sp.x, sp.y);
+        isFirst = false;
+      } else {
+        ctx.lineTo(sp.x, sp.y);
+      }
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? [
+      parseInt(result[1], 16),
+      parseInt(result[2], 16),
+      parseInt(result[3], 16),
+    ] : [128, 128, 128];
+  }
+
+  // ── category panel ────────────────────────────────────────────────────────
+
+  function updateButton() {
+    const total = Object.keys(categoryColors).length;
+    const on = selectedCategories.size;
+    toggleBtn.textContent = total === 1
+      ? 'cells'
+      : `cells (${on}/${total})`;
+  }
+
+  function rebuildCategoryPanel() {
+    panel.innerHTML = '';
+    const cats = Object.keys(categoryColors);
+
+    const sizeRow = document.createElement('div');
+    sizeRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 0 4px;border-bottom:1px solid rgba(255,255,255,0.12);margin-bottom:4px;';
+    sizeRow.innerHTML = '<span style="color:#ddd;">Cell size</span>';
+    const cellSizeSlider = document.createElement('input');
+    cellSizeSlider.type = 'range';
+    cellSizeSlider.min = '1';
+    cellSizeSlider.max = '24';
+    cellSizeSlider.step = '1';
+    cellSizeSlider.value = String(POINT_RADIUS);
+    cellSizeSlider.style.cssText = 'width:90px;';
+    cellSizeSlider.addEventListener('input', () => {
+      POINT_RADIUS = Number(cellSizeSlider.value);
+      requestDraw();
+    });
+    sizeRow.appendChild(cellSizeSlider);
+    panel.appendChild(sizeRow);
+
+    if (cats.length > 1) {
+      const allRow = document.createElement('div');
+      allRow.style.cssText = 'display:flex;gap:6px;padding:2px 0 4px;border-bottom:1px solid rgba(255,255,255,0.12);margin-bottom:2px;';
+      const _btnStyle = [
+        'background:transparent', 'border:1px solid #666',
+        'color:#ccc', 'border-radius:3px', 'padding:1px 6px',
+        'cursor:pointer', 'font-size:11px', 'line-height:1.4',
+      ].join(';');
+      const allBtn = document.createElement('button');
+      allBtn.textContent = 'all';
+      allBtn.style.cssText = _btnStyle;
+      allBtn.addEventListener('click', () => {
+        cats.forEach(c => selectedCategories.add(c));
+        rebuildCategoryPanel(); updateButton(); requestDraw();
+      });
+      const noneBtn = document.createElement('button');
+      noneBtn.textContent = 'none';
+      noneBtn.style.cssText = _btnStyle;
+      noneBtn.addEventListener('click', () => {
+        selectedCategories.clear();
+        rebuildCategoryPanel(); updateButton(); requestDraw();
+      });
+      allRow.appendChild(allBtn);
+      allRow.appendChild(noneBtn);
+      panel.appendChild(allRow);
+    }
+
+    for (const cat of cats) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.style.cursor = 'pointer';
+      checkbox.checked = selectedCategories.has(cat);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedCategories.add(cat);
+        else selectedCategories.delete(cat);
+        updateButton();
+        requestDraw();
+      });
+
+      const colorPicker = document.createElement('input');
+      colorPicker.type = 'color';
+      colorPicker.value = categoryColors[cat];
+      colorPicker.title = `Color for ${cat}`;
+      colorPicker.style.cssText = 'width:20px;height:20px;border:none;background:none;padding:0;cursor:pointer;flex-shrink:0;';
+      colorPicker.addEventListener('input', () => {
+        categoryColors[cat] = colorPicker.value;
+        requestDraw();
+      });
+
+      const label = document.createElement('label');
+      label.textContent = cat;
+      label.style.cursor = 'pointer';
+      label.addEventListener('click', () => {
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change'));
+      });
+
+      row.appendChild(checkbox);
+      row.appendChild(colorPicker);
+      row.appendChild(label);
+      panel.appendChild(row);
+    }
+  }
+
+  // Toggle panel open/closed (not layer visibility)
+  toggleBtn.addEventListener('click', () => {
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  });
+
+  rebuildCategoryPanel();
+  updateButton();
+
+  // Redraw on viewport change
+  viewport.onChange(() => {
+    requestDraw();
+  });
+
+  return {
+    setVisible: (v) => { isVisible = v; requestDraw(); },
+    getVisible: () => isVisible,
+    getSelectedCategories: () => [...selectedCategories],
+  };
+}

@@ -16,7 +16,7 @@
  */
 
 function createViewport(container, imageWidth, imageHeight) {
-  const MIN_SCALE = 0.02;
+  const MIN_SCALE = 0.01;
   const MAX_SCALE = 2.0;
 
   let scale = 1, ox = 0, oy = 0;

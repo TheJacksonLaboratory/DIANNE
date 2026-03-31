@@ -6,11 +6,12 @@
  * rendered in image space so they stay aligned during pan/zoom.
  */
 
-function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, viewport, log) {
+function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, viewport, log, sharedRow) {
   const TILE = imageMeta.tile_size;
   const MAX_CACHED = 300;
   const PREFETCH = 1;
-  const POINT_RADIUS = 2;
+  let POINT_RADIUS = 2;
+  const SEARCH_PLACEHOLDER_COLOR = 'rgba(247, 245, 245, 0.35)';  // configurable placeholder opacity
 
   const layer = document.createElement('canvas');
   layer.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2;';
@@ -20,13 +21,14 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   const controls = document.createElement('div');
   controls.dataset.ivUi = 'true';
   controls.style.cssText = [
-    'position:absolute', 'top:46px', 'right:8px', 'z-index:11',
+    ...(sharedRow ? [] : ['position:absolute', 'top:46px', 'right:8px', 'z-index:11']),
     'display:flex', 'flex-direction:column', 'gap:4px',
     'padding:4px 6px', 'border-radius:6px',
     'background:rgba(0,0,0,0.55)', 'color:#eee',
     'font:12px monospace', 'min-width:210px',
   ].join(';');
-  container.appendChild(controls);
+  if (sharedRow) sharedRow.appendChild(controls);
+  else container.appendChild(controls);
 
   const toggleBtn = document.createElement('button');
   toggleBtn.textContent = 'genes (0)';
@@ -40,23 +42,62 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
 
   const panel = document.createElement('div');
   panel.style.cssText = [
-    'display:none', 'max-height:220px', 'overflow:auto',
-    'padding-top:2px', 'border-top:1px solid rgba(255,255,255,0.12)',
+    'display:none', 'flex-direction:column',
+    'border-top:1px solid rgba(255,255,255,0.12)', 'padding-top:4px',
   ].join(';');
   controls.appendChild(panel);
+
+  const sizeRow = document.createElement('div');
+  sizeRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin:0 0 4px 0;flex-shrink:0;';
+  sizeRow.innerHTML = '<span style="color:#ddd;">Transcript size</span>';
+  const transcriptSizeSlider = document.createElement('input');
+  transcriptSizeSlider.type = 'range';
+  transcriptSizeSlider.min = '1';
+  transcriptSizeSlider.max = '12';
+  transcriptSizeSlider.step = '1';
+  transcriptSizeSlider.value = String(POINT_RADIUS);
+  transcriptSizeSlider.style.cssText = 'width:90px;';
+  transcriptSizeSlider.addEventListener('input', () => {
+    POINT_RADIUS = Number(transcriptSizeSlider.value);
+    draw(viewport.getTransform());
+  });
+  sizeRow.appendChild(transcriptSizeSlider);
+  panel.appendChild(sizeRow);
+
+  // inject ::placeholder color rule once per page so the constant is respected
+  const _phStyle = document.createElement('style');
+  _phStyle.textContent = `.iv-gene-search::placeholder { color: ${SEARCH_PLACEHOLDER_COLOR}; opacity: 1; }`;
+  document.head.appendChild(_phStyle);
+
+  const searchRow = document.createElement('div');
+  searchRow.style.cssText = 'display:flex;align-items:center;gap:4px;margin:0 0 4px 0;flex-shrink:0;';
+  panel.appendChild(searchRow);
 
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
   searchInput.placeholder = 'search gene';
+  searchInput.className = 'iv-gene-search';
   searchInput.style.cssText = [
-    'width:100%', 'box-sizing:border-box', 'margin:0 0 4px 0',
+    'flex:1', 'min-width:0', 'box-sizing:border-box',
     'padding:4px 6px', 'border-radius:4px', 'border:1px solid #666',
     'background:rgba(255,255,255,0.08)', 'color:#eee',
     'outline:none', 'font:12px monospace',
   ].join(';');
-  panel.appendChild(searchInput);
+  searchRow.appendChild(searchInput);
+
+  const searchClear = document.createElement('button');
+  searchClear.textContent = '\u00d7';  // × character
+  searchClear.title = 'Clear search';
+  searchClear.style.cssText = [
+    'display:none', 'flex-shrink:0',
+    'background:transparent', 'border:none',
+    'color:rgba(238,238,238,0.6)', 'font-size:15px', 'line-height:1',
+    'cursor:pointer', 'padding:0 2px',
+  ].join(';');
+  searchRow.appendChild(searchClear);
 
   const geneList = document.createElement('div');
+  geneList.style.cssText = 'overflow-y:auto;max-height:180px;';
   panel.appendChild(geneList);
 
   const cache = new Map();
@@ -201,7 +242,8 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   }
 
   function updateButton() {
-    toggleBtn.textContent = `genes (${selectedGenes.size})`;
+    const total = transcriptMeta.genes.length;
+    toggleBtn.textContent = `genes (${selectedGenes.size}/${total})`;
   }
 
   function applyGeneFilter() {
@@ -284,12 +326,21 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   }
 
   toggleBtn.addEventListener('click', () => {
-    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
   });
 
   searchInput.addEventListener('input', () => {
     geneFilter = searchInput.value;
+    searchClear.style.display = geneFilter ? 'block' : 'none';
     applyGeneFilter();
+  });
+
+  searchClear.addEventListener('click', () => {
+    searchInput.value = '';
+    geneFilter = '';
+    searchClear.style.display = 'none';
+    applyGeneFilter();
+    searchInput.focus();
   });
 
   rebuildGenePanel();

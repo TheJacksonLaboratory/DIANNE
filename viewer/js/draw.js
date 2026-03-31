@@ -19,6 +19,8 @@
  */
 
 function createDraw(container, viewport) {
+  const MIN_STROKE_POINTS = 15;
+
   // ── state (must be declared before resizeCanvas calls redraw) ─────────────
   const strokesPositive = [];
   const strokesNegative = [];
@@ -26,6 +28,7 @@ function createDraw(container, viewport) {
   let   mode            = 'positive';
   const colors          = { positive: '#22f0ff', negative: '#ff5233' };
   let   lineWidth = 2;
+  let   smoothing = 0.35; // 0=no smoothing, 1=strong smoothing
   let   strokeId  = 0;
 
   // ── canvas setup ───────────────────────────────────────────────────────────
@@ -63,7 +66,11 @@ function createDraw(container, viewport) {
 
   function onMouseUp() {
     if (!active) return;
-    if (active.points.length > 1) {
+    if (active.points.length > 2) {
+      _closeContour(active.points);
+      active.points = _smoothPoints(active.points, smoothing);
+    }
+    if (active.points.length >= MIN_STROKE_POINTS) {
       const target = active.kind === 'negative' ? strokesNegative : strokesPositive;
       target.push(active);
     }
@@ -93,10 +100,55 @@ function createDraw(container, viewport) {
   function setColor(css)       { colors[mode] = css; }
   function getColor()           { return colors[mode]; }
   function setWidth(px)         { lineWidth = px; }
+  function setSmoothing(v)      { smoothing = _clamp01(Number(v)); }
+  function getSmoothing()        { return smoothing; }
   function setVisible(visible)  { canvas.style.display = visible ? '' : 'none'; }
 
   function _cloneStrokes(strokes) {
     return strokes.map(s => ({ id: s.id, points: s.points }));
+  }
+
+  function _clamp01(v) {
+    if (!Number.isFinite(v)) return 0;
+    return Math.max(0, Math.min(1, v));
+  }
+
+  function _closeContour(points) {
+    if (!points || points.length < 3) return;
+    const first = points[0];
+    const last = points[points.length - 1];
+    const dx = last.x - first.x;
+    const dy = last.y - first.y;
+    if ((dx * dx + dy * dy) > 1e-6) {
+      points.push({ x: first.x, y: first.y });
+    } else {
+      points[points.length - 1] = { x: first.x, y: first.y };
+    }
+  }
+
+  function _smoothPoints(points, amount) {
+    if (!points || points.length < 4) return points;
+    const a = _clamp01(amount);
+    if (a <= 0) return points;
+
+    // Blend original polyline with one pass of neighbor averaging.
+    const out = points.map((p, i) => {
+      if (i === 0 || i === points.length - 1) return { x: p.x, y: p.y };
+      const prev = points[i - 1];
+      const next = points[i + 1];
+      const avgX = (prev.x + p.x + next.x) / 3;
+      const avgY = (prev.y + p.y + next.y) / 3;
+      return {
+        x: p.x * (1 - a) + avgX * a,
+        y: p.y * (1 - a) + avgY * a,
+      };
+    });
+
+    // Preserve closed-loop endpoint exactness.
+    if (out.length > 2) {
+      out[out.length - 1] = { x: out[0].x, y: out[0].y };
+    }
+    return out;
   }
 
   function getStrokes() {
@@ -149,6 +201,8 @@ function createDraw(container, viewport) {
     setColor,
     getColor,
     setWidth,
+    setSmoothing,
+    getSmoothing,
     setVisible,
   };
 }

@@ -6,6 +6,7 @@ import ipywidgets as widgets
 from viewer.tiff   import PyramidImage
 from viewer.server import ViewerServer
 from viewer.xetranscripts import XeniumTranscripts
+from viewer.xencells import XeniumCells
 
 _JS_DIR = Path(__file__).parent / 'js'
 
@@ -14,7 +15,8 @@ def _read_js(name):
 
 
 def create_viewer(image_path, width="100%", height="700px", host=None, port=None,
-                  xenium_bundle_path=None, matrix_csv=None, xenium_mpp=1.0):
+                  xenium_bundle_path=None, matrix_csv=None, xenium_mpp=1.0,
+                  cell_id_to_category=None, category_colors=None, max_cells=2000):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -34,7 +36,9 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
     xenium_bundle_path : optional path to a Xenium bundle with transcripts.zarr.zip
     matrix_csv : optional path to a 3×3 CSV affine matrix (H&E px → Xenium µm)
     xenium_mpp : Xenium microns-per-pixel (default 1.0); scales coords after apply matrix
-
+    cell_id_to_category : optional dict mapping cell IDs to category strings (e.g., cell_type)
+    category_colors : optional dict mapping category names to hex colors
+    max_cells : maximum number of cells to display per tile (default 2000)
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -48,7 +52,13 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
     xenium = XeniumTranscripts(xenium_bundle_path, image.metadata,
                                matrix_path=matrix_csv,
                                xenium_mpp=xenium_mpp) if xenium_bundle_path else None
-    server = ViewerServer(image, host=host, port=port, xenium=xenium)
+    xenium_cells = XeniumCells(xenium_bundle_path, image.metadata,
+                               matrix_path=matrix_csv,
+                               xenium_mpp=xenium_mpp,
+                               cell_id_to_category=cell_id_to_category,
+                               category_colors=category_colors,
+                               max_cells=max_cells) if xenium_bundle_path else None
+    server = ViewerServer(image, host=host, port=port, xenium=xenium, xenium_cells=xenium_cells)
     server.start()
 
     # output widget for server-side log (optional, hidden by default)
@@ -56,13 +66,15 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
 
     meta_json = json.dumps(image.metadata)
     xenium_meta_json = json.dumps(xenium.metadata) if xenium else 'null'
+    cells_meta_json = json.dumps(xenium_cells.metadata) if xenium_cells else 'null'
     base_url  = server.base_url
 
     # inline all JS files
     js = '\n\n'.join(_read_js(f) for f in [
         'viewport.js',
         'tiles.js',
-      'transcripts.js',
+        'transcripts.js',
+        'cells.js',
         'draw.js',
         'toolbar.js',
     ])
@@ -95,6 +107,7 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
   const BASE_URL = __BASE_URL__;
   const META     = __META__;
   const XENIUM_META = __XENIUM_META__;
+  const CELLS_META = __CELLS_META__;
 
   function log(msg) { status.textContent = msg; }
 
@@ -124,12 +137,12 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
     'font:12px monospace',
   ].join(';');
   overlayControls.innerHTML = [
-    '<span title="Overlay transparency">a</span>',
+    '<span title="Overlay transparency">Opacity</span>',
     '<input id="iv-alpha" type="range" min="0" max="1" step="0.01" value="0.55" style="width:90px;">',
-    '<span title="Low probability color">low</span>',
-    '<input id="iv-low" type="color" value="#0b4dff" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
-    '<span title="High probability color">high</span>',
-    '<input id="iv-high" type="color" value="#ff2a2a" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
+    '<span title="Low probability color">Low prob.</span>',
+    '<input id="iv-low" type="color" value="#FFA500" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
+    '<span title="High probability color">High prob.</span>',
+    '<input id="iv-high" type="color" value="#0000FF" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
   ].join('');
   root.appendChild(overlayControls);
 
@@ -139,8 +152,20 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
   const l0       = META.levels[0];
   const viewport = createViewport(root, l0.width, l0.height);
   const tiles    = createTiles(tileLayer, BASE_URL, META, viewport);
+  // shared row: [cells button] [genes controls] — both top-right, side by side
+  const rightControlsRow = document.createElement('div');
+  rightControlsRow.dataset.ivUi = 'true';
+  rightControlsRow.style.cssText = [
+    'position:absolute', 'top:46px', 'right:8px', 'z-index:11',
+    'display:flex', 'flex-direction:row', 'align-items:flex-start', 'gap:6px',
+  ].join(';');
+  root.appendChild(rightControlsRow);
+
   const transcripts = XENIUM_META
-    ? createXeTranscripts(root, BASE_URL, META, XENIUM_META, viewport, log)
+    ? createXeTranscripts(root, BASE_URL, META, XENIUM_META, viewport, log, rightControlsRow)
+    : null;
+  const cells = CELLS_META
+    ? createXeCells(root, BASE_URL, META, CELLS_META, viewport, log, rightControlsRow)
     : null;
   const draw     = createDraw(root, viewport);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL);
@@ -154,8 +179,8 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
   let predStyle = {
     alpha: 0.55,
     delta: 28,
-    colorLow: '#0b4dff',
-    colorHigh: '#ff2a2a',
+    colorLow: '#FFA500',
+    colorHigh: '#0000FF',
   };
 
   const alphaSlider = overlayControls.querySelector('#iv-alpha');
@@ -308,7 +333,8 @@ def create_viewer(image_path, width="100%", height="700px", host=None, port=None
    .replace('__HEIGHT__',  height) \
    .replace('__BASE_URL__', json.dumps(base_url)) \
    .replace('__META__',    meta_json) \
-  .replace('__XENIUM_META__', xenium_meta_json) \
+   .replace('__XENIUM_META__', xenium_meta_json) \
+   .replace('__CELLS_META__', cells_meta_json) \
    .replace('__JS__',      js)
 
     display(HTML(html))

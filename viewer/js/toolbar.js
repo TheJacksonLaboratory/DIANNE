@@ -32,7 +32,7 @@ function createToolbar(container, viewport, draw, baseUrl) {
     { name: 'pan',           label: '✥',     title: 'Pan / zoom' },
     { name: 'draw_positive', label: 'draw+', title: 'Draw positive contour' },
     { name: 'draw_negative', label: 'draw-', title: 'Draw negative contour' },
-    { name: 'click',         label: '⊕',     title: 'Click to record point' },
+    // { name: 'click',         label: '⊕',     title: 'Click to record point' },
   ];
 
   const buttons = {};
@@ -52,7 +52,7 @@ function createToolbar(container, viewport, draw, baseUrl) {
 
   // flush button — not a tool, just an action
   const flushBtn = document.createElement('button');
-  flushBtn.textContent = '⬆';
+  flushBtn.textContent = '⬇'; // ⬆
   flushBtn.title       = 'Send strokes to Python';
   flushBtn.style.cssText = [
     'background:transparent', 'border:1px solid #888',
@@ -66,7 +66,7 @@ function createToolbar(container, viewport, draw, baseUrl) {
   // annotations visibility toggle
   let annotationsVisible = true;
   const toggleAnnotBtn = document.createElement('button');
-  toggleAnnotBtn.textContent = '👁';
+  toggleAnnotBtn.textContent = '👀';
   toggleAnnotBtn.title       = 'Toggle annotations visibility';
   toggleAnnotBtn.style.cssText = [
     'background:rgba(255,255,255,0.2)', 'border:1px solid #888',
@@ -88,8 +88,12 @@ function createToolbar(container, viewport, draw, baseUrl) {
   drawControls.innerHTML = `
     <input type="color" value="#ff2222" title="Stroke color"
       style="width:26px;height:26px;border:none;background:none;cursor:pointer;padding:0;">
+    <span style="color:#ddd;font-size:11px;">Width</span>
     <input type="range" min="1" max="10" value="2" title="Stroke width"
       style="width:60px;">
+    <span style="color:#ddd;font-size:11px;">Smoothing</span>
+    <input type="range" min="0" max="1" step="0.05" value="0.35" title="Stroke smoothing"
+      style="width:70px;">
     <button title="Undo last stroke"
       style="background:transparent;border:1px solid #888;color:#eee;
              border-radius:4px;padding:2px 7px;cursor:pointer;font-size:13px;">↩</button>
@@ -99,11 +103,16 @@ function createToolbar(container, viewport, draw, baseUrl) {
   `;
   bar.appendChild(drawControls);
 
-  const [colorPicker, widthSlider, undoBtn, clearBtn] =
+  const [colorPicker, widthSlider, smoothSlider, undoBtn, clearBtn] =
     drawControls.querySelectorAll('input, button');
 
   colorPicker.addEventListener('input',  () => draw.setColor(colorPicker.value));
   widthSlider.addEventListener('input',  () => draw.setWidth(Number(widthSlider.value)));
+  smoothSlider.addEventListener('input', () => {
+    if (typeof draw.setSmoothing === 'function') {
+      draw.setSmoothing(Number(smoothSlider.value));
+    }
+  });
   undoBtn.addEventListener('click', () => draw.undoLast());
   clearBtn.addEventListener('click', () => draw.clear());
 
@@ -125,6 +134,9 @@ function createToolbar(container, viewport, draw, baseUrl) {
       draw.setMode(name === 'draw_negative' ? 'negative' : 'positive');
       if (typeof draw.getColor === 'function') {
         colorPicker.value = draw.getColor();
+      }
+      if (typeof draw.getSmoothing === 'function') {
+        smoothSlider.value = String(draw.getSmoothing());
       }
     }
     container.style.cursor =
