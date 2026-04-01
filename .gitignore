@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+*.err
+*.out
+
 classifiers/
 .DS_Store*
 
