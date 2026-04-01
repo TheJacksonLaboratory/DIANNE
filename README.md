@@ -14,6 +14,21 @@ All DIANNE workflows operate on standardized, processed WSIs. Raw slides are pre
 + MIE https://github.com/TheJacksonLaboratory/spatial-omics-tools — extends STQ with support for mIF WSIs, extracting tile-level imaging features via the KRONOS spatial proteomics foundation model.
 
 
+## Graphical user interface (GUI)
+
+<div style="text-align: center; width: 800px; margin: 0 auto;">
+  <img src="docs/Guided-GUI.jpeg" width="800"/>
+  <p style="text-align: left;"><em><b>Figure 1. Guided labelling GUI.</b> Patches proposed by the algorithm are presented to the user one at a time, and labelled as positive or negative using the corresponding buttons. Patches are drawn from all loaded whole slide images simultaneously and pooled for model training.</em></p>
+</div>
+
+<br>
+
+<div style="text-align: center; width: 800px; margin: 0 auto;">
+  <img src="docs/Freehand-GUI.jpeg" width="800"/>
+  <p style="text-align: left;"><em><b>Figure 2. Freehand labelling GUI.</b> The user navigates a single whole slide image by clicking on the thumbnail on the left and then by zooming and panning the user draws positive or negative contours to label regions of interest based on their own visual judgment. Annotations from all slides are accumulated and pooled for model training.</em></p>
+</div>
+
+
 ## Running DIANNE workflows
 
 **Clone DIANNE repository**
@@ -51,6 +66,16 @@ if [ ! -f "$container" ]; then
 fi
 
 singularity exec "$container" jupyter notebook --no-browser --port=$(shuf -i10000-11999 -n1) --ip=$(hostname -i) --notebook-dir "$workdir"
+```
+
+</p></details>
+<br>
+
+<details closed><summary>Option C (click to expand). Launch Jupyter server via script below</summary><p>
+
+```bash
+cd scripts/
+launch-jupyter.sh
 ```
 
 </p></details>
