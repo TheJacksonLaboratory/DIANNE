@@ -81,6 +81,10 @@ function createViewport(container, imageWidth, imageHeight) {
     return { scale, ox, oy };
   }
 
+  function getImageSize() {
+    return { width: imgWidth, height: imgHeight };
+  }
+
   // ── change notifications ───────────────────────────────────────────────────
   function onChange(fn) {
     listeners.push(fn);
@@ -94,5 +98,5 @@ function createViewport(container, imageWidth, imageHeight) {
   // fit on creation
   reset();
 
-  return { panBy, zoomAt, reset, setImageSize, toImageSpace, toScreenSpace, getTransform, onChange };
+  return { panBy, zoomAt, reset, setImageSize, toImageSpace, toScreenSpace, getTransform, getImageSize, onChange };
 }

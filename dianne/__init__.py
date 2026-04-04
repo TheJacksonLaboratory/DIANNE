@@ -1,6 +1,6 @@
 from .annotation import jumpStart, runAnnotation, inspectAnnotatedPatches, loadPatch
 from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
-from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, inferProb, showProbImg, trainClassifier
+from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, inferProb, inferProbFast, inferProbPreview, showProbImg, trainClassifier
 from .utils import findMyJupyterServer, setupClassifierPaths, saveClassifier, loadClassifier, saveGUIClassifier, loadGUIClassifier
 from .utils import loadDataAndPreparePatches, loadDataAndPreparePatchesStatic, setNotebookWidth
 from .utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes

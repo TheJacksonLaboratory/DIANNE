@@ -238,7 +238,183 @@ def preparePatchesWSI(ad_obs, N=8, spacing=56/0.25, qth=0.05, sample_id=None, ve
         print('Prepared patches:', df_temp_img_tiles['patch'].nunique())
     return df_temp_img_tiles
 
-def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, verbose=True, avgNegativePatchCDF=None, erode=True):
+
+
+def inferProbFast(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, n_jobs=-1, verbose=True, avgNegativePatchCDF=None, erode=True):
+
+    def runChunk(i, j, feat_shape, feat_dtype, coords_shape, coords_dtype,
+                 shm_feat_name, shm_coords_name, chunk_mask, neighbor_mask, feat_idx, qs, clf):
+        from multiprocessing import shared_memory
+        shm_f = shared_memory.SharedMemory(name=shm_feat_name)
+        shm_c = shared_memory.SharedMemory(name=shm_coords_name)
+        feat_np   = np.ndarray(feat_shape,   dtype=feat_dtype,   buffer=shm_f.buf)
+        coords_np = np.ndarray(coords_shape, dtype=coords_dtype, buffer=shm_c.buf)
+
+        sub_feat     = feat_np[neighbor_mask]
+        sub_coords   = coords_np[neighbor_mask]
+        chunk_coords = coords_np[chunk_mask]
+
+        tree = KDTree(sub_coords)
+        all_neighbors = tree.query_ball_point(chunk_coords, f * R * tsize)
+
+        X = np.stack([
+            np.quantile(sub_feat[nbrs], qs, axis=0).flatten()[feat_idx]
+            for nbrs in all_neighbors
+        ])
+        probs = clf.predict_proba(X)[:, 1]
+
+        shm_f.close(); shm_c.close()
+        return {(i, j): {'x': chunk_coords[:, 0].tolist(),
+                         'y': chunk_coords[:, 1].tolist(),
+                         'p': probs.tolist()}}
+
+    def _prep(ad, clf, qs, Nmax):
+        '''Shared prep between inferProb and inferProbPreview.'''
+        ad = ad[:Nmax]
+        df_feat = ad.to_df()
+        feat_np = np.ascontiguousarray(df_feat.values.astype(float))
+        try:
+            coords_df = ad.obs[['pxl_row_in_wsi', 'pxl_col_in_wsi']]
+        except KeyError:
+            coords_df = ad.obs[['pxl_row_in_fullres', 'pxl_col_in_fullres']]
+        coords_np = np.ascontiguousarray(coords_df.values[:, [1, 0]].astype(float))
+        stacked_index = pd.Index([f"{c}_{np.round(q, 2)}" for q in qs for c in df_feat.columns])
+        feat_idx = stacked_index.get_indexer(clf.feat)
+        if (feat_idx == -1).any():
+            raise ValueError(f"clf.feat entries missing: {np.array(clf.feat)[feat_idx==-1][:5]}")
+        return feat_np, coords_np, feat_idx
+
+    feat_np, coords_np, feat_idx = _prep(ad, clf, qs, Nmax)
+
+    from multiprocessing import shared_memory
+    shm_feat   = shared_memory.SharedMemory(create=True, size=feat_np.nbytes)
+    shm_coords = shared_memory.SharedMemory(create=True, size=coords_np.nbytes)
+    np.copyto(np.ndarray(feat_np.shape,   dtype=feat_np.dtype,   buffer=shm_feat.buf),   feat_np)
+    np.copyto(np.ndarray(coords_np.shape, dtype=coords_np.dtype, buffer=shm_coords.buf), coords_np)
+
+    limx = coords_np[:, 0].min(), coords_np[:, 0].max()
+    limy = coords_np[:, 1].min(), coords_np[:, 1].max()
+    gridx = np.append(np.arange(limx[0], limx[1], s), limx[1] + 1)
+    gridy = np.append(np.arange(limy[0], limy[1], s), limy[1] + 1)
+    sh_val = 1.25 * f * R * tsize
+
+    chunks = [(i, j) for i in range(len(gridx)-1) for j in range(len(gridy)-1)]
+    params = []
+    for i, j in tqdm(chunks, desc='Preparing chunks', disable=not verbose):
+        x0, x1 = gridx[i], gridx[i+1]
+        y0, y1 = gridy[j], gridy[j+1]
+        chunk_mask    = (coords_np[:,0]>=x0)        & (coords_np[:,0]<x1)        & (coords_np[:,1]>=y0)        & (coords_np[:,1]<y1)
+        neighbor_mask = (coords_np[:,0]>=x0-sh_val) & (coords_np[:,0]<x1+sh_val) & (coords_np[:,1]>=y0-sh_val) & (coords_np[:,1]<y1+sh_val)
+        if chunk_mask.sum() == 0:
+            continue
+        params.append((i, j, feat_np.shape, feat_np.dtype, coords_np.shape, coords_np.dtype,
+                       shm_feat.name, shm_coords.name, chunk_mask, neighbor_mask, feat_idx, qs, clf))
+
+    if verbose:
+        print(f"Prepared {len(params)} chunks for inference.")
+
+    try:
+        sT = time.time()
+        run = delayed(runChunk)
+        results_list = (Parallel(n_jobs=n_jobs, backend='loky')(run(*p) for p in params)
+                        if parallel else [runChunk(*p) for p in params])
+        if verbose:
+            print(f"Computed chunks in: {time.time()-sT:.2f}s")
+    finally:
+        shm_feat.unlink(); shm_feat.close()
+        shm_coords.unlink(); shm_coords.close()
+
+    results = {k: v for d in results_list for k, v in d.items()}
+    x, y, p = [], [], []
+    for i, j in chunks:
+        if (i, j) not in results:
+            continue
+        x.extend(results[(i,j)]['x'])
+        y.extend(results[(i,j)]['y'])
+        p.extend(results[(i,j)]['p'])
+
+    if erode:
+        p = erodePointProbs(x, y, p, R=R)
+
+    return x, y, p
+
+
+def inferProbPreview(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, n_jobs=-1, verbose=True, avgNegativePatchCDF=None, erode=True, step=20):
+    from scipy.interpolate import RegularGridInterpolator
+
+    # --- prep full coords ---
+    ad = ad[:Nmax]
+    df_feat = ad.to_df()
+    feat_np = df_feat.values.astype(float)
+    try:
+        coords_df = ad.obs[['pxl_row_in_wsi', 'pxl_col_in_wsi']]
+    except KeyError:
+        coords_df = ad.obs[['pxl_row_in_fullres', 'pxl_col_in_fullres']]
+    coords_np = coords_df.values[:, [1, 0]].astype(float)  # (x, y)
+
+    stacked_index = pd.Index([f"{c}_{np.round(q, 2)}" for q in qs for c in df_feat.columns])
+    feat_idx = stacked_index.get_indexer(clf.feat)
+    if (feat_idx == -1).any():
+        raise ValueError(f"clf.feat entries missing: {np.array(clf.feat)[feat_idx==-1][:5]}")
+
+    # --- subsample on regular grid ---
+    uxs = np.sort(np.unique(coords_np[:, 0]))
+    uys = np.sort(np.unique(coords_np[:, 1]))
+    sample_xs = uxs[::step]
+    sample_ys = uys[::step]
+    sample_set_x = set(sample_xs)
+    sample_set_y = set(sample_ys)
+    sample_mask = np.array([x in sample_set_x and y in sample_set_y
+                            for x, y in coords_np])
+
+    sample_coords = coords_np[sample_mask]
+    sample_feat   = feat_np[sample_mask]
+
+    if verbose:
+        print(f"Preview: {sample_mask.sum()} sampled tiles from {len(coords_np)} total.")
+
+    # --- infer on sample (serial, 1 CPU, no loky overhead) ---
+    tree = KDTree(sample_coords)
+    # use full coords for neighbor lookup so edge tiles get proper context
+    full_tree = KDTree(coords_np)
+    all_neighbors = full_tree.query_ball_point(sample_coords, f * R * tsize)
+
+    sT = time.time()
+    X = np.stack([
+        np.quantile(feat_np[nbrs], qs, axis=0).flatten()[feat_idx]
+        for nbrs in all_neighbors
+    ])
+    probs_sample = clf.predict_proba(X)[:, 1]
+    if verbose:
+        print(f"Preview inference in: {time.time()-sT:.2f}s")
+
+    # --- interpolate to full grid ---
+    # build a value grid over (sample_xs, sample_ys), fill missing with nearest
+    prob_grid = np.full((len(sample_xs), len(sample_ys)), np.nan)
+    xi = np.searchsorted(sample_xs, sample_coords[:, 0])
+    yi = np.searchsorted(sample_ys, sample_coords[:, 1])
+    prob_grid[xi, yi] = probs_sample
+
+    # fill any missing grid points (sparse corners) with nearest neighbor
+    from scipy.ndimage import generic_filter
+    nan_mask = np.isnan(prob_grid)
+    if nan_mask.any():
+        prob_grid[nan_mask] = generic_filter(prob_grid, lambda v: v[~np.isnan(v)].mean() if (~np.isnan(v)).any() else 0., size=3)[nan_mask]
+
+    interp = RegularGridInterpolator(
+        (sample_xs, sample_ys), prob_grid,
+        method='linear', bounds_error=False, fill_value=None  # extrapolate at edges
+    )
+    p = interp(coords_np).tolist()
+    x = coords_np[:, 0].tolist()
+    y = coords_np[:, 1].tolist()
+
+    if erode:
+        p = erodePointProbs(x, y, p, R=R)
+
+    return x, y, p
+
+def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, Nmax=10**7, parallel=True, n_jobs=-1, verbose=True, avgNegativePatchCDF=None, erode=True):
 
     '''Infer the probability of each tile in the image using a trained classifier.
 
@@ -418,10 +594,14 @@ def inferProb(ad, clf, qs, R=2, f=1.1, col='tprob', tsize=224, s=4000, sh=100, N
 
         params.append((i, j, df_tiles_trimmed_wh, df_tiles_trimmed_coords_wh, index_wh, f, R, tsize, qs, index, avgNegativePatchCDF))
 
+    if verbose:
+        print(f"Prepared {len(params)} chunks for inference.")
     if parallel:
         # Parallelize the computation to get local representation for each tile in the chunk and infer the probability
         sT = time.time()
-        results = Parallel(n_jobs=-1, backend='loky')(delayed(runChunk)(*param) for param in params)
+        if n_jobs!=-1:
+            print(f"Using {n_jobs} parallel jobs for inference.")
+        results = Parallel(n_jobs=n_jobs, backend='loky')(delayed(runChunk)(*param) for param in params)
         if verbose:
             print(f"Computed chunks in: {time.time() - sT:.2f} seconds")
     else:

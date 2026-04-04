@@ -86,11 +86,15 @@ function createToolbar(container, viewport, draw, baseUrl) {
   const drawControls = document.createElement('div');
   drawControls.style.cssText = 'display:none;gap:4px;align-items:center;';
   drawControls.innerHTML = `
+    <button title="Brush mode: line" data-brush-mode-btn
+      style="background:rgba(255,255,255,0.15);border:1px solid #aaa;color:#eee;
+             border-radius:4px;padding:2px 7px;cursor:pointer;font-size:14px;
+             line-height:1.3;">∿</button>
     <input type="color" value="#ff2222" title="Stroke color"
       style="width:26px;height:26px;border:none;background:none;cursor:pointer;padding:0;">
     <span style="color:#ddd;font-size:11px;">Width</span>
-    <input type="range" min="1" max="10" value="2" title="Stroke width"
-      style="width:60px;">
+    <input type="range" min="1" max="50" step="1" value="2" title="Stroke width (px)"
+      style="width:80px;">
     <span style="color:#ddd;font-size:11px;">Smoothing</span>
     <input type="range" min="0" max="1" step="0.05" value="0.35" title="Stroke smoothing"
       style="width:70px;">
@@ -103,11 +107,61 @@ function createToolbar(container, viewport, draw, baseUrl) {
   `;
   bar.appendChild(drawControls);
 
-  const [colorPicker, widthSlider, smoothSlider, undoBtn, clearBtn] =
-    drawControls.querySelectorAll('input, button');
+  const [brushModeBtn, colorPicker, widthSlider, smoothSlider, undoBtn, clearBtn] =
+    drawControls.querySelectorAll('button[data-brush-mode-btn], input, button:not([data-brush-mode-btn])');
+
+  brushModeBtn.addEventListener('click', () => {
+    const next = (typeof draw.getBrushMode === 'function' && draw.getBrushMode() === 'noodle')
+      ? 'line' : 'noodle';
+    if (typeof draw.setBrushMode === 'function') draw.setBrushMode(next);
+    _syncBrushModeBtn(next);
+    _syncWidthSlider(next);
+    container.style.cursor = next === 'noodle' ? 'none' : 'crosshair';
+  });
+
+  // icon shows the OTHER mode (what you'd switch TO)
+  function _syncBrushModeBtn(bm) {
+    if (bm === 'noodle') {
+      brushModeBtn.textContent = '∿';
+      brushModeBtn.title       = 'Brush mode: disk (noodle) — click for line';
+      brushModeBtn.style.background = 'rgba(255,255,100,0.20)';
+    } else {
+      brushModeBtn.textContent = '⬤';
+      brushModeBtn.title       = 'Brush mode: line — click for disk (noodle)';
+      brushModeBtn.style.background = 'rgba(255,255,255,0.15)';
+    }
+  }
+
+  // Update slider range+value to match the active brush mode.
+  function _syncWidthSlider(bm) {
+    if (bm === 'noodle') {
+      widthSlider.min   = '50';
+      widthSlider.max   = '10000';
+      widthSlider.step  = '50';
+      widthSlider.title = 'Disk radius (px)';
+      widthSlider.value = String(
+        (typeof draw.getNoodleRadius === 'function') ? draw.getNoodleRadius() : 500
+      );
+    } else {
+      widthSlider.min   = '1';
+      widthSlider.max   = '50';
+      widthSlider.step  = '1';
+      widthSlider.title = 'Stroke width (px)';
+      widthSlider.value = String(
+        (typeof draw.getWidth === 'function') ? draw.getWidth() : 2
+      );
+    }
+  }
 
   colorPicker.addEventListener('input',  () => draw.setColor(colorPicker.value));
-  widthSlider.addEventListener('input',  () => draw.setWidth(Number(widthSlider.value)));
+  widthSlider.addEventListener('input',  () => {
+    const bm = (typeof draw.getBrushMode === 'function') ? draw.getBrushMode() : 'line';
+    if (bm === 'noodle') {
+      if (typeof draw.setNoodleRadius === 'function') draw.setNoodleRadius(Number(widthSlider.value));
+    } else {
+      draw.setWidth(Number(widthSlider.value));
+    }
+  });
   smoothSlider.addEventListener('input', () => {
     if (typeof draw.setSmoothing === 'function') {
       draw.setSmoothing(Number(smoothSlider.value));
@@ -138,10 +192,17 @@ function createToolbar(container, viewport, draw, baseUrl) {
       if (typeof draw.getSmoothing === 'function') {
         smoothSlider.value = String(draw.getSmoothing());
       }
+      // sync brush mode button and width slider
+      const bm = (typeof draw.getBrushMode === 'function') ? draw.getBrushMode() : 'line';
+      _syncBrushModeBtn(bm);
+      _syncWidthSlider(bm);
     }
     container.style.cursor =
-      name === 'pan'   ? 'grab'      :
-      _isDrawTool(name) ? 'crosshair' : 'cell';
+      name === 'pan'  ? 'grab' :
+      _isDrawTool(name) ? (
+        (typeof draw.getBrushMode === 'function' && draw.getBrushMode() === 'noodle')
+          ? 'none' : 'crosshair'
+      ) : 'cell';
   }
 
   setTool('pan');   // initial state
@@ -174,9 +235,15 @@ function createToolbar(container, viewport, draw, baseUrl) {
     if (activeTool === 'pan' && panning) {
       viewport.panBy(e.clientX - panX, e.clientY - panY);
       panX = e.clientX; panY = e.clientY;
-    } else if (_isDrawTool(activeTool) && drawing) {
+    } else if (_isDrawTool(activeTool)) {
+      // always forward to draw for cursor tracking; draw.onMouseMove internally
+      // skips point recording when no active stroke
       draw.onMouseMove(..._toVPArr(e));
     }
+  });
+
+  container.addEventListener('mouseleave', () => {
+    if (typeof draw.onMouseLeave === 'function') draw.onMouseLeave();
   });
 
   window.addEventListener('mouseup', e => {
