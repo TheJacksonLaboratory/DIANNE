@@ -147,12 +147,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   display: flex;
   align-items: stretch;
   gap: 10px;
+  position: relative; /* anchor absolute footer controls */
 ">
   <div id="iv-samples" style="
     width: 10%;
     min-width: 170px;
     max-width: 260px;
-    height: __HEIGHT__;
+    height: calc(__HEIGHT__ - 16px);
     overflow-y: auto;
     background: #161616;
     border: 1px solid #3a3a3a;
@@ -162,10 +163,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     display: flex;
     flex-direction: column;
     gap: 8px;
+    position: relative; /* allow absolute footer controls */
   "></div>
   <div id="iv-main" style="
     width: 90%;
     min-width: 0;
+    position: relative; /* allow absolute footer controls */
   ">
 <div id="iv-root" style="
   position: relative;
@@ -526,6 +529,179 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   }
 
   buildSampleRibbon();
+
+  // Add sample-area footer controls (bottom-left of iv-samples)
+  // modal helper for custom confirm/dialog centered on screen
+  function createModalHelpers() {
+    const modalOverlay = document.createElement('div');
+    modalOverlay.style.cssText = [
+      'position:fixed','left:0','top:0','width:100%','height:100%','display:none',
+      'align-items:center','justify-content:center','z-index:1000','background:rgba(0,0,0,0.4)'
+    ].join(';');
+
+    const modal = document.createElement('div');
+    modal.style.cssText = [
+      'min-width:260px','max-width:90%','background:#1b1b1b','color:#eee','padding:14px',
+      'border-radius:8px','box-shadow:0 6px 20px rgba(0,0,0,0.6)','font:13px monospace'
+    ].join(';');
+
+    const titleEl = document.createElement('div');
+    titleEl.style.cssText = 'font-weight:700;margin-bottom:8px;color:#53d9ff';
+    titleEl.textContent = 'DIANNE';
+    const msgEl = document.createElement('div');
+    msgEl.style.cssText = 'margin-bottom:12px;white-space:normal;';
+
+    const buttons = document.createElement('div');
+    buttons.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+
+    const okBtn = document.createElement('button');
+    okBtn.type = 'button';
+    okBtn.textContent = 'OK';
+    okBtn.style.cssText = 'padding:6px 10px;border-radius:6px;border:1px solid #333;background:#1f8cff;color:#fff;cursor:pointer';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding:6px 10px;border-radius:6px;border:1px solid #333;background:#333;color:#ddd;cursor:pointer';
+
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(okBtn);
+    modal.appendChild(titleEl);
+    modal.appendChild(msgEl);
+    modal.appendChild(buttons);
+    modalOverlay.appendChild(modal);
+    document.body.appendChild(modalOverlay);
+
+    function showConfirm(message) {
+      return new Promise(resolve => {
+        msgEl.textContent = message;
+        modalOverlay.style.display = 'flex';
+        okBtn.focus();
+        const clean = () => {
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+        };
+        const onOk = () => { clean(); modalOverlay.style.display = 'none'; resolve(true); };
+        const onCancel = () => { clean(); modalOverlay.style.display = 'none'; resolve(false); };
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+      });
+    }
+
+    return { showConfirm };
+  }
+
+  const modalHelpers = createModalHelpers();
+
+  (function addSamplesFooter() {
+    const shell = document.getElementById('iv-shell');
+    const footer = document.createElement('div');
+    footer.style.cssText = 'position:absolute;left:8px;bottom:8px;display:flex;gap:6px;z-index:120;';
+
+    const makeButton = (title, labelHtml) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = title;
+      b.style.cssText = [
+        'font:12px monospace','padding:6px 8px','border-radius:6px','border:1px solid #333',
+        'background:#262626','color:#e6e6e6','cursor:pointer','display:flex','gap:6px','align-items:center'
+      ].join(';');
+      b.innerHTML = labelHtml;
+      return b;
+    };
+
+    const eraserSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
+      + '<path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/>'
+      + '<path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/>'
+      + '</svg>';
+
+    const clearAllBtn = makeButton('Clear all annotations', eraserSvg + '<span style="font-size:11px">Clear all annotations</span>');
+    clearAllBtn.addEventListener('click', async () => {
+      const ok = await modalHelpers.showConfirm('Clear all annotations for all samples? This cannot be undone.');
+      if (!ok) return;
+      log('Clearing all annotations...');
+      try {
+        // clear clicks
+        await fetch(BASE_URL + '/click', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify([]),
+        });
+
+        // clear strokes for every sample
+        const bySample = {};
+        for (const s of SAMPLES) {
+          bySample[s] = { strokes_positive: [], strokes_negative: [] };
+        }
+        await fetch(BASE_URL + '/strokes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ by_sample: bySample }),
+        });
+
+        // update client-side state
+        for (const s of SAMPLES) {
+          strokesBySample[s] = { strokes_positive: [], strokes_negative: [] };
+        }
+        draw.setStrokes([], []);
+        log('All annotations cleared');
+      } catch (err) {
+        log('Clear error: ' + err);
+      }
+    });
+
+    footer.appendChild(clearAllBtn);
+    shell.appendChild(footer);
+  })();
+
+  // Add main-area footer controls (bottom-left of iv-main)
+  (function addMainFooter() {
+    const mainContainer = document.getElementById('iv-main');
+    const footer = document.createElement('div');
+    footer.style.cssText = 'position:absolute;left:12px;bottom:38px;display:flex;gap:6px;z-index:120;';
+
+    const makeButton = (title, labelHtml) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.title = title;
+      b.style.cssText = [
+        'font:12px monospace','padding:6px 8px','border-radius:6px','border:1px solid #333',
+        'background:#262626','color:#e6e6e6','cursor:pointer','display:flex','gap:6px','align-items:center'
+      ].join(';');
+      b.innerHTML = labelHtml;
+      return b;
+    };
+
+    const eraserSvgSmall = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
+      + '<path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/>'
+      + '<path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/>'
+      + '</svg>';
+
+    const clearSampleBtn = makeButton('Clear annotations for sample', eraserSvgSmall + '<span style="font-size:11px">Clear sample</span>');
+    clearSampleBtn.addEventListener('click', async () => {
+      log('Clearing annotations for sample ' + ACTIVE_SAMPLE + '...');
+      try {
+        // Legacy single-sample payload clears current chosen sample
+        await fetch(BASE_URL + '/strokes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strokes_positive: [], strokes_negative: [] }),
+        });
+
+        // update client-side state
+        if (strokesBySample[ACTIVE_SAMPLE]) {
+          strokesBySample[ACTIVE_SAMPLE] = { strokes_positive: [], strokes_negative: [] };
+        }
+        draw.setStrokes([], []);
+        log('Annotations cleared for ' + ACTIVE_SAMPLE);
+      } catch (err) {
+        log('Clear error: ' + err);
+      }
+    });
+
+    footer.appendChild(clearSampleBtn);
+    mainContainer.appendChild(footer);
+  })();
 
   // trigger initial tile load now that all listeners are wired
   tiles.update(viewport.getTransform());
