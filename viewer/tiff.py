@@ -99,3 +99,37 @@ class PyramidImage:
 
     def _blank_tile(self, h: int = TILE, w: int = TILE) -> bytes:
         return self._to_jpeg(np.zeros((h or self.TILE, w or self.TILE, 3), dtype=np.uint8))
+
+    def get_level_thumbnail(self, level: int, size: int = 256, background=(15, 15, 15)) -> bytes:
+        """
+        Render the entire pyramid `level` into a square thumbnail of `size`×`size`.
+        Preserves aspect ratio by scaling the level image to fit inside the square
+        and centering it on a background canvas.
+        Returns JPEG bytes.
+        """
+        if level not in self.levels:
+            raise ValueError(f"level {level} out of range 0–{self.n_levels-1}")
+
+        arr = self._z[str(level)]  # (C, H, W)
+        _, h, w = arr.shape
+        rgb = np.moveaxis(arr, 0, -1)  # (H, W, 3)
+
+        # Create PIL image
+        img = Image.fromarray(rgb)
+
+        # Compute scaled size that fits within `size` preserving aspect
+        scale = min(size / float(w), size / float(h)) if (w and h) else 1.0
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+
+        resized = img.resize((new_w, new_h), resample=Image.LANCZOS)
+
+        # Paste onto square background
+        canvas = Image.new('RGB', (size, size), color=background)
+        off_x = (size - new_w) // 2
+        off_y = (size - new_h) // 2
+        canvas.paste(resized, (off_x, off_y))
+
+        buf = io.BytesIO()
+        canvas.save(buf, format='JPEG', quality=85)
+        return buf.getvalue()

@@ -159,6 +159,15 @@ class ViewerServer:
                     except Exception as e:
                         self._respond(400, str(e).encode())
 
+                elif parsed.path == '/thumb':
+                    try:
+                        level = int(qs.get('level', [str(image.n_levels - 1)])[0])
+                        size = int(qs.get('size', ['256'])[0])
+                        data = image.get_level_thumbnail(level, size=size)
+                        self._respond(200, data, 'image/jpeg')
+                    except Exception as e:
+                        self._respond(400, str(e).encode())
+
                 elif parsed.path == '/xenium_tile':
                     xenium = srv.xenium_by_sample.get(sample_name)
                     if xenium is None:

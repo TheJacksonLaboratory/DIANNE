@@ -573,7 +573,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       const thumbWrap = document.createElement('div');
       thumbWrap.style.cssText = [
         'width:100%', 'aspect-ratio:1/1', 'overflow:hidden',
-        'border-radius:4px', 'background:#0f0f0f',
+        'position:relative', 'border-radius:4px', 'background:#0f0f0f',
         'border:1px solid #303030',
       ].join(';');
       const m = SAMPLE_META[sampleName];
@@ -582,10 +582,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       const thumbLevel = Math.max(2, Number(m.n_levels) - 1);
       console.log(`Using thumbnail level ${thumbLevel} for sample ${sampleName}`);
       const img = document.createElement('img');
-      img.src = BASE_URL + '/tile?sample=' + encodeURIComponent(sampleName)
-        + '&level=' + thumbLevel + '&row=0&col=0';
       img.alt = sampleName;
-      img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+      img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center center;display:block;';
+      // Request a server-generated square thumbnail (256×256) of the full
+      // lowest-resolution level so we always get the entire image resized
+      // preserving aspect ratio.
+      img.src = BASE_URL + '/thumb?sample=' + encodeURIComponent(sampleName)
+        + '&level=' + thumbLevel + '&size=256';
       thumbWrap.appendChild(img);
 
       const label = document.createElement('div');
