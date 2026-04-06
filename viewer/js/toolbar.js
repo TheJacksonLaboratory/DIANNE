@@ -13,7 +13,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -207,7 +207,33 @@ function createToolbar(container, viewport, draw, baseUrl) {
 
   setTool('pan');   // initial state
 
-  // ── mouse event routing ────────────────────────────────────────────────────
+  // ── run inference button (optional) ───────────────────────────────────────
+  if (runInferenceOptions && typeof runInferenceOptions.onRun === 'function') {
+    const runBtn = document.createElement('button');
+    runBtn.title = 'Train classifier & run inference on active sample';
+    runBtn.style.cssText = [
+      'width:26px', 'height:26px', 'border-radius:50%', 'border:none',
+      'background:radial-gradient(circle, #00ff88 0%, #00cc55 100%)',
+      'cursor:pointer', 'font-size:11px', 'padding:0', 'margin-left:6px',
+      'box-shadow:0 0 8px 2px rgba(0,255,136,0.65)',
+      'transition:box-shadow 0.2s, opacity 0.2s',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'color:#003322', 'font-weight:700',
+    ].join(';');
+    runBtn.textContent = '▶';
+    runBtn.addEventListener('mouseenter', () => {
+      if (!runBtn.disabled) runBtn.style.boxShadow = '0 0 14px 5px rgba(0,255,136,0.95)';
+    });
+    runBtn.addEventListener('mouseleave', () => {
+      if (!runBtn.disabled) runBtn.style.boxShadow = '0 0 8px 2px rgba(0,255,136,0.65)';
+    });
+    runBtn.addEventListener('click', () => {
+      if (!runBtn.disabled) runInferenceOptions.onRun(runBtn);
+    });
+    bar.appendChild(runBtn);
+  }
+
+
   let panning = false, panX = 0, panY = 0, panOx = 0, panOy = 0;
   let drawing  = false;
   let mouseDownPos = null;

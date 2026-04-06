@@ -1,7 +1,7 @@
 import json
 import socket
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 
@@ -19,7 +19,8 @@ class ViewerServer:
     """
 
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
-                 xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None):
+                 xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
+                 run_inference_fn=None, sample_sizes=None):
         if images is None:
             if image is None:
                 raise ValueError('ViewerServer requires image or images')
@@ -58,6 +59,11 @@ class ViewerServer:
                 self.host = socket.gethostbyname(socket.gethostname())
             except socket.gaierror:
                 self.host = '127.0.0.1'
+        self.run_inference_fn = run_inference_fn
+        self.sample_sizes = dict(sample_sizes) if sample_sizes else {}
+        self._inference_lock = threading.Lock()
+        self._inference_running = False
+
         self.clicks  = []
         self.strokes_by_sample = {
             sample: {'strokes_positive': [], 'strokes_negative': []}
@@ -70,7 +76,7 @@ class ViewerServer:
                 port = s.getsockname()[1]
         self.port = port
 
-        self._server = HTTPServer(('0.0.0.0', port), self._make_handler())
+        self._server = ThreadingHTTPServer(('0.0.0.0', port), self._make_handler())
         self._server.handle_error = lambda *a: None  # silence broken pipe / connection reset
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
@@ -265,6 +271,52 @@ class ViewerServer:
                     except KeyError:
                         self._respond(404, b'unknown sample')
                         return
+
+                elif parsed.path == '/run_inference':
+                    if srv.run_inference_fn is None:
+                        body = json.dumps({'ok': False, 'error': 'run_inference not configured'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    active_sample = (
+                        data.get('active_sample', srv.chosen_sample)
+                        if isinstance(data, dict) else srv.chosen_sample
+                    )
+                    with srv._inference_lock:
+                        if srv._inference_running:
+                            body = json.dumps({'ok': False, 'error': 'inference already running'}).encode()
+                            self._respond(200, body, 'application/json')
+                            return
+                        srv._inference_running = True
+                    try:
+                        result = srv.run_inference_fn(
+                            strokes_by_sample=srv.strokes_by_sample,
+                            active_sample=active_sample,
+                        )
+                        if not isinstance(result, dict):
+                            raise ValueError('run_inference_fn must return a dict')
+                        sample_out = result.get('sample', active_sample)
+                        xi = [float(v) for v in result['xi']]
+                        yi = [float(v) for v in result['yi']]
+                        pi = [float(v) for v in result['pi']]
+                        style = {
+                            'delta':     float(result.get('delta', 448)),
+                            'alpha':     float(result.get('alpha', 0.5)),
+                            'colorLow':  str(result.get('color_low',  '#FFA500')),
+                            'colorHigh': str(result.get('color_high', '#0000FF')),
+                        }
+                        payload = {'ok': True, 'sample': sample_out,
+                                   'overlay': {'xi': xi, 'yi': yi, 'pi': pi, 'style': style}}
+                        body = json.dumps(payload).encode()
+                        self._respond(200, body, 'application/json')
+                    except Exception as exc:
+                        import traceback
+                        traceback.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                        self._respond(200, body, 'application/json')
+                    finally:
+                        with srv._inference_lock:
+                            srv._inference_running = False
+                    return
 
                 self._respond(200, b'ok')
 

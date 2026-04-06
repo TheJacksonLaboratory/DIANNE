@@ -10,13 +10,19 @@ from viewer.xencells import XeniumCells
 
 _JS_DIR = Path(__file__).parent / 'js'
 
+# Configurable: milliseconds of loading-bar animation per cell in the inference sample.
+# Examples: 5 000 cells → 5000 * 0.4 = 2 000 ms (2 s)
+#           20 000 cells → 20000 * 0.4 = 8 000 ms (8 s)
+INFERENCE_MS_PER_CELL = 0.1
+
 def _read_js(name):
     return (_JS_DIR / name).read_text()
 
 
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
                   xenium_mpp=1.0, category_colors=None, max_cells=2000,
-                  xenium_bundle_paths=None, matrices=None, annotations=None):
+                  xenium_bundle_paths=None, matrices=None, annotations=None,
+                  run_inference_fn=None, sample_sizes=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -40,6 +46,22 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     annotations : optional dict[sample] -> cell-id->category mapping
     category_colors : optional dict mapping category names to hex colors
     max_cells : maximum number of cells to display per tile (default 2000)
+    run_inference_fn : optional Python callable
+        If provided, a green glowing ▶ button appears in the toolbar.  When clicked
+        the viewer flushes strokes, then calls::
+
+            result = run_inference_fn(
+                strokes_by_sample=strokes_by_sample,  # dict[str, {...}]
+                active_sample=active_sample,          # str
+            )
+
+        The callable must return a dict with at least keys ``xi``, ``yi``, ``pi``
+        (equal-length iterables of image-space coords and probabilities) and may
+        include ``sample``, ``delta``, ``alpha``, ``color_low``, ``color_high``.
+    sample_sizes : optional dict[sample] -> int
+        Number of cells per sample, used to time the loading animation
+        (see ``INFERENCE_MS_PER_CELL`` in this module).  If omitted the
+        animation uses a fixed 5 000-cell estimate.
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -116,7 +138,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     server = ViewerServer(images=sample_images, chosen_sample=chosen_sample,
           host=host, port=port,
           xenium_by_sample=xenium_by_sample,
-          xenium_cells_by_sample=xenium_cells_by_sample)
+          xenium_cells_by_sample=xenium_cells_by_sample,
+          run_inference_fn=run_inference_fn,
+          sample_sizes=sample_sizes)
     server.start()
 
     server.chosen_sample = chosen_sample
@@ -205,6 +229,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const SAMPLE_META = __SAMPLE_META__;
   const SAMPLE_XENIUM_META = __SAMPLE_XENIUM_META__;
   const SAMPLE_CELLS_META = __SAMPLE_CELLS_META__;
+  const HAS_RUN_INFERENCE  = __HAS_RUN_INFERENCE__;
+  const SAMPLE_SIZES       = __SAMPLE_SIZES__;
+  const INFERENCE_MS_PER_CELL = __INFERENCE_MS_PER_CELL__;
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
@@ -365,7 +392,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     ACTIVE_SAMPLE
   );
   const draw     = createDraw(root, viewport);
-  const toolbar  = createToolbar(root, viewport, draw, BASE_URL);
+  const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
+    HAS_RUN_INFERENCE ? { onRun: runInference } : null);
 
   // per-sample stroke storage
   const strokesBySample = {};
@@ -379,6 +407,106 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   root.appendChild(predLayer);
   const predCtx = predLayer.getContext('2d');
   let predPoints = [];
+
+  // ── inference loading overlay ─────────────────────────────────────────────
+  const inferenceLoader = document.createElement('div');
+  inferenceLoader.style.cssText = [
+    'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
+    'display:none', 'align-items:center', 'justify-content:center',
+    'z-index:50', 'background:rgba(0,0,0,0.42)', 'pointer-events:all',
+  ].join(';');
+  const _loaderCircumference = 2 * Math.PI * 30;  // r=30 → ≈188.5
+  inferenceLoader.innerHTML = [
+    '<div style="display:flex;flex-direction:column;align-items:center;gap:14px;">',
+      '<svg width="88" height="88" viewBox="0 0 88 88" style="transform:rotate(-90deg)">',
+        '<circle cx="44" cy="44" r="30" fill="none" stroke="#2a2a2a" stroke-width="9"/>',
+        '<circle id="iv-loader-arc" cx="44" cy="44" r="30" fill="none"',
+               'stroke="#00ff88" stroke-width="9" stroke-linecap="round"',
+               'stroke-dasharray="' + _loaderCircumference.toFixed(2) + '"',
+               'stroke-dashoffset="' + _loaderCircumference.toFixed(2) + '"/>',
+      '</svg>',
+      '<div id="iv-loader-pct" style="color:#00ff88;font:700 20px monospace;letter-spacing:2px;">0%</div>',
+      '<div style="color:#aaa;font:12px monospace;">Training &amp; running inference…</div>',
+    '</div>',
+  ].join('');
+  root.appendChild(inferenceLoader);
+
+  let _loaderRaf = null;
+
+  function showLoader(durationMs) {
+    inferenceLoader.style.display = 'flex';
+    const arc  = inferenceLoader.querySelector('#iv-loader-arc');
+    const pct  = inferenceLoader.querySelector('#iv-loader-pct');
+    const circ = _loaderCircumference;
+    if (arc)  { arc.style.strokeDashoffset = String(circ); }
+    if (pct)  { pct.textContent = '0%'; }
+    let startTime = null;
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      const progress = Math.min((ts - startTime) / Math.max(durationMs, 1), 1);
+      if (arc)  arc.style.strokeDashoffset = String(circ * (1 - progress));
+      if (pct)  pct.textContent = Math.round(progress * 100) + '%';
+      if (progress < 1) _loaderRaf = requestAnimationFrame(step);
+    }
+    _loaderRaf = requestAnimationFrame(step);
+  }
+
+  function hideLoader() {
+    if (_loaderRaf) { cancelAnimationFrame(_loaderRaf); _loaderRaf = null; }
+    inferenceLoader.style.display = 'none';
+    const arc = inferenceLoader.querySelector('#iv-loader-arc');
+    const pct = inferenceLoader.querySelector('#iv-loader-pct');
+    if (arc) arc.style.strokeDashoffset = String(_loaderCircumference);
+    if (pct) pct.textContent = '0%';
+  }
+
+  // ── run-inference handler (hoisted via `function` declaration) ────────────
+  async function runInference(runBtn) {
+    if (!HAS_RUN_INFERENCE) return;
+    // 1. Flush current stokes to server
+    strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
+    try {
+      await fetch(BASE_URL + '/strokes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ by_sample: strokesBySample }),
+      });
+    } catch (e) {
+      log('Flush error: ' + e);
+      return;
+    }
+    // 2. Time the loading animation based on sample size
+    const nCells = (SAMPLE_SIZES && SAMPLE_SIZES[ACTIVE_SAMPLE]) ? SAMPLE_SIZES[ACTIVE_SAMPLE] : 5000;
+    const durationMs = nCells * INFERENCE_MS_PER_CELL;
+    if (runBtn) { runBtn.disabled = true; runBtn.style.opacity = '0.5'; runBtn.style.boxShadow = 'none'; }
+    showLoader(durationMs);
+    log('Running inference on ' + ACTIVE_SAMPLE + '…');
+    try {
+      const resp = await fetch(BASE_URL + '/run_inference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active_sample: ACTIVE_SAMPLE }),
+      });
+      const result = await resp.json();
+      hideLoader();
+      if (result.ok) {
+        const ov = result.overlay;
+        const points = ov.xi.map((xi, i) => ({ xi, yi: ov.yi[i], pi: ov.pi[i] }));
+        const style  = { delta: ov.style.delta, alpha: ov.style.alpha,
+                         colorLow: ov.style.colorLow, colorHigh: ov.style.colorHigh };
+        if (result.sample && result.sample !== ACTIVE_SAMPLE) setActiveSample(result.sample);
+        window.ivSetOverlayPoints(points, style);
+        log('Inference complete: ' + points.length + ' points on ' + (result.sample || ACTIVE_SAMPLE));
+      } else {
+        log('Inference error: ' + (result.error || 'unknown'));
+      }
+    } catch (err) {
+      hideLoader();
+      log('Inference request failed: ' + err);
+    } finally {
+      if (runBtn) { runBtn.disabled = false; runBtn.style.opacity = '1'; runBtn.style.boxShadow = '0 0 8px 2px rgba(0,255,136,0.65)'; }
+    }
+  }
   let predStyle = {
     alpha: 0.55,
     delta: 28,
@@ -490,6 +618,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   // Expose setActiveSample to window for external calls (e.g., set_overlay_points)
   window.setActiveSample = setActiveSample;
+  // Expose inference loader for external control if needed
+  window.ivShowLoader = showLoader;
+  window.ivHideLoader = hideLoader;
 
   syncOverlayControls();
 
@@ -837,6 +968,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   .replace('__SAMPLE_XENIUM_META__', sample_xenium_meta_json) \
   .replace('__SAMPLE_CELLS_META__', sample_cells_meta_json) \
    .replace('__META__',    meta_json) \
+   .replace('__HAS_RUN_INFERENCE__', 'true' if run_inference_fn is not None else 'false') \
+   .replace('__SAMPLE_SIZES__', json.dumps(sample_sizes or {})) \
+   .replace('__INFERENCE_MS_PER_CELL__', str(INFERENCE_MS_PER_CELL)) \
    .replace('__JS__',      js)
 
     display(HTML(html))
