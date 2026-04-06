@@ -110,6 +110,9 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions) 
   const [brushModeBtn, colorPicker, widthSlider, smoothSlider, undoBtn, clearBtn] =
     drawControls.querySelectorAll('button[data-brush-mode-btn], input, button:not([data-brush-mode-btn])');
 
+  // hide the "Clear all strokes" control but keep it in the DOM for compatibility
+  try { clearBtn.style.display = 'none'; } catch (e) {}
+
   brushModeBtn.addEventListener('click', () => {
     const next = (typeof draw.getBrushMode === 'function' && draw.getBrushMode() === 'noodle')
       ? 'line' : 'noodle';
