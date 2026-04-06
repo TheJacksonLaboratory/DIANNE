@@ -118,7 +118,10 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     layer.height = container.clientHeight;
     draw(viewport.getTransform());
   }
-  window.addEventListener('resize', resizeLayer);
+  // ResizeObserver catches CSS-driven resizes (e.g. custom fullscreen toggle).
+  // window 'resize' does not fire for those, causing the canvas to stay
+  // clipped to the original non-fullscreen dimensions.
+  new ResizeObserver(resizeLayer).observe(container);
   resizeLayer();
 
   function clearCache() {
