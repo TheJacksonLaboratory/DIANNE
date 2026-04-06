@@ -119,7 +119,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions) 
     if (typeof draw.setBrushMode === 'function') draw.setBrushMode(next);
     _syncBrushModeBtn(next);
     _syncWidthSlider(next);
-    container.style.cursor = next === 'noodle' ? 'none' : 'crosshair';
+    container.style.cursor = 'none'; // custom cursor drawn on canvas for both modes
   });
 
   // icon shows the OTHER mode (what you'd switch TO)
@@ -202,10 +202,8 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions) 
     }
     container.style.cursor =
       name === 'pan'  ? 'grab' :
-      _isDrawTool(name) ? (
-        (typeof draw.getBrushMode === 'function' && draw.getBrushMode() === 'noodle')
-          ? 'none' : 'crosshair'
-      ) : 'cell';
+      _isDrawTool(name) ? 'none' :
+      'cell';
   }
 
   setTool('pan');   // initial state

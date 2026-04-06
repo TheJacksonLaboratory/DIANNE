@@ -31,6 +31,7 @@ function createDraw(container, viewport) {
   let   noodleRadius = 500;  // disk radius for noodle mode (image px)
   let   smoothing    = 0.35; // 0=no smoothing, 1=strong smoothing
   let   brushMode    = 'line'; // 'line' | 'noodle'
+  let   strokesVisible = true;  // false = hide strokes but keep cursor
   let   cursorVpX  = -9999;
   let   cursorVpY  = -9999;
   let   cursorVisible = false;
@@ -151,7 +152,7 @@ function createDraw(container, viewport) {
   function getSmoothing()           { return smoothing; }
   function setBrushMode(m)          { brushMode = (m === 'noodle') ? 'noodle' : 'line'; }
   function getBrushMode()           { return brushMode; }
-  function setVisible(visible)      { canvas.style.display = visible ? '' : 'none'; }
+  function setVisible(visible)      { strokesVisible = visible; redraw(); }
 
   function _cloneStrokes(strokes) {
     return strokes.map(s => {
@@ -421,36 +422,60 @@ function createDraw(container, viewport) {
   // ── rendering ──────────────────────────────────────────────────────────────
   function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const s of strokesPositive) _renderStroke(s);
-    for (const s of strokesNegative) _renderStroke(s);
-    if (active)                      _renderStroke(active);
+    if (strokesVisible) {
+      for (const s of strokesPositive) _renderStroke(s);
+      for (const s of strokesNegative) _renderStroke(s);
+      if (active)                      _renderStroke(active);
+    }
     _renderCursor();
   }
 
   function _renderCursor() {
-    if (!cursorVisible || brushMode !== 'noodle') return;
-    const { scale } = viewport.getTransform();
-    const screenRadius = noodleRadius * scale;
-    const color = (mode === 'negative') ? colors.negative : colors.positive;
-    const CH = 8; // crosshair arm length in screen px (constant)
+    if (!cursorVisible) return;
     ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = lineWidth;
-    ctx.globalAlpha = 0.85;
-    // circle outline
-    if (screenRadius >= 1) {
+    ctx.strokeStyle = '#000';
+    ctx.globalAlpha = 1.0;
+
+    if (brushMode === 'noodle') {
+      // ── disk mode: circle + crosshair extending beyond the circle ──────────
+      const { scale } = viewport.getTransform();
+      const screenRadius = noodleRadius * scale;
+      const CH = Math.max(18, screenRadius + 10); // arms reach past the circle
+      const GAP = Math.max(4, Math.min(screenRadius, 6)); // gap at centre
+      ctx.lineWidth = 2.5;
+      // circle outline
+      if (screenRadius >= 1) {
+        ctx.beginPath();
+        ctx.arc(cursorVpX, cursorVpY, screenRadius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // crosshair with centre gap
       ctx.beginPath();
-      ctx.arc(cursorVpX, cursorVpY, screenRadius, 0, Math.PI * 2);
+      ctx.moveTo(cursorVpX - CH,  cursorVpY);
+      ctx.lineTo(cursorVpX - GAP, cursorVpY);
+      ctx.moveTo(cursorVpX + GAP, cursorVpY);
+      ctx.lineTo(cursorVpX + CH,  cursorVpY);
+      ctx.moveTo(cursorVpX,  cursorVpY - CH);
+      ctx.lineTo(cursorVpX,  cursorVpY - GAP);
+      ctx.moveTo(cursorVpX,  cursorVpY + GAP);
+      ctx.lineTo(cursorVpX,  cursorVpY + CH);
+      ctx.stroke();
+    } else {
+      // ── line mode: large crosshair with centre gap ──────────────────────────
+      const CH  = 20; // arm length from gap to tip
+      const GAP = 5;  // half-gap at centre
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cursorVpX - CH - GAP, cursorVpY);
+      ctx.lineTo(cursorVpX - GAP,      cursorVpY);
+      ctx.moveTo(cursorVpX + GAP,      cursorVpY);
+      ctx.lineTo(cursorVpX + CH + GAP, cursorVpY);
+      ctx.moveTo(cursorVpX,  cursorVpY - CH - GAP);
+      ctx.lineTo(cursorVpX,  cursorVpY - GAP);
+      ctx.moveTo(cursorVpX,  cursorVpY + GAP);
+      ctx.lineTo(cursorVpX,  cursorVpY + CH + GAP);
       ctx.stroke();
     }
-    // fixed-size crosshair
-    ctx.lineWidth = Math.max(1, lineWidth * 0.75);
-    ctx.beginPath();
-    ctx.moveTo(cursorVpX - CH, cursorVpY);
-    ctx.lineTo(cursorVpX + CH, cursorVpY);
-    ctx.moveTo(cursorVpX, cursorVpY - CH);
-    ctx.lineTo(cursorVpX, cursorVpY + CH);
-    ctx.stroke();
     ctx.restore();
   }
 
