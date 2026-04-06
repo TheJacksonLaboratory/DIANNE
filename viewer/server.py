@@ -298,7 +298,7 @@ class ViewerServer:
                         self._respond(200, body, 'application/json')
                         return
                     try:
-                        srv.save_fn(name)
+                        srv.save_fn(name, srv.strokes_by_sample)
                         body = json.dumps({'ok': True}).encode()
                     except Exception as exc:
                         import traceback; traceback.print_exc()
@@ -317,7 +317,7 @@ class ViewerServer:
                         self._respond(200, body, 'application/json')
                         return
                     try:
-                        srv.load_fn(name)
+                        srv.load_fn(name, srv.strokes_by_sample)
                         body = json.dumps({'ok': True}).encode()
                     except Exception as exc:
                         import traceback; traceback.print_exc()

@@ -63,15 +63,22 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         Number of cells per sample, used to time the loading animation
         (see ``INFERENCE_MS_PER_CELL`` in this module).  If omitted the
         animation uses a fixed 5 000-cell estimate.
-    save_func : optional callable(name: str)
-        Called when the user clicks Save and enters a name. Responsible for
-        persisting the classifier under that name.
-    load_func : optional callable(name: str)
-        Called when the user picks a name from the Load dialog. Responsible
-        for restoring the classifier state.
+    save_func : optional callable(name: str, strokes_by_sample: dict)
+        Called when the user clicks Save and enters a name. Receives the
+        classifier name chosen by the user and the current strokes dict
+        (same structure as ``strokes_by_sample`` returned by create_viewer).
+        Example::
+
+            save_func=lambda name, drawings: dianne.saveGUIClassifier(
+                clf, classifierPaths, name, samples,
+                None, None, None, None, None, None,
+                patchesCDFsMod, annotationsMod, drawings)
+
+    load_func : optional callable(name: str, strokes_by_sample: dict)
+        Called when the user picks a name from the Load dialog. Receives the
+        name and the current strokes dict (for optional use).
     list_names_func : optional callable() -> list[str]
-        Returns the list of saved classifier names shown in the Load picker.
-        If omitted the Load button will not appear.
+        Returns the list of saved classifier names shown in the Load picker.\n        If omitted the Load button will not appear.
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -412,8 +419,17 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
     HAS_RUN_INFERENCE ? { onRun: runInference } : null,
     (HAS_SAVE || HAS_LOAD) ? {
-      onSave: HAS_SAVE ? function(name, btn) {
+      onSave: HAS_SAVE ? async function(name, btn) {
         if (btn) { btn.disabled = true; }
+        // Flush current sample's strokes first so server has the latest drawings
+        strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
+        try {
+          await fetch(BASE_URL + '/strokes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ by_sample: strokesBySample }),
+          });
+        } catch (e) { /* non-fatal; save continues with whatever server already has */ }
         fetch(BASE_URL + '/save_classifier', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -945,11 +961,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       } catch (err) { log('Clear error: ' + err); }
     });
 
+    // Modify bottom to move clear buttons up or down "bottom:70px;height:56px"
     // create persistent footer area at the bottom of the viewer (full width)
     const shell = document.getElementById('iv-shell');
     const ivFooter = document.createElement('div');
     ivFooter.id = 'iv-footer';
-    ivFooter.style.cssText = 'position:absolute;left:0;right:0;bottom:54px;height:56px;display:flex;align-items:center;padding-left:12px;gap:8px;z-index:2147483648;pointer-events:auto;background:transparent;';
+    ivFooter.style.cssText = 'position:absolute;left:0;right:0;bottom:70px;height:56px;display:flex;align-items:center;padding-left:12px;gap:8px;z-index:2147483648;pointer-events:auto;background:transparent;';
     ivFooter.appendChild(clearAllBtn);
     ivFooter.appendChild(clearSampleBtn);
 
