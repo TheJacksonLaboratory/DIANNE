@@ -3,6 +3,23 @@ import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+import multiprocessing
+
+# Prefer the 'spawn' start method to avoid forking from non-main threads.
+# Forking from a non-main thread can leave Intel TBB in an invalid state and
+# cause Numba/TBB errors like: "Attempted to fork from a non-main thread...".
+try:
+    multiprocessing.set_start_method('spawn')
+except RuntimeError:
+    # start method already set for this process; warn if it's not 'spawn'
+    try:
+        cur = multiprocessing.get_start_method()
+    except RuntimeError:
+        cur = None
+    if cur != 'spawn':
+        print(f"Warning: multiprocessing start method is '{cur}'."
+              " Consider using 'spawn' to avoid Numba/TBB fork issues when"
+              " running inference from background threads.")
 
 
 class ViewerServer:

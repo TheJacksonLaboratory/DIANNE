@@ -2,8 +2,8 @@ from .annotation import jumpStart, runAnnotation, inspectAnnotatedPatches, loadP
 from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
 from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, inferProb, inferProbFast, inferProbPreview, showProbImg, trainClassifier
 from .utils import findMyJupyterServer, setupClassifierPaths, saveClassifier, loadClassifier, saveGUIClassifier, loadGUIClassifier
-from .utils import loadDataAndPreparePatches, loadDataAndPreparePatchesStatic, setNotebookWidth
-from .utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes
+from .utils import loadDataAndPreparePatches, loadDataAndPreparePatchesStatic, setNotebookWidth, loadSTQParams
+from .utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn
 from .interpolation import interpolate_points as interpolatePoints
 from .mask import makeProbMask, extractContoursForQuPath, viewContoursOnImage
 from .download import downloadZIPFromZenodo, downloadFromZenodo

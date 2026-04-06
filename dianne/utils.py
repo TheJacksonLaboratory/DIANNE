@@ -1,5 +1,6 @@
 
 import os
+import json
 import psutil
 import tifffile
 import numpy as np
@@ -18,6 +19,16 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.collections import PatchCollection
 from collections import defaultdict
+
+def loadSTQParams(path, F):
+    with open(path + '/grid/grid.json', 'r') as tempFile:
+        info = json.loads(tempFile.read())
+    ts = info['spot_horizontal_spacing'] # tile spacing (center-to-center tile distance) in um
+    d = info['spot_diamter'] if 'spot_diamter' in info else info['spot_diameter'] # spot diameter in um
+    mpp = d / info['spot_diameter_fullres'] # pixel size in um
+    tile_size = int(F * info['spot_diameter_fullres']) # tile size in pixels (e.g. 224 means 224x224 pixel tiles)
+    print(f'Loaded tile spacing: {ts}, tile size: {tile_size}, mpp: {mpp}.')
+    return ts, mpp, tile_size
 
 def reshape_strokes(strokes):
     result = {}
@@ -557,6 +568,50 @@ def loadGUIClassifier(classifierPaths, clfname, ext='pklz'):
     clf = data.get('clf', {})
 
     return clf
+
+
+def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp,
+              tile_size=448, patch_size=8, body_overlap=0.25, multiplier=4):
+    """Return a run_inference_fn compatible with viewer.create_viewer().
+
+    All dataset-level variables are captured once at call time; only the
+    viewer-supplied strokes and active_sample change per invocation.
+
+    Parameters
+    ----------
+    patchCoordinates : DataFrame
+    ads : dict[sample -> AnnData]
+    samples : list[str]
+    qs : quantiles array
+    ts : float  tile spacing in µm
+    mpp : float microns per pixel
+    tile_size : int   tile size in image pixels
+    patch_size : int  patch side length in tiles
+    body_overlap : float
+    multiplier : int  interpolation multiplier for the heatmap
+
+    Returns
+    -------
+    Callable suitable for ``run_inference_fn=`` in ``viewer.create_viewer()``.
+    """
+    from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
+    from .stqutils import inferProbFast
+    from .interpolation import interpolate_points as interpolatePoints
+
+    def _runfn(*, strokes_by_sample, active_sample):
+        clf, _, _ = getClassifierForFromStrokes(
+            strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size,
+            ads, samples, qs, augFunc=PCMA, alpha=0.8, seed=0)
+        if clf is None:
+            return
+        x, y, p = inferProbFast(ads[active_sample], clf, qs,
+                                 tsize=ts / mpp, R=2, erode=False, n_jobs=16, verbose=False)
+        xi, yi, pi = interpolatePoints(x, y, p, multiplier=multiplier)
+        return dict(sample=active_sample, xi=xi, yi=yi, pi=pi,
+                    delta=tile_size / multiplier, alpha=0.3,
+                    color_low='#FFA500', color_high='#0000FF')
+
+    return _runfn
 
 def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0.25, N=4):
 

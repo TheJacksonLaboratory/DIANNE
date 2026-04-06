@@ -435,7 +435,7 @@ function createDraw(container, viewport) {
   function _renderCursor() {
     if (!cursorVisible) return;
     ctx.save();
-    ctx.strokeStyle = '#000';
+    ctx.strokeStyle = '#00ff40';
     ctx.globalAlpha = 1.0;
 
     if (brushMode === 'noodle') {
