@@ -48,7 +48,9 @@ function createDraw(container, viewport) {
     canvas.height = container.clientHeight;
     redraw();
   }
-  window.addEventListener('resize', resizeCanvas);
+  // ResizeObserver catches CSS-driven resizes (e.g. custom fullscreen toggle)
+  // as well as ordinary window resizes — both trigger canvas relayout.
+  new ResizeObserver(resizeCanvas).observe(container);
   resizeCanvas();
 
   // ── viewport change → redraw ───────────────────────────────────────────────
