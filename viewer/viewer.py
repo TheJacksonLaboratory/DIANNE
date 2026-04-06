@@ -22,7 +22,8 @@ def _read_js(name):
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
                   xenium_mpp=1.0, category_colors=None, max_cells=2000,
                   xenium_bundle_paths=None, matrices=None, annotations=None,
-                  run_inference_fn=None, sample_sizes=None):
+                  run_inference_fn=None, sample_sizes=None,
+                  save_func=None, load_func=None, list_names_func=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -62,6 +63,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         Number of cells per sample, used to time the loading animation
         (see ``INFERENCE_MS_PER_CELL`` in this module).  If omitted the
         animation uses a fixed 5 000-cell estimate.
+    save_func : optional callable(name: str)
+        Called when the user clicks Save and enters a name. Responsible for
+        persisting the classifier under that name.
+    load_func : optional callable(name: str)
+        Called when the user picks a name from the Load dialog. Responsible
+        for restoring the classifier state.
+    list_names_func : optional callable() -> list[str]
+        Returns the list of saved classifier names shown in the Load picker.
+        If omitted the Load button will not appear.
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -140,7 +150,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           xenium_by_sample=xenium_by_sample,
           xenium_cells_by_sample=xenium_cells_by_sample,
           run_inference_fn=run_inference_fn,
-          sample_sizes=sample_sizes)
+          sample_sizes=sample_sizes,
+          save_fn=save_func,
+          load_fn=load_func,
+          list_names_fn=list_names_func)
     server.start()
 
     server.chosen_sample = chosen_sample
@@ -163,6 +176,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         'cells.js',
         'draw.js',
         'toolbar.js',
+        'demo.js',
     ])
 
     html = """
@@ -230,6 +244,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const SAMPLE_XENIUM_META = __SAMPLE_XENIUM_META__;
   const SAMPLE_CELLS_META = __SAMPLE_CELLS_META__;
   const HAS_RUN_INFERENCE  = __HAS_RUN_INFERENCE__;
+  const HAS_SAVE           = __HAS_SAVE__;
+  const HAS_LOAD           = __HAS_LOAD__;
   const SAMPLE_SIZES       = __SAMPLE_SIZES__;
   const INFERENCE_MS_PER_CELL = __INFERENCE_MS_PER_CELL__;
   let ACTIVE_SAMPLE = SAMPLES[0];
@@ -291,6 +307,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       'font:12px monospace','padding:6px 8px','border-radius:6px','border:1px solid #333',
       'background:#262626','color:#e6e6e6','cursor:pointer','display:flex','gap:6px','align-items:center'
     ].join(';');
+    fsBtn.dataset.demoId = 'fs-btn';
     fsBtn.innerHTML = '<span style="font-size:12px">⛶</span>';
 
     let prev = null;
@@ -393,7 +410,37 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   );
   const draw     = createDraw(root, viewport);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
-    HAS_RUN_INFERENCE ? { onRun: runInference } : null);
+    HAS_RUN_INFERENCE ? { onRun: runInference } : null,
+    (HAS_SAVE || HAS_LOAD) ? {
+      onSave: HAS_SAVE ? function(name, btn) {
+        if (btn) { btn.disabled = true; }
+        fetch(BASE_URL + '/save_classifier', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        }).then(r => r.json()).then(res => {
+          log(res.ok ? ('Saved classifier: ' + name) : ('Save error: ' + (res.error || 'unknown')));
+        }).catch(err => log('Save error: ' + err))
+          .finally(() => { if (btn) btn.disabled = false; });
+      } : null,
+      onLoad: HAS_LOAD ? function(name, btn) {
+        if (btn) { btn.disabled = true; }
+        fetch(BASE_URL + '/load_classifier', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        }).then(r => r.json()).then(res => {
+          log(res.ok ? ('Loaded classifier: ' + name) : ('Load error: ' + (res.error || 'unknown')));
+        }).catch(err => log('Load error: ' + err))
+          .finally(() => { if (btn) btn.disabled = false; });
+      } : null,
+      listNames: HAS_LOAD ? function() {
+        return fetch(BASE_URL + '/classifier_names')
+          .then(r => r.json())
+          .catch(() => []);
+      } : null,
+    } : null
+  );
 
   // per-sample stroke storage
   const strokesBySample = {};
@@ -854,6 +901,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     };
 
     const clearAllBtn = makeSmallBtn('Clear all annotations', '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/><path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/></svg> <span style="font-size:11px">Clear all</span>');
+    clearAllBtn.dataset.demoId = 'clear-all-btn';
     clearAllBtn.addEventListener('click', async () => {
       const ok = await modalHelpers.showConfirm('Clear all annotations for all samples? This cannot be undone.');
       if (!ok) return;
@@ -877,6 +925,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     });
 
     const clearSampleBtn = makeSmallBtn('Clear annotations for sample', '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/><path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/></svg> <span style="font-size:11px">Clear sample</span>');
+    clearSampleBtn.dataset.demoId = 'clear-sample-btn';
     clearSampleBtn.addEventListener('click', async () => {
       const ok = await modalHelpers.showConfirm('Clear annotations for sample ' + ACTIVE_SAMPLE + '?');
       if (!ok) return;
@@ -903,7 +952,82 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     ivFooter.style.cssText = 'position:absolute;left:0;right:0;bottom:54px;height:56px;display:flex;align-items:center;padding-left:12px;gap:8px;z-index:2147483648;pointer-events:auto;background:transparent;';
     ivFooter.appendChild(clearAllBtn);
     ivFooter.appendChild(clearSampleBtn);
+
+    // ── About button ──────────────────────────────────────────────────────────
+    const aboutBtn = makeSmallBtn('About DIANNE', '<span style="font-size:11px">ⓘ About</span>');
+    aboutBtn.dataset.demoId = 'about-btn';
+    aboutBtn.addEventListener('click', () => _showAbout());
+    ivFooter.appendChild(aboutBtn);
+
+    // ── Demo button ───────────────────────────────────────────────────────────
+    const demoBtn = makeSmallBtn('Interactive tour of the UI', '<span style="font-size:11px">▷ Demo</span>');
+    demoBtn.addEventListener('click', () => {
+      if (window.__ivDemo && typeof window.__ivDemo.start === 'function') window.__ivDemo.start();
+    });
+    ivFooter.appendChild(demoBtn);
+
     shell.appendChild(ivFooter);
+
+    // ── About modal ───────────────────────────────────────────────────────────
+    function _showAbout() {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = [
+        'position:fixed','left:0','top:0','width:100%','height:100%',
+        'display:flex','align-items:center','justify-content:center',
+        'z-index:2147483649','background:rgba(0,0,0,0.55)',
+      ].join(';');
+
+      const box = document.createElement('div');
+      box.style.cssText = [
+        'min-width:320px','max-width:540px','background:#1b1b1b','color:#ddd',
+        'border-radius:10px','border:1px solid #3a3a3a',
+        'box-shadow:0 8px 32px rgba(0,0,0,0.8)',
+        'padding:24px 28px','font:13px/1.6 monospace',
+      ].join(';');
+
+      box.innerHTML = [
+        '<div style="font-size:20px;font-weight:700;color:#53d9ff;margin-bottom:4px;">DIANNE</div>',
+        '<div style="color:#888;font-size:11px;margin-bottom:14px;letter-spacing:1px;">',
+        '  GUI OF DIFFERENTIAL IMAGE ANNOTATOR ENVIRONMENT',
+        '</div>',
+        '<div style="margin-bottom:12px;">',
+        '  Histology image annotation and classifier training in',
+        '  Jupyter Notebook. Draw positive and negative contours on H&amp;E, optionally using Xenium transcript and cell overlays,',
+        '  then train a classifier and visualise predictions — all without leaving the notebook.',
+        '  images, train a tile-level classifier, and visualise probability',
+        '  heatmaps.',
+        '</div>',
+        '<div style="border-top:1px solid #2e2e2e;padding-top:12px;margin-bottom:16px;color:#aaa;font-size:11px;">',
+        '  Components: viewport &bull; tile pyramid &bull; draw overlay &bull;',
+        '  Xenium transcripts &amp; cells &bull; inference pipeline',
+        '</div>',
+        '<div style="font-size:12px;color:#ccc;">',
+        '  &copy; 2024&ndash;2026 <strong style="color:#eee;">The Jackson Laboratory</strong>',
+        '  &nbsp;&mdash;&nbsp; All rights reserved.',
+        '</div>',
+        '<div style="display:flex;justify-content:flex-end;margin-top:18px;">',
+        '  <button data-about-close',
+        '    style="padding:6px 18px;border-radius:6px;border:none;',
+        '           background:#1f8cff;color:#fff;cursor:pointer;font:13px monospace;">',
+        '    Close',
+        '  </button>',
+        '</div>',
+      ].join('');
+
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+
+      function _close() {
+        overlay.remove();
+        document.removeEventListener('keydown', _onKey);
+      }
+      function _onKey(e) {
+        if (e.key === 'Escape' || e.key === 'Esc') _close();
+      }
+      box.querySelector('[data-about-close]').addEventListener('click', _close);
+      overlay.addEventListener('click', e => { if (e.target === overlay) _close(); });
+      document.addEventListener('keydown', _onKey);
+    }
   })();
 
   // removed duplicate main-area footer; using persistent bottom `iv-footer` instead
@@ -958,6 +1082,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   });
 
   log('Ready: ' + ACTIVE_SAMPLE);
+
+  // ── guided demo ───────────────────────────────────────────────────────────
+  window.__ivDemo = createDemo();
 })();
 </script>
 """.replace('__WIDTH__',   width) \
@@ -969,6 +1096,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   .replace('__SAMPLE_CELLS_META__', sample_cells_meta_json) \
    .replace('__META__',    meta_json) \
    .replace('__HAS_RUN_INFERENCE__', 'true' if run_inference_fn is not None else 'false') \
+   .replace('__HAS_SAVE__', 'true' if save_func is not None else 'false') \
+   .replace('__HAS_LOAD__', 'true' if (load_func is not None and list_names_func is not None) else 'false') \
    .replace('__SAMPLE_SIZES__', json.dumps(sample_sizes or {})) \
    .replace('__INFERENCE_MS_PER_CELL__', str(INFERENCE_MS_PER_CELL)) \
    .replace('__JS__',      js)

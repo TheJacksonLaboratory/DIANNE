@@ -20,7 +20,8 @@ class ViewerServer:
 
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
                  xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
-                 run_inference_fn=None, sample_sizes=None):
+                 run_inference_fn=None, sample_sizes=None,
+                 save_fn=None, load_fn=None, list_names_fn=None):
         if images is None:
             if image is None:
                 raise ValueError('ViewerServer requires image or images')
@@ -63,6 +64,9 @@ class ViewerServer:
         self.sample_sizes = dict(sample_sizes) if sample_sizes else {}
         self._inference_lock = threading.Lock()
         self._inference_running = False
+        self.save_fn       = save_fn
+        self.load_fn       = load_fn
+        self.list_names_fn = list_names_fn
 
         self.clicks  = []
         self.strokes_by_sample = {
@@ -207,6 +211,17 @@ class ViewerServer:
                             self._respond(200, body, 'application/json')
                         except Exception as e:
                             self._respond(400, str(e).encode())
+                elif parsed.path == '/classifier_names':
+                    if srv.list_names_fn is None:
+                        body = json.dumps([]).encode()
+                    else:
+                        try:
+                            names = list(srv.list_names_fn())
+                            body  = json.dumps(names).encode()
+                        except Exception as exc:
+                            body = json.dumps({'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+
                 else:
                     self._respond(404)
 
@@ -271,6 +286,44 @@ class ViewerServer:
                     except KeyError:
                         self._respond(404, b'unknown sample')
                         return
+
+                elif parsed.path == '/save_classifier':
+                    name = data.get('name', '').strip() if isinstance(data, dict) else ''
+                    if not name:
+                        body = json.dumps({'ok': False, 'error': 'missing name'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    if srv.save_fn is None:
+                        body = json.dumps({'ok': False, 'error': 'save not configured'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        srv.save_fn(name)
+                        body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        import traceback; traceback.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/load_classifier':
+                    name = data.get('name', '').strip() if isinstance(data, dict) else ''
+                    if not name:
+                        body = json.dumps({'ok': False, 'error': 'missing name'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    if srv.load_fn is None:
+                        body = json.dumps({'ok': False, 'error': 'load not configured'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        srv.load_fn(name)
+                        body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        import traceback; traceback.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
 
                 elif parsed.path == '/run_inference':
                     if srv.run_inference_fn is None:
