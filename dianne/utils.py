@@ -17,15 +17,36 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.collections import PatchCollection
+from collections import defaultdict
 
-def getTilesInContour(contour, df_grid, tile_size=224, body_overlap=0.25, debug=False, patch_size=8):
+def reshape_strokes(strokes):
+    result = {}
+    
+    for c in ['positive', 'negative']:
+        grouped = defaultdict(list)   # group_id -> [points1, points2, ...]
+        ungrouped = []                # each becomes a single-element list
+        
+        for d in strokes[f'strokes_{c}']:
+            points = d['points']
+            if 'group_id' in d:
+                grouped[d['group_id']].append(np.array([[p['x'], p['y']] for p in points]))
+            else:
+                ungrouped.append([np.array([[p['x'], p['y']] for p in points])])  # wrap in list -> [[points]]
+        
+        # Combine: ungrouped entries + grouped entries (each as [p1, p2, ...])
+        result[c] = ungrouped + list(grouped.values())
+    
+    return result
+
+def getTilesInContour(contours, df_grid, tile_size=224, body_overlap=0.25, debug=False, patch_size=8):
     """Get a dict mapping patch index to a list of tile_ids from df_grid whose corresponding
     tiles overlap with the contour by at least body_overlap fraction.
     Tiles are grouped into spatially contiguous patches of patch_size**2 tiles arranged in a
     patch_size x patch_size grid. Only complete patches (all patch_size**2 tiles present) are returned.
 
     Parameters:
-    contour:      Nx2 array of (x, y) points defining the contour polygon.
+    contours:     List of Nx2 arrays of (x, y) points. First contour is the outer boundary;
+                  subsequent contours are holes (Swiss-cheese style, even-odd fill rule).
     df_grid:      DataFrame with columns 'x' and 'y' for tile center coordinates, indexed by tile_id.
     tile_size:    Size of the square tile in pixels (default 224).
     body_overlap: Minimum fraction of tile area covered by contour to include a tile (default 0.25).
@@ -37,13 +58,15 @@ def getTilesInContour(contour, df_grid, tile_size=224, body_overlap=0.25, debug=
           Returns {} on failure.
     """
     try:
-        c = np.asarray(contour, dtype=int)
-        (x_min, y_min), (x_max, y_max) = c.min(axis=0), c.max(axis=0)
-        mask = np.zeros((y_max - y_min, x_max - x_min), dtype=np.uint8)
-        cv2.fillPoly(mask, [c - [x_min, y_min]], 1)
+        cs = [np.asarray(c, dtype=np.int32) for c in (contours if isinstance(contours, list) else [contours])]
+        all_pts = np.concatenate(cs)
+        (x_min, y_min), (x_max, y_max) = all_pts.min(axis=0), all_pts.max(axis=0)
 
-        # Summed area table — O(1) rectangle sum queries
-        integral = cv2.integral(mask)  # shape: (H+1, W+1)
+        mask = np.zeros((y_max - y_min, x_max - x_min), dtype=np.uint8)
+        for i, c in enumerate(cs):
+            cv2.fillPoly(mask, [c - [x_min, y_min]], color=(i % 2) ^ 1)  # even-odd: fill then punch holes
+
+        integral = cv2.integral(mask)
         half = tile_size // 2
 
         df_sel = df_grid[
@@ -52,60 +75,53 @@ def getTilesInContour(contour, df_grid, tile_size=224, body_overlap=0.25, debug=
         ]
         xs, ys = df_sel['x'].values, df_sel['y'].values
 
-        # Clamped corners in integral image coords (integral is 1-indexed)
         cx0 = np.clip(xs - half - x_min, 0, mask.shape[1])
         cx1 = np.clip(xs + half - x_min, 0, mask.shape[1])
         cy0 = np.clip(ys - half - y_min, 0, mask.shape[0])
         cy1 = np.clip(ys + half - y_min, 0, mask.shape[0])
         valid = (cx1 > cx0) & (cy1 > cy0)
 
-        # Vectorized rectangle sums via integral image
         sums = integral[cy1, cx1] - integral[cy0, cx1] - integral[cy1, cx0] + integral[cy0, cx0]
-        threshold = body_overlap * tile_size ** 2
-        mask_hits = valid & (sums > threshold)
+        mask_hits = valid & (sums > body_overlap * tile_size ** 2)
 
         df_hits = df_sel[mask_hits].copy()
         if df_hits.empty:
             return {}
 
-        # --- Adaptive spatial binning ---
         T = patch_size ** 2
         xs_h, ys_h = df_hits['x'].values, df_hits['y'].values
         span_x = max(xs_h.max() - xs_h.min() + tile_size, tile_size)
         span_y = max(ys_h.max() - ys_h.min() + tile_size, tile_size)
         n = max(1, round(len(df_hits) / T))
         asp = span_x / span_y
-        ncols, nrows = max(1, round((n * asp) ** 0.5)), max(1, round(n / max(1, round((n * asp) ** 0.5))))
+        ncols = max(1, round((n * asp) ** 0.5))
+        nrows = max(1, round(n / ncols))
 
-        df_hits = df_hits.copy()
         df_hits['_r'] = np.clip(((ys_h - ys_h.min()) / span_y * nrows).astype(int), 0, nrows - 1)
         df_hits['_c'] = np.clip(((xs_h - xs_h.min()) / span_x * ncols).astype(int), 0, ncols - 1)
 
         cells = {k: g.sort_values(['y','x']).index.tolist()
                  for k, g in df_hits.groupby(['_r','_c'])}
 
-        # Merge cells below T into an adjacent neighbor (4-connected, fallback 8-connected)
         def adjacent(k, cells, diag=False):
             r, c = k
-            nb4 = [(r-1,c),(r+1,c),(r,c-1),(r,c+1)]
-            nb8 = [(r-1,c-1),(r-1,c+1),(r+1,c-1),(r+1,c+1)]
-            cands = [n for n in (nb4 + (nb8 if diag else [])) if n in cells and n != k]
-            return min(cands, key=lambda n: len(cells[n]), default=None)
+            cands = [(r-1,c),(r+1,c),(r,c-1),(r,c+1)] + ([(r-1,c-1),(r-1,c+1),(r+1,c-1),(r+1,c+1)] if diag else [])
+            return min((n for n in cands if n in cells and n != k), key=lambda n: len(cells[n]), default=None)
 
         while True:
             small = [k for k, v in cells.items() if len(v) < T]
             if not small: break
-            if len(small) == len(cells):  # all small — pool all
+            if len(small) == len(cells):
                 cells = {(0,0): [t for v in cells.values() for t in v]}; break
             merged_any = False
             for sk in sorted(small, key=lambda k: len(cells[k])):
                 if sk not in cells: continue
                 best = adjacent(sk, cells) or adjacent(sk, cells, diag=True)
-                if best is None: continue  # isolated — will be caught next iteration
+                if best is None: continue
                 cells[best].extend(cells.pop(sk)); merged_any = True
-            if not merged_any: break  # no progress possible
+            if not merged_any: break
 
-        return {i: df_hits.loc[ids,['x','y']].sort_values(['y','x']).index.tolist()
+        return {i: df_hits.loc[ids, ['x','y']].sort_values(['y','x']).index.tolist()
                 for i, (_, ids) in enumerate(sorted(cells.items()))}
 
     except Exception as e:
@@ -128,22 +144,24 @@ def preparePatchesFromStrokes(strokes, df_grid, tile_size=224, body_overlap=0.25
         dict: Dictionary containing patches for positive and negative strokes.
     """
 
-    contours = {'positive': {}, 'negative': {}}
-    for s in strokes['strokes_negative']:
-        contours['negative'][s['id']] = np.array([[p['x'], p['y']] for p in s['points']])
-    for s in strokes['strokes_positive']:
-        contours['positive'][s['id']] = np.array([[p['x'], p['y']] for p in s['points']])
-    len(contours), contours['positive'].keys()
+    if debug:
+        for c in ['positive', 'negative']:
+            for d in strokes[f'strokes_{c}']:
+                print(f"Class: {c}, annotation ID: {d['group_id'] if 'group_id' in d.keys() else 'NA'}, contour ID: {d['id']}, number of points: {len(d['points'])}")
+
+    contours = reshape_strokes(strokes)
 
     data = {}
     for cl in ['positive', 'negative']:
         data[cl] = {}
-        for contour_id in contours[cl].keys():
-            contour = contours[cl][contour_id]
-            indices = getTilesInContour(contour, df_grid, tile_size, body_overlap, patch_size=patch_size, debug=debug)
+        for i, c in enumerate(contours[cl]):
+            # Pass a list of 1 or more contours
             if debug:
-                print(f"Number of patches in {cl} contour {contour_id}: {len(indices)}")
-            data[cl].update({f"A{contour_id}-P{patch_idx}": tile_ids for patch_idx, tile_ids in indices.items()})
+                print(len(c), "contours in this annotation")
+            indices = getTilesInContour(c, df_grid, tile_size, body_overlap, patch_size=patch_size, debug=debug)
+            if debug:
+                print(f"Number of patches in {cl} contour {i}: {len(indices)}")
+            data[cl].update({f"A-{cl[0]}-{i}-P{patch_idx}": tile_ids for patch_idx, tile_ids in indices.items()})
 
     return data
 
