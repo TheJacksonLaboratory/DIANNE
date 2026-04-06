@@ -144,16 +144,17 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     html = """
 <div id="iv-shell" style="
   width: __WIDTH__;
+  height: __HEIGHT__;
   display: flex;
   align-items: stretch;
-  gap: 10px;
+  gap: 0px;
   position: relative; /* anchor absolute footer controls */
 ">
   <div id="iv-samples" style="
     width: 10%;
     min-width: 170px;
     max-width: 260px;
-    height: calc(__HEIGHT__ - 16px);
+    height: calc(100% - 58px);
     overflow-y: auto;
     background: #161616;
     border: 1px solid #3a3a3a;
@@ -169,11 +170,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     width: 90%;
     min-width: 0;
     position: relative; /* allow absolute footer controls */
+    display: flex; flex-direction: column; /* keep status bar at bottom */
   ">
 <div id="iv-root" style="
   position: relative;
   width: 100%;
-  height: __HEIGHT__;
+  flex: 1 1 auto;
+  height: auto;
   overflow: hidden;
   background: #111;
   border: 1px solid #444;
@@ -187,7 +190,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   border: 1px solid #444;
   border-top: none;
   border-radius: 0 0 6px 6px;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 ">initializing…</div>
   </div>
 </div>
@@ -206,6 +209,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
   function log(msg) { status.textContent = msg; }
+
+  // reserve space at the bottom so persistent footers don't overlap content
+  try {
+    samplesRibbon.style.paddingBottom = '56px';
+    document.getElementById('iv-main').style.paddingBottom = '56px';
+  } catch (e) {}
 
   // tile layer
   const tileLayer = document.createElement('div');
@@ -241,6 +250,84 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     '<input id="iv-high" type="color" value="#0000FF" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
   ].join('');
   root.appendChild(overlayControls);
+
+  // Fullscreen toggle button (expands iv-shell to fill the browser viewport)
+  (function addFullscreenToggle() {
+    const shell = document.getElementById('iv-shell');
+    const samplesEl = document.getElementById('iv-samples');
+    const rootEl = document.getElementById('iv-root');
+    const ivMain = document.getElementById('iv-main');
+    const fsBtn = document.createElement('button');
+    fsBtn.type = 'button';
+    fsBtn.title = 'Toggle fullscreen';
+    fsBtn.style.cssText = [
+      'font:12px monospace','padding:6px 8px','border-radius:6px','border:1px solid #333',
+      'background:#262626','color:#e6e6e6','cursor:pointer','display:flex','gap:6px','align-items:center'
+    ].join(';');
+    fsBtn.innerHTML = '<span style="font-size:12px">⛶</span>';
+
+    let prev = null;
+    function enterFs() {
+      prev = {
+        shellStyle: shell.getAttribute('style') || '',
+        samplesStyle: samplesEl.getAttribute('style') || '',
+        rootStyle: rootEl.getAttribute('style') || '',
+        ivMainStyle: ivMain.getAttribute('style') || '',
+        bodyOverflow: document.body.style.overflow || '',
+      };
+      shell.style.position = 'fixed';
+      shell.style.left = '0';
+      shell.style.top = '0';
+      shell.style.width = '100vw';
+      shell.style.height = '100vh';
+      shell.style.zIndex = '2147483647';
+      document.body.style.overflow = 'hidden';
+      // set heights and padding so status bar and bottom buttons remain visible
+      samplesEl.style.height = 'calc(100vh - 60px)';
+      rootEl.style.height = 'calc(100vh - 56px)';
+      samplesEl.style.paddingBottom = '56px';
+      ivMain.style.paddingBottom = '56px';
+      fsBtn.innerHTML = '<span style="font-size:12px">⤫</span>';
+      resizePredLayer();
+      // Esc key exits fullscreen
+      document.addEventListener('keydown', onFsKeyDown);
+    }
+
+    function exitFs() {
+      if (!prev) return;
+      shell.setAttribute('style', prev.shellStyle);
+      samplesEl.setAttribute('style', prev.samplesStyle);
+      rootEl.setAttribute('style', prev.rootStyle);
+      ivMain.setAttribute('style', prev.ivMainStyle);
+      document.body.style.overflow = prev.bodyOverflow;
+      prev = null;
+      fsBtn.innerHTML = '<span style="font-size:12px">⛶</span>';
+      resizePredLayer();
+      document.removeEventListener('keydown', onFsKeyDown);
+    }
+
+    let active = false;
+    fsBtn.addEventListener('click', () => {
+      active = !active;
+      if (active) enterFs(); else exitFs();
+    });
+
+    function onFsKeyDown(e) {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        // if a modal is open, cancel it first
+        if (window.__iv_modal_visible && typeof window.__iv_modal_cancel === 'function') {
+          window.__iv_modal_cancel();
+          return;
+        }
+        if (active) {
+          active = false;
+          exitFs();
+        }
+      }
+    }
+
+    overlayControls.appendChild(fsBtn);
+  })();
 
   // boot
   __JS__
@@ -536,7 +623,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     const modalOverlay = document.createElement('div');
     modalOverlay.style.cssText = [
       'position:fixed','left:0','top:0','width:100%','height:100%','display:none',
-      'align-items:center','justify-content:center','z-index:1000','background:rgba(0,0,0,0.4)'
+      'align-items:center','justify-content:center','z-index:2147483650','background:rgba(0,0,0,0.4)'
     ].join(';');
 
     const modal = document.createElement('div');
@@ -572,19 +659,44 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     modalOverlay.appendChild(modal);
     document.body.appendChild(modalOverlay);
 
+    let currentClean = null;
+    let currentResolve = null;
+
+    // expose modal visibility and cancel helper on window so global handlers can use them
+    window.__iv_modal_visible = false;
+    window.__iv_modal_cancel = () => {
+      if (currentClean && currentResolve) {
+        currentClean();
+        modalOverlay.style.display = 'none';
+        currentResolve(false);
+        currentClean = null;
+        currentResolve = null;
+        window.__iv_modal_visible = false;
+      }
+    };
+
     function showConfirm(message) {
       return new Promise(resolve => {
         msgEl.textContent = message;
         modalOverlay.style.display = 'flex';
         okBtn.focus();
+        window.__iv_modal_visible = true;
+
         const clean = () => {
           okBtn.removeEventListener('click', onOk);
           cancelBtn.removeEventListener('click', onCancel);
+          document.removeEventListener('keydown', onKey);
         };
-        const onOk = () => { clean(); modalOverlay.style.display = 'none'; resolve(true); };
-        const onCancel = () => { clean(); modalOverlay.style.display = 'none'; resolve(false); };
+        const onOk = () => { clean(); modalOverlay.style.display = 'none'; window.__iv_modal_visible = false; resolve(true); };
+        const onCancel = () => { clean(); modalOverlay.style.display = 'none'; window.__iv_modal_visible = false; resolve(false); };
+        const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Esc') { onCancel(); } };
+
+        currentClean = clean;
+        currentResolve = resolve;
+
         okBtn.addEventListener('click', onOk);
         cancelBtn.addEventListener('click', onCancel);
+        document.addEventListener('keydown', onKey);
       });
     }
 
@@ -593,115 +705,74 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   const modalHelpers = createModalHelpers();
 
-  (function addSamplesFooter() {
-    const shell = document.getElementById('iv-shell');
-    const footer = document.createElement('div');
-    footer.style.cssText = 'position:absolute;left:8px;bottom:8px;display:flex;gap:6px;z-index:120;';
-
-    const makeButton = (title, labelHtml) => {
+  // Add clear buttons into the overlay controls (top-right) to avoid overlap
+  (function addClearButtonsToOverlay() {
+    const makeSmallBtn = (title, innerHtml) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.title = title;
       b.style.cssText = [
-        'font:12px monospace','padding:6px 8px','border-radius:6px','border:1px solid #333',
-        'background:#262626','color:#e6e6e6','cursor:pointer','display:flex','gap:6px','align-items:center'
+        'font:12px monospace','padding:4px 6px','border-radius:6px','border:1px solid #333',
+        'background:rgba(38,38,38,0.9)','color:#e6e6e6','cursor:pointer','display:flex','gap:6px','align-items:center'
       ].join(';');
-      b.innerHTML = labelHtml;
+      b.innerHTML = innerHtml;
       return b;
     };
 
-    const eraserSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
-      + '<path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/>'
-      + '<path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/>'
-      + '</svg>';
-
-    const clearAllBtn = makeButton('Clear all annotations', eraserSvg + '<span style="font-size:11px">Clear all annotations</span>');
+    const clearAllBtn = makeSmallBtn('Clear all annotations', '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/><path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/></svg> <span style="font-size:11px">Clear all</span>');
     clearAllBtn.addEventListener('click', async () => {
       const ok = await modalHelpers.showConfirm('Clear all annotations for all samples? This cannot be undone.');
       if (!ok) return;
       log('Clearing all annotations...');
+      // Clear JS state and renderer immediately
       try {
-        // clear clicks
-        await fetch(BASE_URL + '/click', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify([]),
-        });
-
-        // clear strokes for every sample
-        const bySample = {};
-        for (const s of SAMPLES) {
-          bySample[s] = { strokes_positive: [], strokes_negative: [] };
-        }
-        await fetch(BASE_URL + '/strokes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ by_sample: bySample }),
-        });
-
-        // update client-side state
-        for (const s of SAMPLES) {
-          strokesBySample[s] = { strokes_positive: [], strokes_negative: [] };
-        }
+        for (const s of SAMPLES) strokesBySample[s] = { strokes_positive: [], strokes_negative: [] };
         draw.setStrokes([], []);
+        if (typeof draw.clear === 'function') draw.clear();
+        predPoints = [];
+        drawPredLayer();
+
+        // Persist cleared state to server
+        await fetch(BASE_URL + '/click', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([]) });
+        const bySample = {};
+        for (const s of SAMPLES) bySample[s] = { strokes_positive: [], strokes_negative: [] };
+        await fetch(BASE_URL + '/strokes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by_sample: bySample }) });
+
         log('All annotations cleared');
-      } catch (err) {
-        log('Clear error: ' + err);
-      }
+      } catch (err) { log('Clear error: ' + err); }
     });
 
-    footer.appendChild(clearAllBtn);
-    shell.appendChild(footer);
-  })();
-
-  // Add main-area footer controls (bottom-left of iv-main)
-  (function addMainFooter() {
-    const mainContainer = document.getElementById('iv-main');
-    const footer = document.createElement('div');
-    footer.style.cssText = 'position:absolute;left:12px;bottom:38px;display:flex;gap:6px;z-index:120;';
-
-    const makeButton = (title, labelHtml) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.title = title;
-      b.style.cssText = [
-        'font:12px monospace','padding:6px 8px','border-radius:6px','border:1px solid #333',
-        'background:#262626','color:#e6e6e6','cursor:pointer','display:flex','gap:6px','align-items:center'
-      ].join(';');
-      b.innerHTML = labelHtml;
-      return b;
-    };
-
-    const eraserSvgSmall = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">'
-      + '<path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/>'
-      + '<path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/>'
-      + '</svg>';
-
-    const clearSampleBtn = makeButton('Clear annotations for sample', eraserSvgSmall + '<span style="font-size:11px">Clear sample</span>');
+    const clearSampleBtn = makeSmallBtn('Clear annotations for sample', '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/><path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/></svg> <span style="font-size:11px">Clear sample</span>');
     clearSampleBtn.addEventListener('click', async () => {
+      const ok = await modalHelpers.showConfirm('Clear annotations for sample ' + ACTIVE_SAMPLE + '?');
+      if (!ok) return;
       log('Clearing annotations for sample ' + ACTIVE_SAMPLE + '...');
       try {
-        // Legacy single-sample payload clears current chosen sample
-        await fetch(BASE_URL + '/strokes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ strokes_positive: [], strokes_negative: [] }),
-        });
-
-        // update client-side state
-        if (strokesBySample[ACTIVE_SAMPLE]) {
-          strokesBySample[ACTIVE_SAMPLE] = { strokes_positive: [], strokes_negative: [] };
-        }
+        // Clear JS state and renderer immediately for the active sample
+        if (strokesBySample[ACTIVE_SAMPLE]) strokesBySample[ACTIVE_SAMPLE] = { strokes_positive: [], strokes_negative: [] };
         draw.setStrokes([], []);
+        if (typeof draw.clear === 'function') draw.clear();
+        predPoints = [];
+        drawPredLayer();
+
+        // Persist cleared state to server
+        await fetch(BASE_URL + '/strokes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strokes_positive: [], strokes_negative: [] }) });
+
         log('Annotations cleared for ' + ACTIVE_SAMPLE);
-      } catch (err) {
-        log('Clear error: ' + err);
-      }
+      } catch (err) { log('Clear error: ' + err); }
     });
 
-    footer.appendChild(clearSampleBtn);
-    mainContainer.appendChild(footer);
+    // create persistent footer area at the bottom of the viewer (full width)
+    const shell = document.getElementById('iv-shell');
+    const ivFooter = document.createElement('div');
+    ivFooter.id = 'iv-footer';
+    ivFooter.style.cssText = 'position:absolute;left:0;right:0;bottom:54px;height:56px;display:flex;align-items:center;padding-left:12px;gap:8px;z-index:2147483648;pointer-events:auto;background:transparent;';
+    ivFooter.appendChild(clearAllBtn);
+    ivFooter.appendChild(clearSampleBtn);
+    shell.appendChild(ivFooter);
   })();
+
+  // removed duplicate main-area footer; using persistent bottom `iv-footer` instead
 
   // trigger initial tile load now that all listeners are wired
   tiles.update(viewport.getTransform());
