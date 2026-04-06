@@ -570,8 +570,8 @@ def loadGUIClassifier(classifierPaths, clfname, ext='pklz'):
     return clf
 
 
-def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp,
-              tile_size=448, patch_size=8, body_overlap=0.25, multiplier=4):
+def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_jobs=16, R=2,
+              tile_size=448, patch_size=8, body_overlap=0.25, multiplier=4, alpha_img=0.5):
     """Return a run_inference_fn compatible with viewer.create_viewer().
 
     All dataset-level variables are captured once at call time; only the
@@ -601,14 +601,14 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp,
     def _runfn(*, strokes_by_sample, active_sample):
         clf, _, _ = getClassifierForFromStrokes(
             strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size,
-            ads, samples, qs, augFunc=PCMA, alpha=0.8, seed=0)
+            ads, samples, qs, augFunc=PCMA, alpha=PCMA_alpha, seed=0)
         if clf is None:
             return
         x, y, p = inferProbFast(ads[active_sample], clf, qs,
-                                 tsize=ts / mpp, R=2, erode=False, n_jobs=16, verbose=False)
+                                 tsize=ts / mpp, R=R, erode=False, n_jobs=n_jobs, verbose=False)
         xi, yi, pi = interpolatePoints(x, y, p, multiplier=multiplier)
         return dict(sample=active_sample, xi=xi, yi=yi, pi=pi,
-                    delta=tile_size / multiplier, alpha=0.3,
+                    delta=(ts / mpp) / multiplier, alpha=alpha_img,
                     color_low='#FFA500', color_high='#0000FF')
 
     return _runfn
