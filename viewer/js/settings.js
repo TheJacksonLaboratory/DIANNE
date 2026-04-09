@@ -21,7 +21,7 @@ function createSettings(toolbarEl, rootEl, defaults) {
     prefetchBorder     : 1,          // extra tile rows/cols loaded outside viewport
     renderQuality      : 'pixelated',// CSS image-rendering for tile <img> elements
     cellCacheSize      : 200,        // max cell JSON tile responses in memory
-    maxCellsBoundaries : 5000,       // force dots when visible cell count exceeds this (0 = off)
+    maxCellsBoundaries : 2000,       // force dots when visible cell count exceeds this (0 = off)
     inferMsPerCell     : 0.15,       // loader animation ms per cell in inference sample
   }, defaults || {});
 
