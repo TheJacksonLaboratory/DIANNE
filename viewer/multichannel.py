@@ -1,0 +1,175 @@
+import io
+import numpy as np
+import tifffile
+import zarr
+from PIL import Image
+
+
+class MultichannelImage:
+    """
+    Wraps an OME-TIFF zarr pyramid whose first axis is C > 3 (multichannel / multiplex IF).
+    Serves PNG grayscale tile bytes per channel for client-side additive compositing.
+
+    The server-side normalization range (p1–p99 of non-zero pixels) is computed once
+    from the coarsest pyramid level at construction time so each tile is mapped
+    consistently to [0, 255] regardless of which tile is requested.
+    """
+
+    TILE = 1024  # must match zarr chunk size
+
+    def __init__(self, path):
+        self.path   = str(path)
+        store       = tifffile.imread(self.path, aszarr=True)
+        self._z     = zarr.open(store, mode='r')
+
+        self.n_levels = len(self._z)
+        self.levels   = {}
+        for i in range(self.n_levels):
+            arr       = self._z[str(i)]
+            c, h, w   = arr.shape
+            self.levels[i] = dict(
+                shape     = (h, w),
+                n_tiles_y = (h + self.TILE - 1) // self.TILE,
+                n_tiles_x = (w + self.TILE - 1) // self.TILE,
+            )
+
+        self.n_channels = self._z['0'].shape[0]
+
+        h0, _ = self.levels[0]['shape']
+        for i, meta in self.levels.items():
+            h, _ = meta['shape']
+            meta['downsample'] = h0 / h
+
+        self._channel_ranges = self._compute_channel_ranges()
+
+    # ── internal helpers ───────────────────────────────────────────────────────
+
+    def _compute_channel_ranges(self):
+        """Compute per-channel (p1, p99) of non-zero pixels from the coarsest level."""
+        lowest = self.n_levels - 1
+        arr    = self._z[str(lowest)]
+        ranges = []
+        for c in range(self.n_channels):
+            data    = arr[c][()].astype(np.float32)
+            nonzero = data[data > 0]
+            if nonzero.size > 0:
+                p1, p99 = float(np.percentile(nonzero, 1)), float(np.percentile(nonzero, 99))
+            else:
+                p1, p99 = 0.0, 1.0
+            # Guard against degenerate p1 == p99
+            if p99 <= p1:
+                p99 = p1 + 1.0
+            ranges.append((p1, p99))
+        return ranges
+
+    def _to_png(self, gray: np.ndarray) -> bytes:
+        buf = io.BytesIO()
+        Image.fromarray(gray, mode='L').save(buf, format='PNG', compress_level=1)
+        return buf.getvalue()
+
+    def _blank_tile(self) -> bytes:
+        return self._to_png(np.zeros((self.TILE, self.TILE), dtype=np.uint8))
+
+    # ── public API ─────────────────────────────────────────────────────────────
+
+    @property
+    def metadata(self):
+        """Serialisable dict sent to JS on viewer init."""
+        return dict(
+            n_levels      = self.n_levels,
+            tile_size     = self.TILE,
+            n_channels    = self.n_channels,
+            channel_names = [f'Channel {i}' for i in range(self.n_channels)],
+            channel_ranges = self._channel_ranges,
+            levels = {
+                i: dict(
+                    width      = meta['shape'][1],
+                    height     = meta['shape'][0],
+                    n_tiles_x  = meta['n_tiles_x'],
+                    n_tiles_y  = meta['n_tiles_y'],
+                    downsample = meta['downsample'],
+                )
+                for i, meta in self.levels.items()
+            },
+        )
+
+    def get_channel_tile(self, channel: int, level: int, row: int, col: int) -> bytes:
+        """
+        Return PNG bytes for a single channel tile normalised to uint8.
+        The grayscale value 0 maps to p1, 255 maps to p99 of the channel's
+        level-0-derived intensity range.
+        """
+        if level not in self.levels:
+            raise ValueError(f'level {level} out of range 0–{self.n_levels - 1}')
+        if not (0 <= channel < self.n_channels):
+            raise ValueError(f'channel {channel} out of range 0–{self.n_channels - 1}')
+
+        meta = self.levels[level]
+        h, w = meta['shape']
+        T    = self.TILE
+        arr  = self._z[str(level)]
+
+        y0 = row * T;  y1 = min(y0 + T, h)
+        x0 = col * T;  x1 = min(x0 + T, w)
+
+        if y0 >= h or x0 >= w:
+            return self._blank_tile()
+
+        data = arr[channel, y0:y1, x0:x1].astype(np.float32)
+        lo, hi = self._channel_ranges[channel]
+        data   = np.clip((data - lo) / (hi - lo), 0.0, 1.0)
+        data   = (data * 255).astype(np.uint8)
+
+        # Pad border tiles to full TILE×TILE so the JS always receives a square
+        th, tw = data.shape
+        if th < T or tw < T:
+            canvas         = np.zeros((T, T), dtype=np.uint8)
+            canvas[:th, :tw] = data
+            data           = canvas
+
+        return self._to_png(data)
+
+    def get_level_thumbnail(self, level: int = None, size: int = 256,
+                            background=(15, 15, 15)) -> bytes:
+        """
+        Composite up to four channels with default IF colours into a JPEG thumbnail.
+        """
+        if level is None:
+            level = self.n_levels - 1
+        if level not in self.levels:
+            raise ValueError(f'level {level} out of range')
+
+        arr     = self._z[str(level)]   # (C, H, W)
+        _, h, w = arr.shape
+
+        default_colors = [
+            (68,  136, 255),   # blue  — DAPI / nuclear stain
+            (0,   255,  68),   # green
+            (255,  34,  34),   # red
+            (255, 255,   0),   # yellow
+        ]
+
+        rgb = np.zeros((h, w, 3), dtype=np.float32)
+        for c in range(min(self.n_channels, len(default_colors))):
+            data  = arr[c][()].astype(np.float32)
+            lo, hi = self._channel_ranges[c]
+            data  = np.clip((data - lo) / (hi - lo), 0.0, 1.0)
+            color = np.array(default_colors[c], dtype=np.float32) / 255.0
+            rgb  += data[:, :, np.newaxis] * color
+
+        rgb = np.clip(rgb * 255, 0, 255).astype(np.uint8)
+        img = Image.fromarray(rgb)
+
+        scale = min(size / float(w), size / float(h)) if (w and h) else 1.0
+        new_w = max(1, int(round(w * scale)))
+        new_h = max(1, int(round(h * scale)))
+        resized = img.resize((new_w, new_h), resample=Image.LANCZOS)
+
+        canvas  = Image.new('RGB', (size, size), color=background)
+        off_x   = (size - new_w) // 2
+        off_y   = (size - new_h) // 2
+        canvas.paste(resized, (off_x, off_y))
+
+        buf = io.BytesIO()
+        canvas.save(buf, format='JPEG', quality=85)
+        return buf.getvalue()

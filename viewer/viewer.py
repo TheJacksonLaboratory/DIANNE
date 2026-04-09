@@ -3,10 +3,11 @@ from pathlib import Path
 from IPython.display import display, HTML, Javascript
 import ipywidgets as widgets
 
-from viewer.tiff   import PyramidImage
-from viewer.server import ViewerServer
+from viewer.tiff          import PyramidImage
+from viewer.multichannel  import MultichannelImage
+from viewer.server        import ViewerServer
 from viewer.xetranscripts import XeniumTranscripts
-from viewer.xencells import XeniumCells
+from viewer.xencells      import XeniumCells
 
 _JS_DIR = Path(__file__).parent / 'js'
 
@@ -17,6 +18,22 @@ INFERENCE_MS_PER_CELL = 0.15
 
 def _read_js(name):
     return (_JS_DIR / name).read_text()
+
+
+def _open_image(path):
+    """
+    Auto-detect channel count and return a MultichannelImage (C > 3) or
+    a PyramidImage (C == 1 or 3 — standard RGB / greyscale histology).
+    Opens the tifffile zarr store for a shape peek then instantiates the
+    appropriate class (which will open the file a second time internally).
+    """
+    import tifffile, zarr
+    store = tifffile.imread(str(path), aszarr=True)
+    z     = zarr.open(store, mode='r')
+    n_ch  = z['0'].shape[0]
+    if n_ch > 3:
+        return MultichannelImage(path)
+    return PyramidImage(path)
 
 
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
@@ -100,8 +117,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       raise KeyError(f'missing image path(s) for sample(s): {missing}')
 
     chosen_sample = sample_list[0]
-    sample_images = {s: PyramidImage(images[s]) for s in sample_list}
-    image  = sample_images[chosen_sample]
+    sample_images = {s: _open_image(images[s]) for s in sample_list}
+    image         = sample_images[chosen_sample]
+    is_multichannel = isinstance(image, MultichannelImage)
 
     if xenium_bundle_paths is None:
       xenium_bundle_paths = {}
@@ -190,6 +208,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     js = '\n\n'.join(_read_js(f) for f in [
         'viewport.js',
         'tiles.js',
+        'multichannel.js',
         'transcripts.js',
         'cells.js',
         'draw.js',
@@ -266,6 +285,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const HAS_LOAD           = __HAS_LOAD__;
   const SAMPLE_SIZES       = __SAMPLE_SIZES__;
   const INFERENCE_MS_PER_CELL = __INFERENCE_MS_PER_CELL__;
+  const IS_MULTICHANNEL    = __IS_MULTICHANNEL__;
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
@@ -396,7 +416,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   const l0       = META.levels[0];
   const viewport = createViewport(root, l0.width, l0.height);
-  const tiles    = createTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE);
+  // In multichannel mode the channel panel occupies top-right (right:8px),
+  // so shift the overlay controls panel leftward to avoid overlap.
+  if (IS_MULTICHANNEL) { overlayControls.style.right = '104px'; }
+  const tiles    = IS_MULTICHANNEL
+      ? createMultichannelTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE)
+      : createTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE);
   // shared row: [cells button] [genes controls] — both top-right, side by side
   const rightControlsRow = document.createElement('div');
   rightControlsRow.dataset.ivUi = 'true';
@@ -1132,6 +1157,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__HAS_LOAD__', 'true' if (load_func is not None and list_names_func is not None) else 'false') \
    .replace('__SAMPLE_SIZES__', json.dumps(sample_sizes or {})) \
    .replace('__INFERENCE_MS_PER_CELL__', str(INFERENCE_MS_PER_CELL)) \
+   .replace('__IS_MULTICHANNEL__', 'true' if is_multichannel else 'false') \
    .replace('__JS__',      js)
 
     display(HTML(html))

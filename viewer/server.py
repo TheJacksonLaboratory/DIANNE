@@ -190,6 +190,17 @@ class ViewerServer:
                     except Exception as e:
                         self._respond(400, str(e).encode())
 
+                elif parsed.path == '/channel_tile':
+                    try:
+                        channel = int(qs['channel'][0])
+                        level   = int(qs['level'][0])
+                        row     = int(qs['row'][0])
+                        col     = int(qs['col'][0])
+                        data    = image.get_channel_tile(channel, level, row, col)
+                        self._respond(200, data, 'image/png')
+                    except Exception as e:
+                        self._respond(400, str(e).encode())
+
                 elif parsed.path == '/thumb':
                     try:
                         level = int(qs.get('level', [str(image.n_levels - 1)])[0])
