@@ -622,6 +622,17 @@ def loadGUIClassifier(classifierPaths, clfname, ext='pklz'):
         data = {}
 
     clf = data.get('clf', {})
+    print(len(data.get('patches', [])))
+    drawings = data.get('drawings', {})
+    count_pos = 0
+    for sample in data['drawings'].keys():
+        d = data['drawings'][sample]
+        count_pos += len(d.get('strokes_positive', []))
+    count_neg = 0
+    for sample in data['drawings'].keys():
+        d = data['drawings'][sample]
+        count_neg += len(d.get('strokes_negative', []))
+    print(f"Loaded classifier with {count_pos} positive and {count_neg} negative strokes.")
 
     return clf
 

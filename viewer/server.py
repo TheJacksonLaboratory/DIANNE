@@ -78,7 +78,11 @@ class ViewerServer:
             except socket.gaierror:
                 self.host = '127.0.0.1'
         self.run_inference_fn = run_inference_fn
-        self.sample_sizes = dict(sample_sizes) if sample_sizes else {}
+        self.sample_sizes = {
+            str(k): int(v)
+            for k, v in sample_sizes.items()
+            if v is not None
+        } if sample_sizes else {}
         self._inference_lock = threading.Lock()
         self._inference_running = False
         self.save_fn       = save_fn

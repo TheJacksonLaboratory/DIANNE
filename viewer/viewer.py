@@ -13,7 +13,7 @@ _JS_DIR = Path(__file__).parent / 'js'
 # Configurable: milliseconds of loading-bar animation per cell in the inference sample.
 # Examples: 5 000 cells → 5000 * 0.4 = 2 000 ms (2 s)
 #           20 000 cells → 20000 * 0.4 = 8 000 ms (8 s)
-INFERENCE_MS_PER_CELL = 0.1
+INFERENCE_MS_PER_CELL = 0.15
 
 def _read_js(name):
     return (_JS_DIR / name).read_text()
@@ -123,6 +123,17 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       raise TypeError('annotations must be a dict[sample] -> cell_id_to_category')
     else:
       annotations = {str(k): v for k, v in annotations.items()}
+
+    if sample_sizes is None:
+      sample_sizes = {}
+    elif not hasattr(sample_sizes, 'items'):
+      raise TypeError('sample_sizes must be a dict[sample] -> int')
+    else:
+      sample_sizes = {
+        str(k): int(v)
+        for k, v in sample_sizes.items()
+        if v is not None
+      }
 
     xenium_by_sample = {}
     xenium_cells_by_sample = {}
@@ -539,8 +550,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       return;
     }
     // 2. Time the loading animation based on sample size
-    const nCells = (SAMPLE_SIZES && SAMPLE_SIZES[ACTIVE_SAMPLE]) ? SAMPLE_SIZES[ACTIVE_SAMPLE] : 5000;
+    const hasSampleSize = SAMPLE_SIZES
+      && Object.prototype.hasOwnProperty.call(SAMPLE_SIZES, ACTIVE_SAMPLE);
+    const sampleCellCount = hasSampleSize ? Number(SAMPLE_SIZES[ACTIVE_SAMPLE]) : NaN;
+    const nCells = Number.isFinite(sampleCellCount) ? sampleCellCount : 5000;
     const durationMs = nCells * INFERENCE_MS_PER_CELL;
+    console.log('Running inference on sample "' + ACTIVE_SAMPLE + '" with ' + nCells + ' cells; showing loader for ~' + durationMs.toFixed(0) + ' ms');
     if (runBtn) { runBtn.disabled = true; runBtn.style.opacity = '0.5'; runBtn.style.boxShadow = 'none'; }
     showLoader(durationMs);
     log('Running inference on ' + ACTIVE_SAMPLE + '…');
