@@ -5,7 +5,7 @@
  * Supports sample switching and per-sample enable/disable at runtime.
  */
 
-function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow, sampleName = null) {
+function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow, sampleName = null, settings = null) {
   const MAX_CACHED = 200;
   const PREFETCH = 1;
   const BOUNDARY_LINE_WIDTH = 1.5;
@@ -145,7 +145,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
         cache.set(key, cells);
         inflight.delete(key);
 
-        if (cache.size > MAX_CACHED) {
+        if (cache.size > (settings ? settings.get('cellCacheSize') : MAX_CACHED)) {
           const firstKey = cache.keys().next().value;
           cache.delete(firstKey);
         }
@@ -228,7 +228,19 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
 
     ctx.clearRect(0, 0, layer.width, layer.height);
     currentLevel = bestImageLevel(transform.scale);
-    const tiles = visibleRange(currentLevel, transform, PREFETCH);
+    const _prefetch = settings ? Math.round(settings.get('prefetchBorder')) : PREFETCH;
+    const tiles = visibleRange(currentLevel, transform, _prefetch);
+
+    // Force-dot mode when visible cell count exceeds the settings threshold.
+    const _maxBounds = settings ? settings.get('maxCellsBoundaries') : 0;
+    let _totalCells = 0;
+    if (_maxBounds > 0) {
+      for (const _t of tiles) {
+        const _k = cacheKey(_t);
+        if (cache.has(_k)) _totalCells += (cache.get(_k) || []).length;
+      }
+    }
+    const _forceDot = _maxBounds > 0 && _totalCells > _maxBounds;
 
     for (const tile of tiles) {
       const key = cacheKey(tile);
@@ -251,7 +263,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
         }
 
         const color = categoryColors[cat] || '#888888';
-        if (cell.is_dot) {
+        if (_forceDot || cell.is_dot) {
           drawDot(sp.x, sp.y, POINT_RADIUS, color);
         } else if (cell.boundary) {
           drawBoundary(cell.boundary, color);

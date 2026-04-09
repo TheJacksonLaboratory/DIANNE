@@ -212,6 +212,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         'transcripts.js',
         'cells.js',
         'draw.js',
+        'settings.js',
         'toolbar.js',
         'demo.js',
     ])
@@ -285,6 +286,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const HAS_LOAD           = __HAS_LOAD__;
   const SAMPLE_SIZES       = __SAMPLE_SIZES__;
   const INFERENCE_MS_PER_CELL = __INFERENCE_MS_PER_CELL__;
+  const MAX_CELLS              = __MAX_CELLS__;
   const IS_MULTICHANNEL    = __IS_MULTICHANNEL__;
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
@@ -419,9 +421,14 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   // In multichannel mode the channel panel occupies top-right (right:8px),
   // so shift the overlay controls panel leftward to avoid overlap.
   if (IS_MULTICHANNEL) { overlayControls.style.right = '104px'; }
+  // Settings panel — gear button appended to overlayControls, panel hosted in root.
+  const settings = createSettings(overlayControls, root, {
+    inferMsPerCell: INFERENCE_MS_PER_CELL,
+    maxCellsBoundaries: MAX_CELLS,
+  });
   const tiles    = IS_MULTICHANNEL
       ? createMultichannelTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE)
-      : createTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE);
+      : createTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE, settings);
   // shared row: [cells button] [genes controls] — both top-right, side by side
   const rightControlsRow = document.createElement('div');
   rightControlsRow.dataset.ivUi = 'true';
@@ -449,7 +456,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     viewport,
     log,
     rightControlsRow,
-    ACTIVE_SAMPLE
+    ACTIVE_SAMPLE,
+    settings
   );
   const draw     = createDraw(root, viewport);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
@@ -491,7 +499,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           .then(r => r.json())
           .catch(() => []);
       } : null,
-    } : null
+    } : null,
+    settings
   );
 
   // per-sample stroke storage
@@ -579,7 +588,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       && Object.prototype.hasOwnProperty.call(SAMPLE_SIZES, ACTIVE_SAMPLE);
     const sampleCellCount = hasSampleSize ? Number(SAMPLE_SIZES[ACTIVE_SAMPLE]) : NaN;
     const nCells = Number.isFinite(sampleCellCount) ? sampleCellCount : 5000;
-    const durationMs = nCells * INFERENCE_MS_PER_CELL;
+    const durationMs = nCells * settings.get('inferMsPerCell');
     console.log('Running inference on sample "' + ACTIVE_SAMPLE + '" with ' + nCells + ' cells; showing loader for ~' + durationMs.toFixed(0) + ' ms');
     if (runBtn) { runBtn.disabled = true; runBtn.style.opacity = '0.5'; runBtn.style.boxShadow = 'none'; }
     showLoader(durationMs);
@@ -1157,6 +1166,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__HAS_LOAD__', 'true' if (load_func is not None and list_names_func is not None) else 'false') \
    .replace('__SAMPLE_SIZES__', json.dumps(sample_sizes or {})) \
    .replace('__INFERENCE_MS_PER_CELL__', str(INFERENCE_MS_PER_CELL)) \
+   .replace('__MAX_CELLS__', str(max_cells)) \
    .replace('__IS_MULTICHANNEL__', 'true' if is_multichannel else 'false') \
    .replace('__JS__',      js)
 

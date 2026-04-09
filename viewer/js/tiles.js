@@ -16,7 +16,7 @@
  *   tiles.setLevel(n)         force a specific level (optional override)
  */
 
-function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null) {
+function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, settings = null) {
   let currentMeta = meta;
   let activeSample = sampleName;
   const TILE      = meta.tile_size;   // 512
@@ -37,8 +37,9 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null) {
   // Pick the finest level whose downsampled pixel is still >= 1 screen pixel.
   // i.e. we want  TILE * scale / downsample  to be reasonably sized.
   function bestLevel(scale) {
+    const sensitivity = settings ? settings.get('levelSensitivity') : 1.0;
     for (let i = 0; i < currentMeta.n_levels; i++) {
-      if (scale >= 1 / currentMeta.levels[i].downsample) return i;
+      if (scale >= sensitivity / currentMeta.levels[i].downsample) return i;
     }
     return currentMeta.n_levels - 1;
   }
@@ -161,7 +162,8 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null) {
 
   // ── LRU eviction ──────────────────────────────────────────────────────────
   function evict(transform) {
-    if (cache.size <= MAX_CACHED) return;
+    const maxCached = settings ? settings.get('tileCacheSize') : MAX_CACHED;
+    if (cache.size <= maxCached) return;
 
     // Protect visible tiles of current and fallback levels from eviction.
     const protectedKeys = new Set();
@@ -181,7 +183,7 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null) {
     }
 
     const sorted = [...cache.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-    let needRemove = cache.size - MAX_CACHED;
+    let needRemove = cache.size - maxCached;
     for (const [k, entry] of sorted) {
       if (needRemove <= 0) break;
       if (protectedKeys.has(k)) continue;
@@ -261,7 +263,8 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null) {
 
     // Fetch visible tiles + prefetch border and keep exactly those inflight.
     const requestedKeys = new Set();
-    const all = visibleRange(currentLevel, transform, PREFETCH);
+    const _prefetch = settings ? Math.round(settings.get('prefetchBorder')) : PREFETCH;
+    const all = visibleRange(currentLevel, transform, _prefetch);
     for (let r = all.r0; r <= all.r1; r++) {
       for (let c = all.c0; c <= all.c1; c++) {
         const k = key(currentLevel, r, c);
@@ -289,6 +292,16 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null) {
   // wire into viewport
   viewport.onChange(scheduleUpdate);
   scheduleUpdate(viewport.getTransform());
+
+  // When render quality changes, update imageRendering on all cached tiles.
+  if (settings) {
+    settings.onChange((key) => {
+      if (key === 'renderQuality' || key === null) {
+        const q = settings.get('renderQuality');
+        for (const [, entry] of cache) entry.img.style.imageRendering = q;
+      }
+    });
+  }
 
   return {
     update: scheduleUpdate,

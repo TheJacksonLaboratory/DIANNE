@@ -13,7 +13,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -394,7 +394,8 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     if (_isUiEventTarget(e.target)) return;
     e.preventDefault();
     const [vpX, vpY] = _toVPArr(e);
-    viewport.zoomAt(vpX, vpY, -e.deltaY * ZOOM_SPEED);
+    const zs = settings ? settings.get('zoomSpeed') : ZOOM_SPEED;
+    viewport.zoomAt(vpX, vpY, -e.deltaY * zs);
   }, { passive: false });
 
   // ── click → POST to server ─────────────────────────────────────────────────
