@@ -1,9 +1,9 @@
 from .annotation import jumpStart, runAnnotation, inspectAnnotatedPatches, loadPatch
 from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
-from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, inferProb, inferProbFast, inferProbPreview, showProbImg, trainClassifier
+from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, inferProb, inferProbFast, inferProbPreview, showProbImg, trainClassifier, get_metrics
 from .utils import findMyJupyterServer, setupClassifierPaths, saveClassifier, loadClassifier, saveGUIClassifier, loadGUIClassifier
 from .utils import loadDataAndPreparePatches, loadDataAndPreparePatchesStatic, setNotebookWidth, loadSTQParams
-from .utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn
+from .utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, get_tile_mask_means3
 from .interpolation import interpolate_points as interpolatePoints
 from .mask import makeProbMask, extractContoursForQuPath, viewContoursOnImage
 from .download import downloadZIPFromZenodo, downloadFromZenodo

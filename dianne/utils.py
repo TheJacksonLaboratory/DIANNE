@@ -11,14 +11,70 @@ from IPython.display import display, HTML
 import pickle
 
 from .stqutils import loadAd, preparePatchesWSI, getPatchRepresentation, trainClassifier
+from joblib import Parallel, delayed
 
 import numpy as np
-import cv2
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.collections import PatchCollection
 from collections import defaultdict
+import scipy
+from skimage.measure import label
+
+def get_tile_mask_means3(mfile, ts, mpp, coords, scale=None):
+    try:
+        m = tifffile.imread(mfile)
+        if not scale is None:
+            m = cv2.resize(m, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+        print(m.shape)
+        dfac = 4
+        m_labeled, num = scipy.ndimage.label(m[::dfac, ::dfac])
+        if dfac != 1:
+            m_labeled = cv2.resize(m_labeled, None, fx=dfac, fy=dfac, interpolation=cv2.INTER_NEAREST)  
+        print(f'Found {num} objects in mask')
+        h = int(0.5 * ts / mpp)
+
+        def process(x0, y0):
+            patch = m[y0-h:y0+h, x0-h:x0+h]
+            if patch.shape[0] == 0 or patch.shape[1] == 0:
+                return 0.0, 0
+            tv = patch.mean() / 255.
+            patch_l = m_labeled[y0-h:y0+h, x0-h:x0+h]
+            nz = patch_l[patch_l != 0]
+            obj = np.bincount(nz).argmax() if len(nz) else 0
+            return tv, obj
+
+        print("Computing means and objects for all coordinates in parallel...")
+        results = Parallel(n_jobs=-1)(delayed(process)(x, y) for x, y in coords)
+        means, objects = zip(*results)
+
+        # means = []
+        # objects = []
+        # for i in range(len(coords)):
+        #     x0, y0 = coords[i]
+        #     h = int(0.5 * ts / mpp)
+        #     temp = m[y0-h:y0+h, x0-h:x0+h]
+        #     if temp.shape[0]>0 and temp.shape[1]>0:
+        #         tv = temp.mean() / 255.
+        #         temp2 = m_labeled[y0-h:y0+h, x0-h:x0+h]
+        #         l, c = np.unique(temp2[temp2!=0], return_counts=True)
+        #         if len(l) > 0:
+        #             obj = l[np.argmax(c)]
+        #         else:
+        #             obj = 0
+        #     else:
+        #         tv = 0.0
+        #         obj = 0
+        #     means.append(tv)
+        #     objects.append(obj)
+        print("Computed means and objects for all coordinates.")
+    except Exception as exception:
+        print(f'Error in get_tile_mask_means: {exception}')
+        means = [0.0] * len(coords)
+        m_labeled = None
+        objects = [0] * len(coords)
+    return m_labeled, means, objects
 
 def loadSTQParams(path, F):
     with open(path + '/grid/grid.json', 'r') as tempFile:

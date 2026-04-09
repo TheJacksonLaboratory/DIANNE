@@ -5,6 +5,53 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
 from matplotlib.patches import Patch
+from sklearn.metrics import roc_auc_score, average_precision_score
+from .utils import get_tile_mask_means3
+from .stqutils import inferProbFast, interpolate_points as interpolatePoints
+
+# import tifffile; tifffile.TiffFile(f"{annopath}/JDC_WP_012_ae-standalone.ome.tif").pages[0].tags[270].value.split('PhysicalSizeX="')[1].split('"')[0]
+# import tifffile; tifffile.TiffFile(f"{annopath}/MC_PLACM_0015.ome.tif").pages[0].tags[270].value.split('PhysicalSizeX="')[1].split('"')[0]
+
+def measureSample(annopath, infSample):
+    x, y, p = inferProbFast(ads[infSample], clf, qs, tsize=ts/mpp, R=2, erode=False)
+    
+    # infSample = samples_mapping[infSample]
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-postxenium-Papillary-tissue.tiff'
+    mfile = f'{annopath}/{infSample.replace("-", "_")}-standalone-Islets.tiff'
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-standalone-Fibrous-tissue.tiff'
+    scale = 0.22644414755100656 / 0.25 # pancreas
+    
+    # mfile = f'{annopath}/{infSample}-Globally-sclerotic-glomeruli.tiff'
+    # mfile = f'{annopath}/{infSample}-Glomeruli.tiff'
+    # mfile = f'{annopath}/{infSample}-Fibrous-tissue.tiff'
+    # mfile = f'{annopath}/{infSample}-Other.tiff'
+    
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-Blood-aggregates.tiff'
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-Amnion.tiff'
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-Chorion.tiff'
+    
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-standalone-Islets.tiff'
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-standalone-Fibrous-tissue.tiff'
+    # mfile = f'{annopath}/{infSample.replace("-", "_")}-standalone-Papillary-tissue.tiff'
+    print(mfile)
+
+    # scale = 0.22098959139024552 / 0.25 # placm
+    # scale = 1. # pen, kidney, postxenium pancreas
+
+    M = 8
+    pth = 0.5
+    xi, yi, pi = interpolatePoints(x, y, p, multiplier=M)
+    print('Computing objects')
+    m_labeled, means, objects = get_tile_mask_means3(mfile, int(ts/M), mpp, np.vstack([xi, yi]).T.round(0).astype(int), scale=scale)
+    result = {'sample': infSample, 'manual_annotation': np.mean(means)}
+    result.update(dianne.get_metrics(pd.Series(pi), pd.Series(means), pth, 0.0, prefix='dianne_'))
+    try:
+        auroc = roc_auc_score(pd.Series(means)>0., pd.Series(pi))
+        auprc = average_precision_score(pd.Series(means)>0., pd.Series(pi))
+        result.update({'auroc': auroc, 'auprc': auprc})
+    except Exception as exception:
+        print(exception)
+    return result
 
 def show_chosen_alpha_plot(path, F=2, alpha=0.80, dpi=75):
     dfrn = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}-None.csv')
@@ -248,4 +295,3 @@ def show_nmaxs_plot(path, F=2, alpha=0.8,
 
     plt.show()
     return
-
