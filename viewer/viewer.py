@@ -20,7 +20,7 @@ def _read_js(name):
 
 
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
-                  xenium_mpp=1.0, category_colors=None, max_cells=2000,
+                  xenium_mpp=0.2125, category_colors=None, max_cells=2000,
                   xenium_bundle_paths=None, matrices=None, annotations=None,
                   run_inference_fn=None, sample_sizes=None,
                   save_func=None, load_func=None, list_names_func=None):
