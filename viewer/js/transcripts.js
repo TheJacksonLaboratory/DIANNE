@@ -267,7 +267,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   function rebuildGenePanel() {
     geneList.innerHTML = '';
     filteredGenes = enabled
-      ? currentTranscriptMeta.genes.filter(gene => !/(Control|Unassigned)/i.test(gene))
+      ? currentTranscriptMeta.genes.filter(gene => !/(Control|Unassigned|Deprecated|Negative)/i.test(gene))
       : [];
 
     selectedGenes.clear();
