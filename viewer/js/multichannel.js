@@ -23,6 +23,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   const CH_NAMES = meta.channel_names;
   const MAX_GRAY_CACHED = 100;   // per-channel tile count cap
   const MAX_COMP_CACHED = 80;    // composite tile canvas count cap
+  const CHANNEL_FULL_RANGES = meta.channel_full_ranges;  // [[raw_min, raw_max], ...]
 
   let currentMeta    = meta;
   let activeSample   = sampleName;
@@ -42,11 +43,13 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     '#ff0088',  // pink
   ];
 
-  // Per-channel state: enabled, display colour, brightness (0–1)
+  // Per-channel state: enabled, display colour, brightness (0–1), intensity window (raw units)
   const chState = Array.from({ length: N_CH }, (_, i) => ({
-    enabled : i === 0,
-    color   : DEFAULT_COLORS[i % DEFAULT_COLORS.length],
-    opacity : 1.0,
+    enabled      : i === 0,
+    color        : DEFAULT_COLORS[i % DEFAULT_COLORS.length],
+    opacity      : 1.0,
+    intensityMin : meta.channel_ranges[i][0],   // p1 raw default
+    intensityMax : meta.channel_ranges[i][1],   // p99 raw default
   }));
 
   // ── caches ────────────────────────────────────────────────────────────────
@@ -136,8 +139,19 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       const cb  = parseInt(hex.slice(4, 6), 16) / 255 * chState[ch].opacity;
       const gray = entry.gray;
 
+      // Map the user's intensity window (raw units) into 8-bit space.
+      // Server encodes: gray8 = clamp((raw - p1) / (p99 - p1), 0, 1) * 255
+      // so: raw = gray8 / 255 * (p99 - p1) + p1
+      // → lo8 = clamp((intensityMin - p1) / (p99 - p1) * 255, 0, 255)
+      const [p1, p99]  = currentMeta.channel_ranges[ch];
+      const span       = p99 - p1;
+      const lo8 = Math.max(0, Math.min(255, (chState[ch].intensityMin - p1) / span * 255));
+      const hi8 = Math.max(0, Math.min(255, (chState[ch].intensityMax - p1) / span * 255));
+      const win = hi8 - lo8;
+
       for (let i = 0; i < TILE * TILE; i++) {
-        const v = gray[i] / 255;
+        const v = win > 0 ? Math.max(0, Math.min(1, (gray[i] - lo8) / win))
+                          : (gray[i] >= lo8 ? 1 : 0);
         R[i] += v * cr;
         G[i] += v * cg;
         B[i] += v * cb;
@@ -288,12 +302,98 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   ].join(';');
   panel.appendChild(toggleBtn);
 
+  // ── dual-range slider helper ────────────────────────────────────────────
+  // Injects a shared <style> once and returns a wrapper div with two
+  // overlapping transparent range inputs that act as lo/hi thumbs.
+  function createDualRangeSlider(rawMin, rawMax, defaultLo, defaultHi, onChange) {
+    if (!document.querySelector('style[data-iv-dual-range]')) {
+      const s = document.createElement('style');
+      s.dataset.ivDualRange = '';
+      s.textContent = [
+        '.iv-dr{position:absolute;top:0;left:0;width:100%;height:20px;',
+        'margin:0;padding:0;background:transparent;',
+        '-webkit-appearance:none;appearance:none;pointer-events:none;}',
+        '.iv-dr::-webkit-slider-runnable-track{background:transparent;height:4px;}',
+        '.iv-dr::-moz-range-track{background:transparent;height:4px;}',
+        '.iv-dr::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;',
+        'width:11px;height:11px;border-radius:50%;',
+        'background:#bbb;border:1.5px solid #777;',
+        'cursor:pointer;pointer-events:all;margin-top:-3px;}',
+        '.iv-dr::-moz-range-thumb{width:11px;height:11px;border-radius:50%;',
+        'background:#bbb;border:1.5px solid #777;cursor:pointer;pointer-events:all;}',
+      ].join('');
+      document.head.appendChild(s);
+    }
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative;width:96px;height:20px;flex-shrink:0;';
+
+    const track = document.createElement('div');
+    track.style.cssText = [
+      'position:absolute', 'top:8px', 'left:4px', 'right:4px',
+      'height:4px', 'background:#2a2a2a', 'border-radius:2px', 'pointer-events:none',
+    ].join(';');
+    const fill = document.createElement('div');
+    fill.style.cssText = 'position:absolute;top:0;height:100%;background:#686868;border-radius:2px;';
+    track.appendChild(fill);
+    wrap.appendChild(track);
+
+    const step = rawMax > rawMin ? (rawMax - rawMin) / 1000 : 1;
+
+    const inputLo = document.createElement('input');
+    inputLo.type      = 'range';
+    inputLo.className = 'iv-dr';
+    inputLo.style.zIndex = '2';
+
+    const inputHi = document.createElement('input');
+    inputHi.type      = 'range';
+    inputHi.className = 'iv-dr';
+    inputHi.style.zIndex = '3';
+
+    for (const inp of [inputLo, inputHi]) {
+      inp.min  = String(rawMin);
+      inp.max  = String(rawMax);
+      inp.step = String(step);
+    }
+    inputLo.value = String(Math.max(rawMin, Math.min(rawMax, defaultLo)));
+    inputHi.value = String(Math.max(rawMin, Math.min(rawMax, defaultHi)));
+
+    function updateFill() {
+      const lo = parseFloat(inputLo.value);
+      const hi = parseFloat(inputHi.value);
+      const span = rawMax - rawMin;
+      const loF  = span > 0 ? (lo - rawMin) / span : 0;
+      const hiF  = span > 0 ? (hi - rawMin) / span : 1;
+      fill.style.left  = (loF * 100).toFixed(2) + '%';
+      fill.style.width = ((hiF - loF) * 100).toFixed(2) + '%';
+      wrap.title = `min: ${lo.toFixed(1)}  max: ${hi.toFixed(1)}`;
+    }
+
+    inputLo.addEventListener('input', () => {
+      if (parseFloat(inputLo.value) > parseFloat(inputHi.value))
+        inputLo.value = inputHi.value;
+      updateFill();
+      onChange(parseFloat(inputLo.value), parseFloat(inputHi.value));
+    });
+    inputHi.addEventListener('input', () => {
+      if (parseFloat(inputHi.value) < parseFloat(inputLo.value))
+        inputHi.value = inputLo.value;
+      updateFill();
+      onChange(parseFloat(inputLo.value), parseFloat(inputHi.value));
+    });
+
+    wrap.appendChild(inputLo);
+    wrap.appendChild(inputHi);
+    updateFill();
+    return wrap;
+  }
+
   const dropdown = document.createElement('div');
   dropdown.style.cssText = [
     'display:none', 'margin-top:4px',
     'background:rgba(12,12,12,0.92)', 'border:1px solid #444',
     'border-radius:6px', 'padding:6px 8px',
-    'max-height:340px', 'overflow-y:auto', 'min-width:264px',
+    'max-height:340px', 'overflow-y:auto', 'min-width:340px',
     'text-align:left',
   ].join(';');
   panel.appendChild(dropdown);
@@ -371,11 +471,21 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       scheduleRedraw();
     });
 
+    const [rawMin, rawMax] = CHANNEL_FULL_RANGES[ch];
+    const [defLo, defHi]   = meta.channel_ranges[ch];
+    const rangeSlider = createDualRangeSlider(rawMin, rawMax, defLo, defHi, (lo, hi) => {
+      chState[ch].intensityMin = lo;
+      chState[ch].intensityMax = hi;
+      invalidateComposites();
+      scheduleRedraw();
+    });
+
     row.appendChild(chk);
     row.appendChild(label);
     row.appendChild(swatch);
     row.appendChild(colorPicker);
     row.appendChild(opSlider);
+    row.appendChild(rangeSlider);
     dropdown.appendChild(row);
   }
 

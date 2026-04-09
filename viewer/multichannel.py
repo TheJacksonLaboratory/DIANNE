@@ -45,21 +45,31 @@ class MultichannelImage:
     # ── internal helpers ───────────────────────────────────────────────────────
 
     def _compute_channel_ranges(self):
-        """Compute per-channel (p1, p99) of non-zero pixels from the coarsest level."""
+        """Compute per-channel (p1, p99) defaults and (raw_min, raw_max) full range
+        from non-zero pixels at the coarsest pyramid level."""
         lowest = self.n_levels - 1
         arr    = self._z[str(lowest)]
-        ranges = []
+        ranges      = []
+        full_ranges = []
         for c in range(self.n_channels):
             data    = arr[c][()].astype(np.float32)
             nonzero = data[data > 0]
             if nonzero.size > 0:
-                p1, p99 = float(np.percentile(nonzero, 1)), float(np.percentile(nonzero, 99))
+                p1, p99   = float(np.percentile(nonzero, 1)), float(np.percentile(nonzero, 99))
+                raw_min   = float(data.min())
+                raw_max   = float(data.max())
             else:
-                p1, p99 = 0.0, 1.0
+                p1, p99   = 0.0, 1.0
+                raw_min   = 0.0
+                raw_max   = 1.0
             # Guard against degenerate p1 == p99
             if p99 <= p1:
                 p99 = p1 + 1.0
+            if raw_max <= raw_min:
+                raw_max = raw_min + 1.0
             ranges.append((p1, p99))
+            full_ranges.append((raw_min, raw_max))
+        self._channel_full_ranges = full_ranges
         return ranges
 
     def _to_png(self, gray: np.ndarray) -> bytes:
@@ -76,11 +86,12 @@ class MultichannelImage:
     def metadata(self):
         """Serialisable dict sent to JS on viewer init."""
         return dict(
-            n_levels      = self.n_levels,
-            tile_size     = self.TILE,
-            n_channels    = self.n_channels,
-            channel_names = [f'Channel {i}' for i in range(self.n_channels)],
-            channel_ranges = self._channel_ranges,
+            n_levels           = self.n_levels,
+            tile_size          = self.TILE,
+            n_channels         = self.n_channels,
+            channel_names      = [f'Channel {i}' for i in range(self.n_channels)],
+            channel_ranges     = self._channel_ranges,
+            channel_full_ranges = self._channel_full_ranges,
             levels = {
                 i: dict(
                     width      = meta['shape'][1],
