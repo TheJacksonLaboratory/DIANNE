@@ -19,7 +19,7 @@ class XeniumTranscripts:
         Inverse (Xenium µm → H&E px):  he = (xe / xenium_mpp - Tr) @ inv(M).T
     """
 
-    def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=1.0):
+    def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125):
         self.bundle_path = Path(bundle_path)
         self.image_metadata = image_metadata
         self.tile_size = int(image_metadata['tile_size'])

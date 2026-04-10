@@ -7,7 +7,7 @@ from viewer.tiff          import PyramidImage
 from viewer.multichannel  import MultichannelImage
 from viewer.server        import ViewerServer
 from viewer.xetranscripts import XeniumTranscripts
-from viewer.xencells      import XeniumCells
+from viewer.xencells      import XeniumCells, XeniumCellsFast
 
 _JS_DIR = Path(__file__).parent / 'js'
 
@@ -170,12 +170,21 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       sample_xenium = XeniumTranscripts(bundle_path, sample_images[sample].metadata,
                         matrix_path=matrix_path,
                         xenium_mpp=xenium_mpp)
-      sample_cells = XeniumCells(bundle_path, sample_images[sample].metadata,
-                     matrix_path=matrix_path,
-                     xenium_mpp=xenium_mpp,
-                     cell_id_to_category=sample_annotations,
-                     category_colors=sample_colors,
-                     max_cells=max_cells)
+      _fast_zip = Path(bundle_path) / 'cells_fast.zarr.zip'
+      if _fast_zip.exists():
+        sample_cells = XeniumCellsFast(_fast_zip, sample_images[sample].metadata,
+                       matrix_path=matrix_path,
+                       xenium_mpp=xenium_mpp,
+                       cell_id_to_category=sample_annotations,
+                       category_colors=sample_colors,
+                       max_cells=max_cells)
+      else:
+        sample_cells = XeniumCells(bundle_path, sample_images[sample].metadata,
+                       matrix_path=matrix_path,
+                       xenium_mpp=xenium_mpp,
+                       cell_id_to_category=sample_annotations,
+                       category_colors=sample_colors,
+                       max_cells=max_cells)
       xenium_by_sample[sample] = sample_xenium
       xenium_cells_by_sample[sample] = sample_cells
       sample_xenium_meta[sample] = sample_xenium.metadata
