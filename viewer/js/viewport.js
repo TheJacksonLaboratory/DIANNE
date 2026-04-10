@@ -85,6 +85,14 @@ function createViewport(container, imageWidth, imageHeight) {
     return { width: imgWidth, height: imgHeight };
   }
 
+  // ── direct transform setter (for state restore) ────────────────────────────
+  function setTransform(s, oxx, oyy) {
+    scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+    ox = oxx;
+    oy = oyy;
+    _notify();
+  }
+
   // ── change notifications ───────────────────────────────────────────────────
   function onChange(fn) {
     listeners.push(fn);
@@ -98,5 +106,5 @@ function createViewport(container, imageWidth, imageHeight) {
   // fit on creation
   reset();
 
-  return { panBy, zoomAt, reset, setImageSize, toImageSpace, toScreenSpace, getTransform, getImageSize, onChange };
+  return { panBy, zoomAt, reset, setImageSize, setTransform, toImageSpace, toScreenSpace, getTransform, getImageSize, onChange };
 }

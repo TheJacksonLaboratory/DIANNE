@@ -393,13 +393,29 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     requestDraw();
   }
 
-  function setContext(sample, imageMetaNext, cellsMetaNext) {
+  function setContext(sample, imageMetaNext, cellsMetaNext, stateToRestore) {
     currentSample = sample;
     currentImageMeta = imageMetaNext;
-    applyMeta(cellsMetaNext);
+    applyMeta(cellsMetaNext);  // clears selectedCategories
+    if (stateToRestore && stateToRestore.selectedCategories) {
+      stateToRestore.selectedCategories.forEach(c => selectedCategories.add(c));
+    }
     clearCache();
     rebuildCategoryPanel();
-    setVisible(true);
+    const shouldBeVisible = (stateToRestore && stateToRestore.visible !== undefined)
+      ? stateToRestore.visible : true;
+    setVisible(shouldBeVisible);
+    if (stateToRestore && stateToRestore.panelOpen) {
+      panel.style.display = 'block';
+    }
+  }
+
+  function getState() {
+    return {
+      selectedCategories: [...selectedCategories],
+      panelOpen: panel.style.display !== 'none',
+      visible: isVisible,
+    };
   }
 
   toggleBtn.addEventListener('click', () => {
@@ -417,6 +433,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   return {
     setVisible,
     setContext,
+    getState,
     getVisible: () => isVisible,
     getSelectedCategories: () => [...selectedCategories],
   };

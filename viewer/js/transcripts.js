@@ -325,14 +325,62 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     draw(viewport.getTransform());
   }
 
-  function setContext(sample, imageMetaNext, transcriptMetaNext) {
+  function setContext(sample, imageMetaNext, transcriptMetaNext, stateToRestore) {
     currentSample = sample;
     currentImageMeta = imageMetaNext;
     currentTranscriptMeta = transcriptMetaNext;
     enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes);
-    rebuildGenePanel();
-    setVisible(true);
+    rebuildGenePanel();  // clears selectedGenes
+    if (stateToRestore) {
+      if (stateToRestore.selectedGenes) {
+        stateToRestore.selectedGenes.forEach(g => {
+          if (filteredGenes.includes(g)) selectedGenes.add(g);
+        });
+      }
+      if (stateToRestore.geneColors) {
+        Object.assign(geneColors, stateToRestore.geneColors);
+      }
+      if (stateToRestore.pointRadius !== undefined) {
+        POINT_RADIUS = stateToRestore.pointRadius;
+        transcriptSizeSlider.value = String(POINT_RADIUS);
+      }
+      if (stateToRestore.geneFilter !== undefined) {
+        geneFilter = stateToRestore.geneFilter;
+        searchInput.value = geneFilter;
+        searchClear.style.display = geneFilter ? 'block' : 'none';
+      }
+      // Update checkboxes and color pickers to reflect restored state
+      for (const row of geneList.children) {
+        const gene = row.dataset.gene;
+        if (!gene) continue;
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (checkbox) checkbox.checked = selectedGenes.has(gene);
+        if (stateToRestore.geneColors && stateToRestore.geneColors[gene]) {
+          const cp = row.querySelector('input[type="color"]');
+          if (cp) cp.value = stateToRestore.geneColors[gene];
+        }
+      }
+      applyGeneFilter();
+      updateButton();
+    }
+    const shouldBeVisible = (stateToRestore && stateToRestore.visible !== undefined)
+      ? stateToRestore.visible : true;
+    setVisible(shouldBeVisible);
+    if (stateToRestore && stateToRestore.panelOpen) {
+      panel.style.display = 'flex';
+    }
     update(viewport.getTransform());
+  }
+
+  function getState() {
+    return {
+      selectedGenes: [...selectedGenes],
+      geneColors: { ...geneColors },
+      geneFilter,
+      pointRadius: POINT_RADIUS,
+      panelOpen: panel.style.display !== 'none',
+      visible: !!(enabled && layer.style.display !== 'none'),
+    };
   }
 
   function update(transform) {
@@ -394,5 +442,6 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     getSelectedGenes: () => [...selectedGenes],
     setVisible,
     setContext,
+    getState,
   };
 }

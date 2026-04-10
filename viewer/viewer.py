@@ -276,7 +276,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   border-top: none;
   border-radius: 0 0 6px 6px;
   margin-bottom: 2px;
-">initializing…</div>
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+"><span id="iv-status-left">initializing…</span><span id="iv-status-coord" style="color:#8cf;margin-left:12px;white-space:nowrap;"></span></div>
   </div>
 </div>
 
@@ -284,6 +287,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 (function () {
   const root     = document.getElementById('iv-root');
   const status   = document.getElementById('iv-status');
+  const statusLeft  = document.getElementById('iv-status-left');
+  const statusCoord = document.getElementById('iv-status-coord');
   const samplesRibbon = document.getElementById('iv-samples');
   const BASE_URL = __BASE_URL__;
   const SAMPLES  = __SAMPLES__;
@@ -300,7 +305,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
-  function log(msg) { status.textContent = msg; }
+  function log(msg) { statusLeft.textContent = msg; }
 
   // reserve space at the bottom so persistent footers don't overlap content
   try {
@@ -514,6 +519,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   // per-sample stroke storage
   const strokesBySample = {};
+  // per-sample viewport / overlay state for persistence across sample switches
+  const viewportStateBySample = {};
+  const transcriptStateBySample = {};
+  const cellStateBySample = {};
   for (const sample of SAMPLES) {
     strokesBySample[sample] = { strokes_positive: [], strokes_negative: [] };
   }
@@ -752,6 +761,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       // Save strokes from previous sample before switching
       strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
 
+      // Save viewport, cells, transcripts state for the current (outgoing) sample
+      viewportStateBySample[ACTIVE_SAMPLE] = viewport.getTransform();
+      if (typeof cells.getState === 'function')
+        cellStateBySample[ACTIVE_SAMPLE] = cells.getState();
+      if (typeof transcripts.getState === 'function')
+        transcriptStateBySample[ACTIVE_SAMPLE] = transcripts.getState();
+
       fetch(BASE_URL + '/choose_sample', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -761,11 +777,22 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       ACTIVE_SAMPLE = sampleName;
       META = SAMPLE_META[sampleName];
       const l0Sample = META.levels[0];
-      viewport.setImageSize(l0Sample.width, l0Sample.height, true);
+
+      // Restore viewport: reset if first visit, else restore saved transform
+      const savedVP = viewportStateBySample[sampleName];
+      if (savedVP) {
+        viewport.setImageSize(l0Sample.width, l0Sample.height, false);
+        viewport.setTransform(savedVP.scale, savedVP.ox, savedVP.oy);
+      } else {
+        viewport.setImageSize(l0Sample.width, l0Sample.height, true);
+      }
+
       tiles.setSample(ACTIVE_SAMPLE);
       tiles.setMeta(META);
-      transcripts.setContext(ACTIVE_SAMPLE, META, SAMPLE_XENIUM_META[ACTIVE_SAMPLE]);
-      cells.setContext(ACTIVE_SAMPLE, META, SAMPLE_CELLS_META[ACTIVE_SAMPLE]);
+      transcripts.setContext(ACTIVE_SAMPLE, META, SAMPLE_XENIUM_META[ACTIVE_SAMPLE],
+        transcriptStateBySample[sampleName] || null);
+      cells.setContext(ACTIVE_SAMPLE, META, SAMPLE_CELLS_META[ACTIVE_SAMPLE],
+        cellStateBySample[sampleName] || null);
       predPoints = [];
       drawPredLayer();
 
@@ -780,6 +807,83 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       card.style.background = isActive ? '#272727' : '#1d1d1d';
     }
     log('Sample: ' + sampleName);
+  }
+
+  // per-sample thumbnail overlay canvases (keyed by sample name)
+  const thumbCanvases = {};
+
+  // Helper: map a level-0 image coordinate to thumb container CSS pixel
+  function _imgToThumbPx(imgX, imgY, sampleMeta, thumbLevel, containerW) {
+    const THUMB_SIZE = 256;
+    const lMeta = sampleMeta.levels[thumbLevel];
+    const l0    = sampleMeta.levels[0];
+    const ts    = Math.min(THUMB_SIZE / lMeta.width, THUMB_SIZE / lMeta.height);
+    const newW  = Math.round(lMeta.width  * ts);
+    const newH  = Math.round(lMeta.height * ts);
+    const offX  = Math.floor((THUMB_SIZE - newW) / 2);
+    const offY  = Math.floor((THUMB_SIZE - newH) / 2);
+    const lvlX  = imgX * lMeta.width  / l0.width;
+    const lvlY  = imgY * lMeta.height / l0.height;
+    return {
+      x: (lvlX * ts + offX) * containerW / THUMB_SIZE,
+      y: (lvlY * ts + offY) * containerW / THUMB_SIZE,
+    };
+  }
+
+  // Helper: compute image area bounds (in CSS px) within a thumb container
+  function _thumbImageArea(sampleMeta, thumbLevel, containerW) {
+    const THUMB_SIZE = 256;
+    const lMeta = sampleMeta.levels[thumbLevel];
+    const ts    = Math.min(THUMB_SIZE / lMeta.width, THUMB_SIZE / lMeta.height);
+    const newW  = Math.round(lMeta.width  * ts);
+    const newH  = Math.round(lMeta.height * ts);
+    const offX  = Math.floor((THUMB_SIZE - newW) / 2);
+    const offY  = Math.floor((THUMB_SIZE - newH) / 2);
+    return {
+      x0: offX * containerW / THUMB_SIZE,
+      y0: offY * containerW / THUMB_SIZE,
+      x1: (offX + newW) * containerW / THUMB_SIZE,
+      y1: (offY + newH) * containerW / THUMB_SIZE,
+    };
+  }
+
+  // Redraw viewport rectangle on the active sample's thumb canvas
+  function updateThumbOverlays() {
+    for (const [sampleName, canvas] of Object.entries(thumbCanvases)) {
+      const ctx2 = canvas.getContext('2d');
+      ctx2.clearRect(0, 0, canvas.width, canvas.height);
+      if (sampleName !== ACTIVE_SAMPLE) continue;
+
+      const m = SAMPLE_META[sampleName];
+      const thumbLevel = Math.max(2, Number(m.n_levels) - 1);
+      const containerW = canvas.width;   // square container
+      const area = _thumbImageArea(m, thumbLevel, containerW);
+
+      // visible rectangle in image coords
+      const vpW = root.clientWidth;
+      const vpH = root.clientHeight;
+      const tl  = viewport.toImageSpace(0, 0);
+      const br  = viewport.toImageSpace(vpW, vpH);
+
+      const p0 = _imgToThumbPx(tl.x, tl.y, m, thumbLevel, containerW);
+      const p1 = _imgToThumbPx(br.x, br.y, m, thumbLevel, containerW);
+
+      // Clip rect to image area — skip drawing if no overlap
+      const cx0 = Math.max(p0.x, area.x0);
+      const cy0 = Math.max(p0.y, area.y0);
+      const cx1 = Math.min(p1.x, area.x1);
+      const cy1 = Math.min(p1.y, area.y1);
+      if (cx0 >= cx1 || cy0 >= cy1) continue;
+
+      ctx2.save();
+      ctx2.beginPath();
+      ctx2.rect(area.x0, area.y0, area.x1 - area.x0, area.y1 - area.y0);
+      ctx2.clip();
+      ctx2.strokeStyle = 'rgba(255,55,55,0.92)';
+      ctx2.lineWidth = 1.5;
+      ctx2.strokeRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+      ctx2.restore();
+    }
   }
 
   function buildSampleRibbon() {
@@ -843,6 +947,25 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         + '&level=' + thumbLevel + '&size=256';
       thumbWrap.appendChild(img);
 
+      // Overlay canvas for viewport rectangle
+      const thumbCanvas = document.createElement('canvas');
+      thumbCanvas.width  = 1;
+      thumbCanvas.height = 1;
+      thumbCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;';
+      thumbWrap.appendChild(thumbCanvas);
+
+      // Size canvas to match rendered container once layout is settled
+      const resizeThumbCanvas = () => {
+        const w = thumbWrap.clientWidth;
+        if (w > 0 && (thumbCanvas.width !== w || thumbCanvas.height !== w)) {
+          thumbCanvas.width  = w;
+          thumbCanvas.height = w;
+          updateThumbOverlays();
+        }
+      };
+      new ResizeObserver(resizeThumbCanvas).observe(thumbWrap);
+      thumbCanvases[sampleName] = thumbCanvas;
+
       const label = document.createElement('div');
       label.textContent = sampleName;
       label.style.cssText = [
@@ -864,7 +987,47 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       card.appendChild(thumbWrap);
       card.appendChild(label);
       card.appendChild(badge);
-      card.addEventListener('click', () => setActiveSample(sampleName));
+
+      // Click: switch sample; if already active and click was inside thumb image area, navigate there.
+      // If switching to a different sample, just restore its last state (don't jump to click position).
+      card.addEventListener('click', e => {
+        const thumbRect = thumbWrap.getBoundingClientRect();
+        const inThumb = (e.clientX >= thumbRect.left && e.clientX <= thumbRect.right &&
+                         e.clientY >= thumbRect.top  && e.clientY <= thumbRect.bottom);
+
+        const wasSampleAlreadyActive = (sampleName === ACTIVE_SAMPLE);
+        setActiveSample(sampleName);
+
+        if (inThumb && wasSampleAlreadyActive) {
+          // Map click position to level-0 image coordinates
+          const clickX = e.clientX - thumbRect.left;
+          const clickY = e.clientY - thumbRect.top;
+          const containerW = thumbRect.width;
+          const THUMB_SIZE = 256;
+          const lMeta = m.levels[thumbLevel];
+          const l0    = m.levels[0];
+          const ts    = Math.min(THUMB_SIZE / lMeta.width, THUMB_SIZE / lMeta.height);
+          const newW  = Math.round(lMeta.width  * ts);
+          const newH  = Math.round(lMeta.height * ts);
+          const offX  = Math.floor((THUMB_SIZE - newW) / 2);
+          const offY  = Math.floor((THUMB_SIZE - newH) / 2);
+          const jpegX = clickX * THUMB_SIZE / containerW;
+          const jpegY = clickY * THUMB_SIZE / containerW;
+          const lvlX  = (jpegX - offX) / ts;
+          const lvlY  = (jpegY - offY) / ts;
+          const imgX  = Math.max(0, Math.min(l0.width,  lvlX * l0.width  / lMeta.width));
+          const imgY  = Math.max(0, Math.min(l0.height, lvlY * l0.height / lMeta.height));
+
+          // Pan viewport so the clicked image point is centered
+          const t  = viewport.getTransform();
+          const vpW = root.clientWidth;
+          const vpH = root.clientHeight;
+          const newOx = vpW / 2 - imgX * t.scale;
+          const newOy = vpH / 2 - imgY * t.scale;
+          viewport.panBy(newOx - t.ox, newOy - t.oy);
+        }
+      });
+
       samplesRibbon.appendChild(card);
     }
     setActiveSample(ACTIVE_SAMPLE);
@@ -1147,6 +1310,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   // status bar
   viewport.onChange(t => {
     drawPredLayer();
+    updateThumbOverlays();
     const lvl = META.levels;
     let level = META.n_levels - 1;
     for (let i = 0; i < META.n_levels; i++) {
@@ -1155,6 +1319,18 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     log('sample ' + ACTIVE_SAMPLE + '  |  zoom ' + t.scale.toFixed(3) + 'x  |  level ' + level
       + '  (' + lvl[level].width + 'x' + lvl[level].height + ')');
   });
+
+  // coordinate display — update on mouse move over main image
+  root.addEventListener('mousemove', e => {
+    const r = root.getBoundingClientRect();
+    const vpX = e.clientX - r.left;
+    const vpY = e.clientY - r.top;
+    const img = viewport.toImageSpace(vpX, vpY);
+    const ix = Math.round(img.x);
+    const iy = Math.round(img.y);
+    statusCoord.textContent = 'x: ' + ix + '  y: ' + iy;
+  });
+  root.addEventListener('mouseleave', () => { statusCoord.textContent = ''; });
 
   log('Ready: ' + ACTIVE_SAMPLE);
 
