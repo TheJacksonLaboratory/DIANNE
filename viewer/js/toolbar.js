@@ -330,6 +330,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
 
   let panning = false, panX = 0, panY = 0, panOx = 0, panOy = 0;
   let drawing  = false;
+  let cmdPanning = false;  // Cmd/Meta held in draw mode → temporary pan
   let mouseDownPos = null;
   const clicks = [];
 
@@ -346,8 +347,15 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       panOx = t.ox; panOy = t.oy;
       container.style.cursor = 'grabbing';
     } else if (_isDrawTool(activeTool)) {
-      drawing = true;
-      draw.onMouseDown(vpX, vpY);
+      if (e.metaKey) {
+        // Command held → temporary pan
+        cmdPanning = true;
+        panX = e.clientX; panY = e.clientY;
+        container.style.cursor = 'grabbing';
+      } else {
+        drawing = true;
+        draw.onMouseDown(vpX, vpY);
+      }
     }
   });
 
@@ -356,9 +364,14 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       viewport.panBy(e.clientX - panX, e.clientY - panY);
       panX = e.clientX; panY = e.clientY;
     } else if (_isDrawTool(activeTool)) {
-      // always forward to draw for cursor tracking; draw.onMouseMove internally
-      // skips point recording when no active stroke
-      draw.onMouseMove(..._toVPArr(e));
+      if (cmdPanning) {
+        viewport.panBy(e.clientX - panX, e.clientY - panY);
+        panX = e.clientX; panY = e.clientY;
+      } else {
+        // always forward to draw for cursor tracking; draw.onMouseMove internally
+        // skips point recording when no active stroke
+        draw.onMouseMove(..._toVPArr(e));
+      }
     }
   });
 
@@ -370,9 +383,14 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     if (activeTool === 'pan' && panning) {
       panning = false;
       container.style.cursor = 'grab';
-    } else if (_isDrawTool(activeTool) && drawing) {
-      drawing = false;
-      draw.onMouseUp();
+    } else if (_isDrawTool(activeTool)) {
+      if (cmdPanning) {
+        cmdPanning = false;
+        container.style.cursor = 'none';
+      } else if (drawing) {
+        drawing = false;
+        draw.onMouseUp();
+      }
     } else if (activeTool === 'click') {
       // only fire if not dragged
       if (mouseDownPos && _dist(e, mouseDownPos) < 4) {
@@ -383,10 +401,45 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     mouseDownPos = null;
   });
 
-  // double-click → reset in any mode
+  // Cmd key held/released in draw mode → update cursor in real time
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Meta' && _isDrawTool(activeTool) && !drawing) {
+      container.style.cursor = 'grab';
+    }
+  });
+  document.addEventListener('keyup', e => {
+    if (e.key === 'Meta' && _isDrawTool(activeTool)) {
+      cmdPanning = false;
+      container.style.cursor = 'none';
+    }
+  });
+
+  // double-click → select contour under cursor; no fallback zoom-reset
   container.addEventListener('dblclick', e => {
     if (_isUiEventTarget(e.target)) return;
-    viewport.reset();
+    if (typeof draw.hitTestStroke === 'function') {
+      const [vpX, vpY] = _toVPArr(e);
+      const hitId = draw.hitTestStroke(vpX, vpY);
+      if (hitId !== null) {
+        draw.selectStroke(hitId);
+      }
+    }
+    // viewport.reset() intentionally removed — dblclick miss no longer resets zoom
+  });
+
+  // Escape → deselect (if selection exists, consumes the event so fullscreen is not also exited)
+  // Delete → remove selected contour
+  document.addEventListener('keydown', e => {
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === 'Escape') {
+      if (typeof draw.hasSelection === 'function' && draw.hasSelection()) {
+        draw.clearSelection();
+        e.stopImmediatePropagation();  // prevent fullscreen Escape handler from firing
+      }
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (typeof draw.deleteSelected === 'function') draw.deleteSelected();
+    }
   });
 
   // wheel → zoom in any mode

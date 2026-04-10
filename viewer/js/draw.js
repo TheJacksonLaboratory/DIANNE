@@ -36,6 +36,7 @@ function createDraw(container, viewport) {
   let   cursorVpY  = -9999;
   let   cursorVisible = false;
   let   strokeId   = 0;
+  let   selectedId = null;  // id of the currently selected contour, or null
 
   // ── canvas setup ───────────────────────────────────────────────────────────
   const canvas = document.createElement('canvas');
@@ -141,6 +142,7 @@ function createDraw(container, viewport) {
     strokesPositive.length = 0;
     strokesNegative.length = 0;
     active = null;
+    selectedId = null;
     redraw();
   }
 
@@ -389,6 +391,7 @@ function createDraw(container, viewport) {
     strokesPositive.length = 0;
     strokesNegative.length = 0;
     active = null;
+    selectedId = null;
 
     if (Array.isArray(positive)) {
       for (const s of positive) {
@@ -421,6 +424,45 @@ function createDraw(container, viewport) {
     redraw();
   }
 
+  // ── point-to-segment distance (screen space) ────────────────────────────
+  function _ptSegDist(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  }
+
+  // Find the stroke id closest to (vpX, vpY); returns null if none within tolerance.
+  function _hitTest(vpX, vpY) {
+    if (!strokesVisible) return null;
+    const TOLERANCE = Math.max(8, lineWidth / 2 + 4);
+    let bestId   = null;
+    let bestDist = TOLERANCE;
+    const allStrokes = strokesPositive.concat(strokesNegative);
+    for (const s of allStrokes) {
+      if (s.points.length < 2) continue;
+      const pts = s.points.map(p => viewport.toScreenSpace(p.x, p.y));
+      const n   = pts.length;
+      for (let i = 0; i < n - 1; i++) {
+        const d = _ptSegDist(vpX, vpY, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+        if (d < bestDist) { bestDist = d; bestId = s.id; }
+      }
+      // For noodle polygons the points array is not explicitly closed — check wrap segment.
+      if (s.brushMode === 'noodle' && n >= 3) {
+        const d = _ptSegDist(vpX, vpY, pts[n - 1].x, pts[n - 1].y, pts[0].x, pts[0].y);
+        if (d < bestDist) { bestDist = d; bestId = s.id; }
+      }
+    }
+    return bestId;
+  }
+
+  function _findStrokeById(id) {
+    for (const s of strokesPositive) if (s.id === id) return s;
+    for (const s of strokesNegative) if (s.id === id) return s;
+    return null;
+  }
+
   // ── rendering ──────────────────────────────────────────────────────────────
   function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -428,8 +470,37 @@ function createDraw(container, viewport) {
       for (const s of strokesPositive) _renderStroke(s);
       for (const s of strokesNegative) _renderStroke(s);
       if (active)                      _renderStroke(active);
+      // Draw selected stroke highlight on top of all other strokes.
+      if (selectedId !== null) {
+        const sel = _findStrokeById(selectedId);
+        if (sel) _renderHighlight(sel);
+        else selectedId = null;  // stroke was removed externally
+      }
     }
     _renderCursor();
+  }
+
+  // Yellow glowing outline for the selected contour.
+  function _renderHighlight(stroke) {
+    if (!stroke || stroke.points.length < 2) return;
+    ctx.save();
+    ctx.lineCap     = 'round';
+    ctx.lineJoin    = 'round';
+    ctx.strokeStyle = '#ffe000';
+    ctx.lineWidth   = Math.max(lineWidth, 2) + 4;
+    ctx.globalAlpha = 0.92;
+    ctx.shadowColor = 'rgba(255, 220, 0, 1.0)';
+    ctx.shadowBlur  = 16;
+    ctx.beginPath();
+    const fp = viewport.toScreenSpace(stroke.points[0].x, stroke.points[0].y);
+    ctx.moveTo(fp.x, fp.y);
+    for (let i = 1; i < stroke.points.length; i++) {
+      const sp = viewport.toScreenSpace(stroke.points[i].x, stroke.points[i].y);
+      ctx.lineTo(sp.x, sp.y);
+    }
+    if (stroke.brushMode === 'noodle') ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
   }
 
   function _renderCursor() {
@@ -550,6 +621,24 @@ function createDraw(container, viewport) {
     ctx.stroke();
   }
 
+  // ── contour selection public API ───────────────────────────────────────────
+  function hitTestStroke(vpX, vpY) { return _hitTest(vpX, vpY); }
+  function selectStroke(id)        { selectedId = id; redraw(); }
+  function hasSelection()          { return selectedId !== null; }
+  function clearSelection()        { selectedId = null; redraw(); }
+  function deleteSelected() {
+    if (selectedId === null) return;
+    const id = selectedId;
+    selectedId = null;
+    for (let i = strokesPositive.length - 1; i >= 0; i--) {
+      if (strokesPositive[i].id === id) { strokesPositive.splice(i, 1); break; }
+    }
+    for (let i = strokesNegative.length - 1; i >= 0; i--) {
+      if (strokesNegative[i].id === id) { strokesNegative.splice(i, 1); break; }
+    }
+    redraw();
+  }
+
   return {
     onMouseDown,
     onMouseMove,
@@ -571,5 +660,10 @@ function createDraw(container, viewport) {
     setBrushMode,
     getBrushMode,
     setVisible,
+    hitTestStroke,
+    selectStroke,
+    hasSelection,
+    clearSelection,
+    deleteSelected,
   };
 }
