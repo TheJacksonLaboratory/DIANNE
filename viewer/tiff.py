@@ -22,8 +22,9 @@ class PyramidImage:
         arr = self._z["0"] if isinstance(self._z, zarr.Group) else self._z
         proper_tile = max(arr.chunks[-2], arr.chunks[-1])
         if proper_tile != self.TILE:
-            print(f"Warning: zarr chunk size {arr.chunks} does not match expected tile size {self.TILE}. "
-                  f"Using tile size {proper_tile} based on zarr chunk size.")
+            if getattr(self, 'verbose', False):
+                print(f"Warning: zarr chunk size {arr.chunks} does not match expected tile size {self.TILE}. "
+                    f"Using tile size {proper_tile} based on zarr chunk size.")
             self.TILE = proper_tile
 
         self.n_levels = len(self._z)

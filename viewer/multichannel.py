@@ -3,7 +3,22 @@ import numpy as np
 import tifffile
 import zarr
 from PIL import Image
+import xml.etree.ElementTree as ET
+import re
 
+def get_channel_names(path: str, clean: bool = True) -> list[str]:
+    with tifffile.TiffFile(path) as tif:
+        if not tif.ome_metadata:
+            return []
+        root = ET.fromstring(tif.ome_metadata)
+
+    channels = root.findall('.//{*}Channel')
+    names = [ch.get('Name', f'Channel {i}') for i, ch in enumerate(channels)]
+
+    if clean:
+        names = [re.sub(r'\s*\(color=[^)]*\)', '', n).strip() for n in names]
+
+    return names
 
 class MultichannelImage:
     """
@@ -25,8 +40,9 @@ class MultichannelImage:
         arr = self._z["0"] if isinstance(self._z, zarr.Group) else self._z
         proper_tile = max(arr.chunks[-2], arr.chunks[-1])
         if proper_tile != self.TILE:
-            print(f"Warning: zarr chunk size {arr.chunks} does not match expected tile size {self.TILE}. "
-                  f"Using tile size {proper_tile} based on zarr chunk size.")
+            if getattr(self, 'verbose', False):
+                print(f"Warning: zarr chunk size {arr.chunks} does not match expected tile size {self.TILE}. "
+                    f"Using tile size {proper_tile} based on zarr chunk size.")
             self.TILE = proper_tile
 
         self.n_levels = len(self._z)
@@ -41,6 +57,8 @@ class MultichannelImage:
             )
 
         self.n_channels = self._z['0'].shape[0]
+        self._channel_names = get_channel_names(self.path)
+        print(self._channel_names)
 
         h0, _ = self.levels[0]['shape']
         for i, meta in self.levels.items():
@@ -96,7 +114,7 @@ class MultichannelImage:
             n_levels           = self.n_levels,
             tile_size          = self.TILE,
             n_channels         = self.n_channels,
-            channel_names      = [f'Channel {i}' for i in range(self.n_channels)],
+            channel_names = self._channel_names if self._channel_names else [f'Channel {i}' for i in range(self.n_channels)],
             channel_ranges     = self._channel_ranges,
             channel_full_ranges = self._channel_full_ranges,
             levels = {
