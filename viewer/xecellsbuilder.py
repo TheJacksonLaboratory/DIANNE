@@ -164,9 +164,6 @@ def build_cells_fast_zarr(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # dst_fs = fsspec.filesystem("zip", fo=str(output_path), mode="w")
-    # dst_store = dst_fs.get_mapper("")
-    # dst = zarr.open_group(dst_store, mode="w")
     dst_store = zarr.ZipStore(str(output_path), mode="w")
     dst = zarr.open_group(dst_store, mode="w")
 
@@ -248,11 +245,6 @@ def build_cells_fast_zarr(
             print(f"  {pct:5.1f}%  ({completed}/{n_grid_cells} tiles)  "
                   f"elapsed={elapsed:.1f}s")
 
-    # Flush / close
-    # if hasattr(dst_store, "close"):
-    #     dst_store.close()
-    # if hasattr(dst_fs, "close"):
-    #     dst_fs.close()
     dst_store.close()
 
     elapsed = time.perf_counter() - t0

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import fsspec
 import numpy as np
+import pandas as pd
 import zarr
 from scipy.spatial import KDTree
 
@@ -40,6 +41,9 @@ class XeniumCells:
         elif hasattr(cell_id_to_category, 'to_dict'):
             # Supports pandas Series/DataFrame-like mappings passed from notebooks.
             self.cell_id_to_category = dict(cell_id_to_category.to_dict())
+        elif isinstance(cell_id_to_category, pd.Categorical):
+            # Use as is
+            pass
         else:
             self.cell_id_to_category = dict(cell_id_to_category)
 
@@ -108,7 +112,10 @@ class XeniumCells:
         points = []
         for point_index, (cell_id, he_coord) in enumerate(zip(indices, he_coords)):
             cell_id_int = int(cell_id)
-            category = self.cell_id_to_category.get(cell_id_int)
+            if isinstance(self.cell_id_to_category, pd.Categorical):
+                category = self.cell_id_to_category[cell_id_int]
+            else:
+                category = self.cell_id_to_category.get(cell_id_int)
 
             # print(self.cell_id_to_category, cell_id_int, category)
             # break
