@@ -322,7 +322,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   display: flex;
   justify-content: space-between;
   align-items: center;
-"><span id="iv-status-left">initializing…</span><span id="iv-status-coord" style="color:#8cf;margin-left:12px;white-space:nowrap;"></span></div>
+"><span id="iv-status-left">initializing…</span><span id="iv-status-coord" style="color:#8cf;margin-left:12px;white-space:nowrap;"></span><span id="iv-status-perf" style="color:#666;font-size:11px;white-space:nowrap;"></span></div>
   </div>
 </div>
 
@@ -332,6 +332,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const status   = document.getElementById('iv-status');
   const statusLeft  = document.getElementById('iv-status-left');
   const statusCoord = document.getElementById('iv-status-coord');
+  const statusPerf   = document.getElementById('iv-status-perf');
   const samplesRibbon = document.getElementById('iv-samples');
   const BASE_URL = __BASE_URL__;
   const SAMPLES  = __SAMPLES__;
@@ -351,6 +352,34 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
   function log(msg) { statusLeft.textContent = msg; }
+
+  // ── lightweight perf monitor (heap memory + FPS) ──────────────────────────
+  (function () {
+    const hasMem = !!(window.performance && performance.memory);
+    const frameTimes = [];
+    const WIN = 60;  // rolling window of N rAF timestamps
+    function rafTick(now) {
+      frameTimes.push(now);
+      if (frameTimes.length > WIN) frameTimes.shift();
+      requestAnimationFrame(rafTick);
+    }
+    requestAnimationFrame(rafTick);
+    function fmtMB(b) { return (b / 1048576).toFixed(0) + ' MB'; }
+    function curFps() {
+      if (frameTimes.length < 2) return 0;
+      const span = frameTimes[frameTimes.length - 1] - frameTimes[0];
+      return span > 0 ? Math.round((frameTimes.length - 1) * 1000 / span) : 0;
+    }
+    setInterval(function () {
+      const parts = [];
+      if (hasMem) {
+        parts.push('heap ' + fmtMB(performance.memory.usedJSHeapSize) +
+                   ' / ' + fmtMB(performance.memory.totalJSHeapSize));
+      }
+      parts.push(curFps() + ' fps');
+      statusPerf.textContent = parts.join('  |  ');
+    }, 2000);
+  })();
 
   // reserve space at the bottom so persistent footers don't overlap content
   try {
