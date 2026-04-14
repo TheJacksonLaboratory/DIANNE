@@ -322,7 +322,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   display: flex;
   justify-content: space-between;
   align-items: center;
-"><span id="iv-status-left">initializing…</span><span id="iv-status-coord" style="color:#8cf;margin-left:12px;white-space:nowrap;"></span><span id="iv-status-perf" style="color:#666;font-size:11px;white-space:nowrap;"></span></div>
+"><span id="iv-status-left">initializing…</span><span id="iv-status-coord" style="color:#8cf;margin-left:12px;white-space:nowrap;"></span><span id="iv-status-net" style="display:inline-flex;align-items:center;gap:5px;font-size:10px;white-space:nowrap;margin-left:12px;" title="↑ pending tile requests  ↓ data received last 60 s"><span style="color:#fa6;">↑</span><span style="display:inline-block;width:32px;height:5px;background:#2a2a2a;border-radius:3px;overflow:hidden;vertical-align:middle;"><span id="iv-gauge-pend-fill" style="display:block;height:100%;width:0%;background:#fa6;border-radius:3px;transition:width 0.4s;"></span></span><span id="iv-gauge-pend-txt" style="color:#888;min-width:14px;">0</span><span style="color:#4fa;margin-left:3px;">↓</span><span style="display:inline-block;width:32px;height:5px;background:#2a2a2a;border-radius:3px;overflow:hidden;vertical-align:middle;"><span id="iv-gauge-rx-fill" style="display:block;height:100%;width:0%;background:#4fa;border-radius:3px;transition:width 0.4s;"></span></span><span id="iv-gauge-rx-txt" style="color:#888;min-width:32px;">–</span></span><span id="iv-status-perf" style="color:#666;font-size:11px;white-space:nowrap;"></span></div>
   </div>
 </div>
 
@@ -331,8 +331,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const root     = document.getElementById('iv-root');
   const status   = document.getElementById('iv-status');
   const statusLeft  = document.getElementById('iv-status-left');
-  const statusCoord = document.getElementById('iv-status-coord');
-  const statusPerf   = document.getElementById('iv-status-perf');
+  const statusCoord    = document.getElementById('iv-status-coord');
+  const statusPerf      = document.getElementById('iv-status-perf');
+  const gaugePendFill   = document.getElementById('iv-gauge-pend-fill');
+  const gaugePendTxt    = document.getElementById('iv-gauge-pend-txt');
+  const gaugeRxFill     = document.getElementById('iv-gauge-rx-fill');
+  const gaugeRxTxt      = document.getElementById('iv-gauge-rx-txt');
   const samplesRibbon = document.getElementById('iv-samples');
   const BASE_URL = __BASE_URL__;
   const SAMPLES  = __SAMPLES__;
@@ -352,6 +356,62 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
   function log(msg) { statusLeft.textContent = msg; }
+
+  // ── network gauges (pending requests + data received last 60 s) ───────────
+  (function () {
+    let pending = 0;
+    const rxLog = [];          // [{time, bytes}]
+    let pendPeak = 8;          // soft-max for pending gauge; grows automatically
+    let rxPeak   = 4194304;    // soft-max for rx gauge, starts at 4 MB/min
+
+    function fmtBytes(b) {
+      if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+      if (b >= 1048576)    return (b / 1048576).toFixed(1) + ' MB';
+      if (b >= 1024)       return (b / 1024).toFixed(0) + ' kB';
+      return b + ' B';
+    }
+
+    // Monkey-patch window.fetch to count in-flight requests and log response sizes.
+    // pending is decremented as soon as response headers arrive (TTFB) — this
+    // correctly handles all response types (blob, json, text, …) without
+    // needing to know which body-consuming method the caller will use.
+    // Bytes are tracked only for blob() responses (tile images dominate traffic).
+    const _origFetch = window.fetch;
+    window.fetch = function (input, init) {
+      pending++;
+      return _origFetch.call(this, input, init).then(function (resp) {
+        pending = Math.max(0, pending - 1);   // server responded (headers received)
+        // wrap blob() to record transferred bytes
+        const _origBlob = resp.blob.bind(resp);
+        resp.blob = function () {
+          return _origBlob().then(function (b) {
+            rxLog.push({ time: Date.now(), bytes: b.size });
+            return b;
+          });
+        };
+        return resp;
+      }, function (err) {
+        // fetch rejected: network error or AbortError
+        pending = Math.max(0, pending - 1);
+        throw err;
+      });
+    };
+
+    setInterval(function () {
+      // pending gauge
+      pendPeak = Math.max(pendPeak * 0.98, pending, 4);
+      gaugePendFill.style.width = Math.min(100, pending / pendPeak * 100) + '%';
+      gaugePendTxt.textContent  = String(pending);
+
+      // rx/min gauge — rolling 60 s window
+      const now = Date.now();
+      while (rxLog.length && rxLog[0].time < now - 60000) rxLog.shift();
+      const rxBytes = rxLog.reduce(function (s, e) { return s + e.bytes; }, 0);
+      rxPeak = Math.max(rxPeak * 0.99, rxBytes, 524288);  // floor 512 kB
+      gaugeRxFill.style.width = Math.min(100, rxBytes / rxPeak * 100) + '%';
+      gaugeRxTxt.textContent  = fmtBytes(rxBytes);
+    }, 500);
+  })();
 
   // ── lightweight perf monitor (heap memory + FPS) ──────────────────────────
   (function () {
