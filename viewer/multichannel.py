@@ -58,7 +58,6 @@ class MultichannelImage:
 
         self.n_channels = self._z['0'].shape[0]
         self._channel_names = get_channel_names(self.path)
-        print(self._channel_names)
 
         h0, _ = self.levels[0]['shape']
         for i, meta in self.levels.items():

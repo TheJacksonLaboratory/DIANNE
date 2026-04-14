@@ -398,7 +398,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     '  <span>Secondary</span>',
     '  <input id="iv-secondary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
     '</span>',
-    '<span title="Overlay transparency">Opacity</span>',
+    '<span title="Overlay transparency">Prob. Opacity</span>',
     '<input id="iv-alpha" type="range" min="0" max="1" step="0.01" value="0.55" style="width:90px;">',
     '<span title="Low probability color">Low prob.</span>',
     '<input id="iv-low" type="color" value="#FFA500" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
