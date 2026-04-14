@@ -165,6 +165,45 @@ class MultichannelImage:
 
         return self._to_png(data)
 
+    def get_rgb_tile(self, level: int, row: int, col: int) -> bytes:
+        """
+        Composite all channels to an RGB JPEG tile using default IF colours.
+        Used by the server when serving secondary (background) image tiles.
+        """
+        if level not in self.levels:
+            raise ValueError(f'level {level} out of range 0–{self.n_levels - 1}')
+        meta = self.levels[level]
+        h, w = meta['shape']
+        T    = self.TILE
+        arr  = self._z[str(level)]
+
+        y0 = row * T;  y1 = min(y0 + T, h)
+        x0 = col * T;  x1 = min(x0 + T, w)
+
+        if y0 >= h or x0 >= w:
+            buf = io.BytesIO()
+            Image.fromarray(np.zeros((T, T, 3), dtype=np.uint8)).save(buf, format='JPEG', quality=85)
+            return buf.getvalue()
+
+        default_colors = np.array([
+            [ 68, 136, 255], [  0, 255,  68], [255,  34,  34], [255, 255,   0],
+            [  0, 255, 255], [255,   0, 255], [255, 136,   0], [255,   0, 136],
+        ], dtype=np.float32) / 255.0
+
+        rgb = np.zeros((T, T, 3), dtype=np.float32)
+        for c in range(self.n_channels):
+            data   = arr[c, y0:y1, x0:x1].astype(np.float32)
+            lo, hi = self._channel_ranges[c]
+            data   = np.clip((data - lo) / (hi - lo), 0.0, 1.0)
+            color  = default_colors[c % len(default_colors)]
+            th, tw = data.shape
+            rgb[:th, :tw] += data[:, :, np.newaxis] * color
+
+        rgb = np.clip(rgb * 255, 0, 255).astype(np.uint8)
+        buf = io.BytesIO()
+        Image.fromarray(rgb).save(buf, format='JPEG', quality=85)
+        return buf.getvalue()
+
     def get_level_thumbnail(self, level: int = None, size: int = 256,
                             background=(15, 15, 15)) -> bytes:
         """

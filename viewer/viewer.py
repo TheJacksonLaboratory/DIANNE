@@ -40,7 +40,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   xenium_mpp=0.2125, category_colors=None, max_cells=2000,
                   xenium_bundle_paths=None, matrices=None, annotations=None,
                   run_inference_fn=None, sample_sizes=None,
-                  save_func=None, load_func=None, list_names_func=None):
+                  save_func=None, load_func=None, list_names_func=None,
+                  secondary_images=None, secondary_matrices=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -153,6 +154,45 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         if v is not None
       }
 
+    if secondary_images is None:
+      secondary_images = {}
+    elif not isinstance(secondary_images, dict):
+      raise TypeError('secondary_images must be a dict[sample] -> path|None')
+    else:
+      secondary_images = {str(k): v for k, v in secondary_images.items() if v is not None}
+
+    if secondary_matrices is None:
+      secondary_matrices = {}
+    elif not isinstance(secondary_matrices, dict):
+      raise TypeError('secondary_matrices must be a dict[sample] -> matrix_csv_path|None')
+    else:
+      secondary_matrices = {str(k): v for k, v in secondary_matrices.items() if v is not None}
+
+    # Open secondary images and build per-sample metadata / affine matrices
+    secondary_sample_images = {}
+    sample_secondary_meta   = {s: None for s in sample_list}
+    sample_secondary_matrix = {s: None for s in sample_list}
+    for sample in sample_list:
+      sec_path = secondary_images.get(sample)
+      if sec_path is None:
+        continue
+      secondary_sample_images[sample] = _open_image(sec_path)
+      sample_secondary_meta[sample]   = secondary_sample_images[sample].metadata
+      mat_path = secondary_matrices.get(sample)
+      if mat_path is not None:
+        import numpy as _np
+        _mat = _np.loadtxt(str(mat_path), delimiter=',')
+        _M   = _mat[:2, :2].astype(float)
+        _Tr  = _mat[:2, -1].astype(float)
+        _Mi  = _np.linalg.inv(_M)
+        sample_secondary_matrix[sample] = {
+          'm00': float(_M[0, 0]),  'm01': float(_M[0, 1]),
+          'm10': float(_M[1, 0]),  'm11': float(_M[1, 1]),
+          'tx':  float(_Tr[0]),    'ty':  float(_Tr[1]),
+          'mi00': float(_Mi[0, 0]), 'mi01': float(_Mi[0, 1]),
+          'mi10': float(_Mi[1, 0]), 'mi11': float(_Mi[1, 1]),
+        }
+
     xenium_by_sample = {}
     xenium_cells_by_sample = {}
     sample_xenium_meta = {s: None for s in sample_list}
@@ -198,7 +238,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           sample_sizes=sample_sizes,
           save_fn=save_func,
           load_fn=load_func,
-          list_names_fn=list_names_func)
+          list_names_fn=list_names_func,
+          secondary_images=secondary_sample_images)
     server.start()
 
     server.chosen_sample = chosen_sample
@@ -210,7 +251,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     samples_json = json.dumps(sample_list)
     sample_meta_json = json.dumps({s: sample_images[s].metadata for s in sample_list})
     sample_xenium_meta_json = json.dumps(sample_xenium_meta)
-    sample_cells_meta_json = json.dumps(sample_cells_meta)
+    sample_cells_meta_json       = json.dumps(sample_cells_meta)
+    sample_secondary_meta_json   = json.dumps(sample_secondary_meta)
+    sample_secondary_matrix_json = json.dumps(sample_secondary_matrix)
     base_url  = server.base_url
 
     # inline all JS files
@@ -302,6 +345,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const INFERENCE_MS_PER_CELL = __INFERENCE_MS_PER_CELL__;
   const MAX_CELLS              = __MAX_CELLS__;
   const IS_MULTICHANNEL    = __IS_MULTICHANNEL__;
+  const SAMPLE_SECONDARY_META   = __SAMPLE_SECONDARY_META__;
+  const SAMPLE_SECONDARY_MATRIX = __SAMPLE_SECONDARY_MATRIX__;
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
@@ -312,6 +357,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     samplesRibbon.style.paddingBottom = '56px';
     document.getElementById('iv-main').style.paddingBottom = '56px';
   } catch (e) {}
+
+  // secondary image canvas — inserted before tileLayer so it renders behind primary tiles
+  const secondaryCanvas = document.createElement('canvas');
+  secondaryCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;';
+  root.appendChild(secondaryCanvas);
+  const secCtx = secondaryCanvas.getContext('2d');
 
   // tile layer
   const tileLayer = document.createElement('div');
@@ -339,6 +390,14 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     'font:12px monospace',
   ].join(';');
   overlayControls.innerHTML = [
+    '<span id="iv-primary-opacity-wrap" title="Primary image opacity" style="display:none;align-items:center;gap:4px;">',
+    '  <span>Primary</span>',
+    '  <input id="iv-primary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
+    '</span>',
+    '<span id="iv-secondary-opacity-wrap" title="Secondary image opacity" style="display:none;align-items:center;gap:4px;">',
+    '  <span>Secondary</span>',
+    '  <input id="iv-secondary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
+    '</span>',
     '<span title="Overlay transparency">Opacity</span>',
     '<input id="iv-alpha" type="range" min="0" max="1" step="0.01" value="0.55" style="width:90px;">',
     '<span title="Low probability color">Low prob.</span>',
@@ -347,6 +406,27 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     '<input id="iv-high" type="color" value="#0000FF" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
   ].join('');
   root.appendChild(overlayControls);
+
+  // primary-image opacity slider — shown only when primary is RGB (not multichannel) and a secondary exists
+  const _primaryOpacityWrap   = overlayControls.querySelector('#iv-primary-opacity-wrap');
+  const _primaryOpacitySlider = overlayControls.querySelector('#iv-primary-opacity');
+  // secondary-image opacity slider — shown whenever a secondary image exists for the active sample
+  const _secondaryOpacityWrap   = overlayControls.querySelector('#iv-secondary-opacity-wrap');
+  const _secondaryOpacitySlider = overlayControls.querySelector('#iv-secondary-opacity');
+
+  function _updateOpacitySliderVisibility() {
+    const hasSecondary = !!(SAMPLE_SECONDARY_META[ACTIVE_SAMPLE]);
+    const isSecMC = hasSecondary && !!(SAMPLE_SECONDARY_META[ACTIVE_SAMPLE].n_channels);
+    _primaryOpacityWrap.style.display   = (!IS_MULTICHANNEL && hasSecondary) ? 'flex' : 'none';
+    _secondaryOpacityWrap.style.display = (hasSecondary && !isSecMC) ? 'flex' : 'none';
+    _secChPanelWrap.style.display       = isSecMC ? 'block' : 'none';
+  }
+  _primaryOpacitySlider.addEventListener('input', () => {
+    tileLayer.style.opacity = _primaryOpacitySlider.value;
+  });
+  _secondaryOpacitySlider.addEventListener('input', () => {
+    secondaryCanvas.style.opacity = _secondaryOpacitySlider.value;
+  });
 
   // Fullscreen toggle button (expands iv-shell to fill the browser viewport)
   (function addFullscreenToggle() {
@@ -443,6 +523,299 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const tiles    = IS_MULTICHANNEL
       ? createMultichannelTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE)
       : createTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE, settings);
+
+  // ── secondary image layer ─────────────────────────────────────────────────
+  // RGB secondary: one img per tile
+  const _secRgbCache    = new Map();
+  const _secRgbInFlight = new Map();
+  // Multichannel secondary state
+  const SEC_CH_COLORS = ['#4488ff','#00ff44','#ff2222','#ffff00','#00ffff','#ff00ff','#ff8800','#ff0088'];
+  let _secChState    = [];
+  let _secGrayCache  = [];
+  let _secChInFlight = [];
+  const _secCompCache = new Map();
+
+  function _initSecChState() {
+    for (const m of _secChInFlight) for (const ctrl of m.values()) ctrl.abort();
+    _secChInFlight = [];
+    for (const [, en] of _secRgbCache) { if (en.img && en.img.src.startsWith('blob:')) URL.revokeObjectURL(en.img.src); }
+    _secRgbCache.clear();
+    for (const ctrl of _secRgbInFlight.values()) ctrl.abort();
+    _secRgbInFlight.clear();
+    _secCompCache.clear();
+    const secMeta = SAMPLE_SECONDARY_META[ACTIVE_SAMPLE];
+    if (!secMeta || !secMeta.n_channels) { _secChState = []; _secGrayCache = []; return; }
+    const N = secMeta.n_channels;
+    _secChState = Array.from({length: N}, (_, i) => ({
+      enabled: i === 0,
+      color: SEC_CH_COLORS[i % SEC_CH_COLORS.length],
+      opacity: 1.0,
+      intensityMin: secMeta.channel_ranges[i][0],
+      intensityMax: secMeta.channel_ranges[i][1],
+    }));
+    _secGrayCache  = Array.from({length: N}, () => new Map());
+    _secChInFlight = Array.from({length: N}, () => new Map());
+  }
+
+  function _buildSecComposite(key, secMeta) {
+    const N = _secChState.length;
+    const T = secMeta.tile_size;
+    const R = new Float32Array(T * T), G = new Float32Array(T * T), B = new Float32Array(T * T);
+    let any = false;
+    for (let ch = 0; ch < N; ch++) {
+      if (!_secChState[ch].enabled) continue;
+      const entry = _secGrayCache[ch].get(key);
+      if (!entry) continue;
+      any = true;
+      entry.lastUsed = Date.now();
+      const hex = _secChState[ch].color.replace('#', '');
+      const cr = parseInt(hex.slice(0,2),16)/255 * _secChState[ch].opacity;
+      const cg = parseInt(hex.slice(2,4),16)/255 * _secChState[ch].opacity;
+      const cb = parseInt(hex.slice(4,6),16)/255 * _secChState[ch].opacity;
+      const gray = entry.gray;
+      const [p1, p99] = secMeta.channel_ranges[ch];
+      const span = p99 - p1;
+      const lo8 = Math.max(0, Math.min(255, (_secChState[ch].intensityMin - p1) / span * 255));
+      const hi8 = Math.max(0, Math.min(255, (_secChState[ch].intensityMax - p1) / span * 255));
+      const win = Math.max(1, hi8 - lo8);
+      for (let i = 0; i < T * T; i++) {
+        const v = Math.max(0, Math.min(1, (gray[i] - lo8) / win));
+        R[i] += v * cr; G[i] += v * cg; B[i] += v * cb;
+      }
+    }
+    if (!any) return null;
+    const pixels = new Uint8ClampedArray(T * T * 4);
+    for (let i = 0; i < T * T; i++) {
+      const r = Math.min(255, R[i]*255), g = Math.min(255, G[i]*255), b = Math.min(255, B[i]*255);
+      pixels[i*4] = r; pixels[i*4+1] = g; pixels[i*4+2] = b;
+      pixels[i*4+3] = Math.min(255, Math.max(r, g, b));
+    }
+    const tc = document.createElement('canvas');
+    tc.width = tc.height = T;
+    tc.getContext('2d').putImageData(new ImageData(pixels, T, T), 0, 0);
+    return tc;
+  }
+
+  function _resizeSecCanvas() {
+    secondaryCanvas.width  = root.clientWidth  || 1;
+    secondaryCanvas.height = root.clientHeight || 1;
+    _drawSecondaryLayer(viewport.getTransform());
+  }
+  new ResizeObserver(_resizeSecCanvas).observe(root);
+  _resizeSecCanvas();
+
+  function _drawSecondaryLayer(t) {
+    const { scale, ox, oy } = t;
+    const secMeta = SAMPLE_SECONDARY_META[ACTIVE_SAMPLE];
+    secCtx.clearRect(0, 0, secondaryCanvas.width, secondaryCanvas.height);
+    if (!secMeta) return;
+    const isSecMC = !!(secMeta.n_channels);
+    const mat     = SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE];
+    const SECTILE = secMeta.tile_size;
+    let secLevel = secMeta.n_levels - 1;
+    for (let i = 0; i < secMeta.n_levels; i++) {
+      if (scale >= 1 / secMeta.levels[i].downsample) { secLevel = i; break; }
+    }
+    const lm    = secMeta.levels[secLevel];
+    const l0sec = secMeta.levels[0];
+    const dsSec = l0sec.width / lm.width;
+    const vpW = secondaryCanvas.width, vpH = secondaryCanvas.height;
+    let c0, r0, c1, r1;
+    if (mat) {
+      const corners = [
+        viewport.toImageSpace(0,0),   viewport.toImageSpace(vpW,0),
+        viewport.toImageSpace(0,vpH), viewport.toImageSpace(vpW,vpH),
+      ];
+      const sxs = corners.map(p => mat.mi00*(p.x-mat.tx) + mat.mi01*(p.y-mat.ty));
+      const sys = corners.map(p => mat.mi10*(p.x-mat.tx) + mat.mi11*(p.y-mat.ty));
+      const minSX = Math.min(...sxs)/dsSec, maxSX = Math.max(...sxs)/dsSec;
+      const minSY = Math.min(...sys)/dsSec, maxSY = Math.max(...sys)/dsSec;
+      c0 = Math.max(0, Math.floor(minSX/SECTILE) - 1);
+      r0 = Math.max(0, Math.floor(minSY/SECTILE) - 1);
+      c1 = Math.min(lm.n_tiles_x - 1, Math.ceil(maxSX/SECTILE));
+      r1 = Math.min(lm.n_tiles_y - 1, Math.ceil(maxSY/SECTILE));
+    } else {
+      const x0 = Math.max(0, (-ox/scale)/dsSec), y0 = Math.max(0, (-oy/scale)/dsSec);
+      const x1 = Math.min(lm.width, ((vpW-ox)/scale)/dsSec);
+      const y1 = Math.min(lm.height, ((vpH-oy)/scale)/dsSec);
+      c0 = Math.max(0, Math.floor(x0/SECTILE)); r0 = Math.max(0, Math.floor(y0/SECTILE));
+      c1 = Math.min(lm.n_tiles_x - 1, Math.floor(x1/SECTILE));
+      r1 = Math.min(lm.n_tiles_y - 1, Math.floor(y1/SECTILE));
+    }
+    const _applyTileTransform = (row, col) => {
+      if (mat) {
+        const a  = mat.m00*SECTILE*dsSec*scale, b  = mat.m10*SECTILE*dsSec*scale;
+        const cm = mat.m01*SECTILE*dsSec*scale, d  = mat.m11*SECTILE*dsSec*scale;
+        const e  = (mat.m00*col*SECTILE*dsSec + mat.m01*row*SECTILE*dsSec + mat.tx)*scale + ox;
+        const f  = (mat.m10*col*SECTILE*dsSec + mat.m11*row*SECTILE*dsSec + mat.ty)*scale + oy;
+        secCtx.setTransform(a, b, cm, d, e, f);
+      } else {
+        const sx = col*SECTILE*dsSec*scale + ox, sy = row*SECTILE*dsSec*scale + oy;
+        const sw = SECTILE*dsSec*scale;
+        secCtx.setTransform(sw, 0, 0, sw, sx, sy);
+      }
+    };
+    for (let row = r0; row <= r1; row++) {
+      for (let col = c0; col <= c1; col++) {
+        const k = ACTIVE_SAMPLE + '|' + secLevel + '|' + row + '|' + col;
+        if (isSecMC) {
+          const N = _secChState.length;
+          for (let ch = 0; ch < N; ch++) {
+            if (!_secChState[ch].enabled) continue;
+            if (_secGrayCache[ch].has(k) || _secChInFlight[ch].has(k)) continue;
+            const ctrl = new AbortController();
+            _secChInFlight[ch].set(k, ctrl);
+            fetch(BASE_URL + '/secondary_channel_tile?sample=' + encodeURIComponent(ACTIVE_SAMPLE)
+                + '&channel=' + ch + '&level=' + secLevel + '&row=' + row + '&col=' + col,
+              { signal: ctrl.signal })
+              .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+              .then(blob => {
+                _secChInFlight[ch].delete(k);
+                const img = new Image();
+                img.onload = () => {
+                  const T2 = secMeta.tile_size;
+                  const tmp = document.createElement('canvas');
+                  tmp.width = tmp.height = T2;
+                  tmp.getContext('2d').drawImage(img, 0, 0, T2, T2);
+                  const id = tmp.getContext('2d').getImageData(0, 0, T2, T2);
+                  const gray = new Uint8Array(T2 * T2);
+                  for (let i = 0; i < gray.length; i++) gray[i] = id.data[i * 4];
+                  _secGrayCache[ch].set(k, { gray, lastUsed: Date.now() });
+                  _secCompCache.delete(k);
+                  _drawSecondaryLayer(viewport.getTransform());
+                  URL.revokeObjectURL(img.src);
+                };
+                img.src = URL.createObjectURL(blob);
+              })
+              .catch(() => { _secChInFlight[ch].delete(k); });
+          }
+          let tc = _secCompCache.get(k);
+          if (!tc) {
+            tc = _buildSecComposite(k, secMeta);
+            if (tc) { if (_secCompCache.size > 200) _secCompCache.clear(); _secCompCache.set(k, tc); }
+          }
+          if (!tc) continue;
+          secCtx.save(); _applyTileTransform(row, col); secCtx.drawImage(tc, 0, 0, 1, 1); secCtx.restore();
+        } else {
+          if (_secRgbCache.size > 300) {
+            let ev = 0;
+            for (const [rk, en] of _secRgbCache) {
+              if (ev >= 100) break;
+              if (en.img && en.img.src.startsWith('blob:')) URL.revokeObjectURL(en.img.src);
+              _secRgbCache.delete(rk); ev++;
+            }
+          }
+          let entry = _secRgbCache.get(k);
+          if (!entry) {
+            const ctrl = new AbortController();
+            _secRgbInFlight.set(k, ctrl);
+            const img = new Image();
+            entry = { img, ready: false };
+            _secRgbCache.set(k, entry);
+            fetch(BASE_URL + '/secondary_tile?sample=' + encodeURIComponent(ACTIVE_SAMPLE)
+                + '&level=' + secLevel + '&row=' + row + '&col=' + col,
+              { signal: ctrl.signal })
+              .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+              .then(blob => {
+                _secRgbInFlight.delete(k);
+                img.onload = () => { entry.ready = true; _drawSecondaryLayer(viewport.getTransform()); };
+                img.src = URL.createObjectURL(blob);
+              })
+              .catch(() => { _secRgbInFlight.delete(k); });
+            continue;
+          }
+          if (!entry.ready) continue;
+          secCtx.save(); _applyTileTransform(row, col); secCtx.drawImage(entry.img, 0, 0, 1, 1); secCtx.restore();
+        }
+      }
+    }
+  }
+
+  // ── secondary channel panel (multichannel secondary only) ─────────────────────
+  const _secChPanelWrap = document.createElement('div');
+  _secChPanelWrap.dataset.ivUi = 'true';
+  _secChPanelWrap.style.cssText = [
+    'position:absolute','top:48px','left:8px','z-index:12',
+    'font:12px monospace','text-align:left','display:none',
+  ].join(';');
+  const _secChToggleBtn = document.createElement('button');
+  _secChToggleBtn.textContent = 'Sec.Ch \u25be';
+  _secChToggleBtn.title = 'Secondary image channel controls';
+  _secChToggleBtn.style.cssText = [
+    'background:rgba(0,0,0,0.60)','border:1px solid #555',
+    'color:#eee','border-radius:6px','padding:4px 8px',
+    'cursor:pointer','font:12px monospace','white-space:nowrap',
+  ].join(';');
+  _secChPanelWrap.appendChild(_secChToggleBtn);
+  const _secChDropdown = document.createElement('div');
+  _secChDropdown.style.cssText = [
+    'display:none','margin-top:4px',
+    'background:rgba(12,12,12,0.92)','border:1px solid #444',
+    'border-radius:6px','padding:6px 8px',
+    'max-height:340px','overflow-y:auto','min-width:340px','text-align:left',
+  ].join(';');
+  _secChPanelWrap.appendChild(_secChDropdown);
+  _secChToggleBtn.addEventListener('click', () => {
+    const open = _secChDropdown.style.display !== 'none';
+    _secChDropdown.style.display = open ? 'none' : 'block';
+    _secChToggleBtn.textContent  = open ? 'Sec.Ch \u25be' : 'Sec.Ch \u25b4';
+  });
+  root.appendChild(_secChPanelWrap);
+
+  function _buildSecChPanel() {
+    _secChDropdown.innerHTML = '';
+    const secMeta = SAMPLE_SECONDARY_META[ACTIVE_SAMPLE];
+    if (!secMeta || !_secChState.length) return;
+    const N = _secChState.length;
+    const chNames = secMeta.channel_names || Array.from({length: N}, (_, i) => 'Ch ' + i);
+    for (let ch = 0; ch < N; ch++) {
+      const rowEl = document.createElement('div');
+      rowEl.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid #222;';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox'; chk.checked = _secChState[ch].enabled;
+      chk.title = 'Toggle ' + chNames[ch];
+      chk.style.cssText = 'cursor:pointer;flex-shrink:0;';
+      const labelEl = document.createElement('span');
+      labelEl.textContent = chNames[ch];
+      labelEl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ddd;';
+      const swatch = document.createElement('span');
+      swatch.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:50%;\
+        border:1px solid #666;flex-shrink:0;background:' + _secChState[ch].color + ';';
+      const colorPick = document.createElement('input');
+      colorPick.type = 'color'; colorPick.value = _secChState[ch].color;
+      colorPick.style.cssText = 'width:22px;height:22px;border:none;background:none;padding:0;cursor:pointer;flex-shrink:0;';
+      const opSlider = document.createElement('input');
+      opSlider.type = 'range'; opSlider.min = '0'; opSlider.max = '1'; opSlider.step = '0.05';
+      opSlider.value = String(_secChState[ch].opacity);
+      opSlider.title = 'Channel brightness';
+      opSlider.style.cssText = 'width:64px;flex-shrink:0;';
+      const [rawMin, rawMax] = secMeta.channel_full_ranges[ch];
+      const rangeSlider = createDualRangeSlider(
+        rawMin, rawMax,
+        _secChState[ch].intensityMin, _secChState[ch].intensityMax,
+        (lo, hi) => {
+          _secChState[ch].intensityMin = lo; _secChState[ch].intensityMax = hi;
+          _secCompCache.clear(); _drawSecondaryLayer(viewport.getTransform());
+        });
+      chk.addEventListener('change', () => {
+        _secChState[ch].enabled = chk.checked;
+        _secCompCache.clear(); _drawSecondaryLayer(viewport.getTransform());
+      });
+      colorPick.addEventListener('input', () => {
+        _secChState[ch].color = colorPick.value; swatch.style.background = colorPick.value;
+        _secCompCache.clear(); _drawSecondaryLayer(viewport.getTransform());
+      });
+      opSlider.addEventListener('input', () => {
+        _secChState[ch].opacity = parseFloat(opSlider.value);
+        _secCompCache.clear(); _drawSecondaryLayer(viewport.getTransform());
+      });
+      rowEl.appendChild(chk); rowEl.appendChild(labelEl); rowEl.appendChild(swatch);
+      rowEl.appendChild(colorPick); rowEl.appendChild(opSlider); rowEl.appendChild(rangeSlider);
+      _secChDropdown.appendChild(rowEl);
+    }
+  }
+
+
   // shared row: [cells button] [genes controls] — both top-right, side by side
   const rightControlsRow = document.createElement('div');
   rightControlsRow.dataset.ivUi = 'true';
@@ -753,6 +1126,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   window.ivHideLoader = hideLoader;
 
   syncOverlayControls();
+  _updateOpacitySliderVisibility();
+  _initSecChState();
+  _buildSecChPanel();
 
   function setActiveSample(sampleName) {
     if (!SAMPLE_META[sampleName]) return;
@@ -789,12 +1165,20 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
       tiles.setSample(ACTIVE_SAMPLE);
       tiles.setMeta(META);
+      for (const ctrl of _secRgbInFlight.values()) ctrl.abort();
+      _secRgbInFlight.clear();
+      for (const m of _secChInFlight) { for (const ctrl of m.values()) ctrl.abort(); m.clear(); }
+      _secCompCache.clear();
+      _initSecChState();
+      _buildSecChPanel();
       transcripts.setContext(ACTIVE_SAMPLE, META, SAMPLE_XENIUM_META[ACTIVE_SAMPLE],
         transcriptStateBySample[sampleName] || null);
       cells.setContext(ACTIVE_SAMPLE, META, SAMPLE_CELLS_META[ACTIVE_SAMPLE],
         cellStateBySample[sampleName] || null);
       predPoints = [];
       drawPredLayer();
+      _drawSecondaryLayer(viewport.getTransform());
+      _updateOpacitySliderVisibility();
 
       // Load strokes for new sample
       const savedStrokes = strokesBySample[ACTIVE_SAMPLE];
@@ -1272,6 +1656,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   // trigger initial tile load now that all listeners are wired
   tiles.update(viewport.getTransform());
+  _drawSecondaryLayer(viewport.getTransform());
 
   // crosshair on click-tool mouseup
   root.addEventListener('mouseup', e => {
@@ -1309,6 +1694,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   // status bar
   viewport.onChange(t => {
+    _drawSecondaryLayer(t);
     drawPredLayer();
     updateThumbOverlays();
     const lvl = META.levels;
@@ -1353,6 +1739,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__INFERENCE_MS_PER_CELL__', str(INFERENCE_MS_PER_CELL)) \
    .replace('__MAX_CELLS__', str(max_cells)) \
    .replace('__IS_MULTICHANNEL__', 'true' if is_multichannel else 'false') \
+   .replace('__SAMPLE_SECONDARY_META__',   sample_secondary_meta_json) \
+   .replace('__SAMPLE_SECONDARY_MATRIX__', sample_secondary_matrix_json) \
    .replace('__JS__',      js)
 
     display(HTML(html))

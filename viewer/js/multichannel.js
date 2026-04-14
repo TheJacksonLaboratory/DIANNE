@@ -16,6 +16,90 @@
  *   tiles.setMeta(nextMeta)   — switch image metadata (clears all caches)
  *   tiles.setSample(name)     — switch active sample name (clears tile caches)
  */
+// ── dual-range slider helper (module-level so secondary channel panel can reuse it) ────
+function createDualRangeSlider(rawMin, rawMax, defaultLo, defaultHi, onChange) {
+  if (!document.querySelector('style[data-iv-dual-range]')) {
+    const s = document.createElement('style');
+    s.dataset.ivDualRange = '';
+    s.textContent = [
+      '.iv-dr{position:absolute;top:0;left:0;width:100%;height:20px;',
+      'margin:0;padding:0;background:transparent;',
+      '-webkit-appearance:none;appearance:none;pointer-events:none;}',
+      '.iv-dr::-webkit-slider-runnable-track{background:transparent;height:4px;}',
+      '.iv-dr::-moz-range-track{background:transparent;height:4px;}',
+      '.iv-dr::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;',
+      'width:11px;height:11px;border-radius:50%;',
+      'background:#bbb;border:1.5px solid #777;',
+      'cursor:pointer;pointer-events:all;margin-top:-3px;}',
+      '.iv-dr::-moz-range-thumb{width:11px;height:11px;border-radius:50%;',
+      'background:#bbb;border:1.5px solid #777;cursor:pointer;pointer-events:all;}',
+    ].join('');
+    document.head.appendChild(s);
+  }
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:relative;width:96px;height:20px;flex-shrink:0;';
+
+  const track = document.createElement('div');
+  track.style.cssText = [
+    'position:absolute', 'top:8px', 'left:4px', 'right:4px',
+    'height:4px', 'background:#2a2a2a', 'border-radius:2px', 'pointer-events:none',
+  ].join(';');
+  const fill = document.createElement('div');
+  fill.style.cssText = 'position:absolute;top:0;height:100%;background:#686868;border-radius:2px;';
+  track.appendChild(fill);
+  wrap.appendChild(track);
+
+  const step = rawMax > rawMin ? (rawMax - rawMin) / 1000 : 1;
+
+  const inputLo = document.createElement('input');
+  inputLo.type      = 'range';
+  inputLo.className = 'iv-dr';
+  inputLo.style.zIndex = '2';
+
+  const inputHi = document.createElement('input');
+  inputHi.type      = 'range';
+  inputHi.className = 'iv-dr';
+  inputHi.style.zIndex = '3';
+
+  for (const inp of [inputLo, inputHi]) {
+    inp.min  = String(rawMin);
+    inp.max  = String(rawMax);
+    inp.step = String(step);
+  }
+  inputLo.value = String(Math.max(rawMin, Math.min(rawMax, defaultLo)));
+  inputHi.value = String(Math.max(rawMin, Math.min(rawMax, defaultHi)));
+
+  function updateFill() {
+    const lo = parseFloat(inputLo.value);
+    const hi = parseFloat(inputHi.value);
+    const span = rawMax - rawMin;
+    const loF  = span > 0 ? (lo - rawMin) / span : 0;
+    const hiF  = span > 0 ? (hi - rawMin) / span : 1;
+    fill.style.left  = (loF * 100).toFixed(2) + '%';
+    fill.style.width = ((hiF - loF) * 100).toFixed(2) + '%';
+    wrap.title = `min: ${lo.toFixed(1)}  max: ${hi.toFixed(1)}`;
+  }
+
+  inputLo.addEventListener('input', () => {
+    if (parseFloat(inputLo.value) > parseFloat(inputHi.value))
+      inputLo.value = inputHi.value;
+    updateFill();
+    onChange(parseFloat(inputLo.value), parseFloat(inputHi.value));
+  });
+  inputHi.addEventListener('input', () => {
+    if (parseFloat(inputHi.value) < parseFloat(inputLo.value))
+      inputHi.value = inputLo.value;
+    updateFill();
+    onChange(parseFloat(inputLo.value), parseFloat(inputHi.value));
+  });
+
+  wrap.appendChild(inputLo);
+  wrap.appendChild(inputHi);
+  updateFill();
+  return wrap;
+}
+
 function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName) {
   const root   = tileLayer.parentElement;
   const TILE   = meta.tile_size;
@@ -161,10 +245,13 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
 
     const pixels = new Uint8ClampedArray(TILE * TILE * 4);
     for (let i = 0; i < TILE * TILE; i++) {
-      pixels[i * 4]     = R[i] * 255;
-      pixels[i * 4 + 1] = G[i] * 255;
-      pixels[i * 4 + 2] = B[i] * 255;
-      pixels[i * 4 + 3] = 255;
+      const r = R[i] * 255;
+      const g = G[i] * 255;
+      const b = B[i] * 255;
+      pixels[i * 4]     = r;
+      pixels[i * 4 + 1] = g;
+      pixels[i * 4 + 2] = b;
+      pixels[i * 4 + 3] = Math.min(255, Math.max(r, g, b));
     }
     const tc = document.createElement('canvas');
     tc.width = tc.height = TILE;
@@ -302,10 +389,11 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   ].join(';');
   panel.appendChild(toggleBtn);
 
-  // ── dual-range slider helper ────────────────────────────────────────────
-  // Injects a shared <style> once and returns a wrapper div with two
-  // overlapping transparent range inputs that act as lo/hi thumbs.
-  function createDualRangeSlider(rawMin, rawMax, defaultLo, defaultHi, onChange) {
+  // createDualRangeSlider is now module-level (defined above createMultichannelTiles).
+  // Keep a local alias so the rest of this closure can call it without change.
+  // (The function identifier is already in scope via the module-level declaration.)
+  void createDualRangeSlider; // reference to suppress unused-var linters
+  function _localDualRangeAlias(rawMin, rawMax, defaultLo, defaultHi, onChange) {
     if (!document.querySelector('style[data-iv-dual-range]')) {
       const s = document.createElement('style');
       s.dataset.ivDualRange = '';
@@ -387,6 +475,8 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     updateFill();
     return wrap;
   }
+  // End of _localDualRangeAlias — replace all internal calls with the module-level function.
+  // (This local alias is never actually called; the code below uses createDualRangeSlider directly.)
 
   const dropdown = document.createElement('div');
   dropdown.style.cssText = [

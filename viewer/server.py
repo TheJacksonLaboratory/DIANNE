@@ -38,7 +38,8 @@ class ViewerServer:
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
                  xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
                  run_inference_fn=None, sample_sizes=None,
-                 save_fn=None, load_fn=None, list_names_fn=None):
+                 save_fn=None, load_fn=None, list_names_fn=None,
+                 secondary_images=None):
         if images is None:
             if image is None:
                 raise ValueError('ViewerServer requires image or images')
@@ -85,9 +86,10 @@ class ViewerServer:
         } if sample_sizes else {}
         self._inference_lock = threading.Lock()
         self._inference_running = False
-        self.save_fn       = save_fn
-        self.load_fn       = load_fn
-        self.list_names_fn = list_names_fn
+        self.save_fn           = save_fn
+        self.load_fn           = load_fn
+        self.list_names_fn     = list_names_fn
+        self.secondary_images  = {str(k): v for k, v in (secondary_images or {}).items()}
 
         self.clicks  = []
         self.strokes_by_sample = {
@@ -253,6 +255,38 @@ class ViewerServer:
                         except Exception as exc:
                             body = json.dumps({'error': str(exc)}).encode()
                     self._respond(200, body, 'application/json')
+
+                elif parsed.path == '/secondary_tile':
+                    sec_image = srv.secondary_images.get(sample_name)
+                    if sec_image is None:
+                        self._respond(404)
+                    else:
+                        try:
+                            level = int(qs['level'][0])
+                            row   = int(qs['row'][0])
+                            col   = int(qs['col'][0])
+                            if hasattr(sec_image, 'n_channels'):
+                                data = sec_image.get_rgb_tile(level, row, col)
+                            else:
+                                data = sec_image.get_tile(level, row, col)
+                            self._respond(200, data, 'image/jpeg')
+                        except Exception as e:
+                            self._respond(400, str(e).encode())
+
+                elif parsed.path == '/secondary_channel_tile':
+                    sec_image = srv.secondary_images.get(sample_name)
+                    if sec_image is None or not hasattr(sec_image, 'n_channels'):
+                        self._respond(404)
+                    else:
+                        try:
+                            channel = int(qs['channel'][0])
+                            level   = int(qs['level'][0])
+                            row     = int(qs['row'][0])
+                            col     = int(qs['col'][0])
+                            data    = sec_image.get_channel_tile(channel, level, row, col)
+                            self._respond(200, data, 'image/png')
+                        except Exception as e:
+                            self._respond(400, str(e).encode())
 
                 else:
                     self._respond(404)
