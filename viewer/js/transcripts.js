@@ -14,7 +14,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   let currentSample = sampleName;
   let currentImageMeta = imageMeta;
   let currentTranscriptMeta = transcriptMeta;
-  let enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes);
+  let enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes && currentTranscriptMeta.genes.length);
 
   const layer = document.createElement('canvas');
   layer.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2;';
@@ -329,7 +329,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     currentSample = sample;
     currentImageMeta = imageMetaNext;
     currentTranscriptMeta = transcriptMetaNext;
-    enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes);
+    enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes && currentTranscriptMeta.genes.length);
     rebuildGenePanel();  // clears selectedGenes
     if (stateToRestore) {
       if (stateToRestore.selectedGenes) {

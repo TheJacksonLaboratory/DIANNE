@@ -36,30 +36,46 @@ class XeniumTranscripts:
             self._Tr = mat[:2, -1].astype(float)
             self._Mi = np.linalg.inv(self._M)
 
-        zip_fs = fsspec.filesystem('zip', fo=str(self.bundle_path / 'transcripts.zarr.zip'))
-        store = zip_fs.get_mapper('')
-        self._root = zarr.open(store, mode='r')
-
-        raw_gene_map = dict(self._root.attrs['gene_index_map'])
-        self.gene_to_index = {str(gene): int(idx) for gene, idx in raw_gene_map.items()}
-        self.index_to_gene = {idx: gene for gene, idx in self.gene_to_index.items()}
-        self.gene_names = [
-            gene for gene, _ in sorted(self.gene_to_index.items(), key=lambda item: item[1])
-        ]
-
-        grids_group = self._root['grids']
-        self.grid_keys = sorted(grids_group.keys(), key=lambda key: int(key))
-        raw_grid_sizes = list(grids_group.attrs.get('grid_size', []))
-        base_spacing = float(raw_grid_sizes[0]) if raw_grid_sizes else 1.0
-
+        self._root = None
+        self.gene_to_index = {}
+        self.index_to_gene = {}
+        self.gene_names = []
+        self.grid_keys = []
         self.grids = {}
-        for idx, key in enumerate(self.grid_keys):
-            spacing = float(raw_grid_sizes[idx]) if idx < len(raw_grid_sizes) else base_spacing * (2 ** idx)
-            self.grids[idx] = {
-                'key': key,
-                'spacing': spacing,
-                'downsample': spacing / base_spacing,
-            }
+
+        transcript_path = self.bundle_path / 'transcripts.zarr.zip'
+        if transcript_path.exists():
+            try:
+                zip_fs = fsspec.filesystem('zip', fo=str(transcript_path))
+                store = zip_fs.get_mapper('')
+                self._root = zarr.open(store, mode='r')
+
+                raw_gene_map = dict(self._root.attrs['gene_index_map'])
+                self.gene_to_index = {str(gene): int(idx) for gene, idx in raw_gene_map.items()}
+                self.index_to_gene = {idx: gene for gene, idx in self.gene_to_index.items()}
+                self.gene_names = [
+                    gene for gene, _ in sorted(self.gene_to_index.items(), key=lambda item: item[1])
+                ]
+
+                grids_group = self._root['grids']
+                self.grid_keys = sorted(grids_group.keys(), key=lambda key: int(key))
+                raw_grid_sizes = list(grids_group.attrs.get('grid_size', []))
+                base_spacing = float(raw_grid_sizes[0]) if raw_grid_sizes else 1.0
+
+                for idx, key in enumerate(self.grid_keys):
+                    spacing = float(raw_grid_sizes[idx]) if idx < len(raw_grid_sizes) else base_spacing * (2 ** idx)
+                    self.grids[idx] = {
+                        'key': key,
+                        'spacing': spacing,
+                        'downsample': spacing / base_spacing,
+                    }
+            except Exception:
+                self._root = None
+                self.gene_to_index = {}
+                self.index_to_gene = {}
+                self.gene_names = []
+                self.grid_keys = []
+                self.grids = {}
 
     @property
     def metadata(self):
@@ -77,7 +93,7 @@ class XeniumTranscripts:
         }
 
     def get_tile_transcripts(self, grid, level, row, col, genes):
-        if not genes:
+        if not genes or self._root is None:
             return []
 
         grid = int(grid)
