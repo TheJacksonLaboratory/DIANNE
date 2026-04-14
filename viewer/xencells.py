@@ -43,7 +43,7 @@ class XeniumCells:
             self.cell_id_to_category = dict(cell_id_to_category.to_dict())
         elif isinstance(cell_id_to_category, pd.Categorical):
             # Use as is
-            pass
+            self.cell_id_to_category = cell_id_to_category
         else:
             self.cell_id_to_category = dict(cell_id_to_category)
 
@@ -116,9 +116,6 @@ class XeniumCells:
                 category = self.cell_id_to_category[cell_id_int]
             else:
                 category = self.cell_id_to_category.get(cell_id_int)
-
-            # print(self.cell_id_to_category, cell_id_int, category)
-            # break
 
             boundary = None
             if boundaries is not None and point_index < len(boundaries):
