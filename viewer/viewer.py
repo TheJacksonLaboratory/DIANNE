@@ -1129,6 +1129,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       if (result.ok) {
         const ov = result.overlay;
         let points = ov.xi.map((xi, i) => ({ xi, yi: ov.yi[i], pi: ov.pi[i] }));
+        const style  = { delta: ov.style.delta, alpha: ov.style.alpha,
+                         colorLow: ov.style.colorLow, colorHigh: ov.style.colorHigh };
         // If DRAW_ON_SECONDARY, inference returns coords in secondary space;
         // transform back to primary image space for display.
         if (DRAW_ON_SECONDARY) {
@@ -1139,10 +1141,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
               const p = _secToPrim(_ovMat, pt.xi, pt.yi);
               return { xi: p.x, yi: p.y, pi: pt.pi };
             });
+            // delta is in secondary pixel units; scale to primary pixel units.
+            // sqrt(|det(M)|) is the linear scale factor of the affine's linear part.
+            const _det = _ovMat.m00 * _ovMat.m11 - _ovMat.m01 * _ovMat.m10;
+            style.delta = style.delta * Math.sqrt(Math.abs(_det));
           }
         }
-        const style  = { delta: ov.style.delta, alpha: ov.style.alpha,
-                         colorLow: ov.style.colorLow, colorHigh: ov.style.colorHigh };
         if (result.sample && result.sample !== ACTIVE_SAMPLE) setActiveSample(result.sample);
         window.ivSetOverlayPoints(points, style);
         log('Inference complete: ' + points.length + ' points on ' + (result.sample || ACTIVE_SAMPLE));
@@ -1223,7 +1227,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   function drawPredLayer() {
     predCtx.clearRect(0, 0, predLayer.width, predLayer.height);
-    const delta = Math.max(1, Number(predStyle.delta) || 28);
+    const delta = Math.max(1, Number(predStyle.delta) || 1);
     const half = delta / 2;
     const alpha = clamp01(predStyle.alpha);
 
