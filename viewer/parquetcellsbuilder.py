@@ -142,7 +142,7 @@ def parquet_to_cells_zarr(
     parquet_path: str | Path,
     output_path: str | Path = "cells.zarr.zip",
     boundary_set: int = 1,
-    scalefactor: float = 1.0,
+    scalefactor: float = 0.325,
     max_vertices: int | None = None,
     compressor: numcodecs.abc.Codec = _BLOSC_DEFAULT,
     extra_root_attrs: dict | None = None,
@@ -326,4 +326,5 @@ if __name__ == "__main__":
     import sys
     src = sys.argv[1] if len(sys.argv) > 1 else "cell_boundaries.parquet"
     dst = sys.argv[2] if len(sys.argv) > 2 else "cells.zarr.zip"
-    parquet_to_cells_zarr(src, dst)
+    scalefactor = sys.argv[3] if len(sys.argv) > 3 else 0.3250
+    parquet_to_cells_zarr(src, dst, scalefactor)
