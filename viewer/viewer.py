@@ -14,7 +14,7 @@ _JS_DIR = Path(__file__).parent / 'js'
 # Configurable: milliseconds of loading-bar animation per cell in the inference sample.
 # Examples: 5 000 cells → 5000 * 0.4 = 2 000 ms (2 s)
 #           20 000 cells → 20000 * 0.4 = 8 000 ms (8 s)
-INFERENCE_MS_PER_CELL = 0.15
+INFERENCE_MS_PER_CELL = 0.25
 
 def _read_js(name):
     return (_JS_DIR / name).read_text()
@@ -41,7 +41,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   xenium_bundle_paths=None, matrices=None, annotations=None,
                   run_inference_fn=None, sample_sizes=None,
                   save_func=None, load_func=None, list_names_func=None,
-                  secondary_images=None, secondary_matrices=None):
+                  secondary_images=None, secondary_matrices=None,
+                  draw_on_secondary=False):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -97,6 +98,14 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         name and the current strokes dict (for optional use).
     list_names_func : optional callable() -> list[str]
         Returns the list of saved classifier names shown in the Load picker.\n        If omitted the Load button will not appear.
+    draw_on_secondary : bool, default False
+        When True, stroke coordinates sent to ``run_inference_fn`` are
+        converted from primary-image pixel space to secondary-image pixel
+        space via the inverse of the secondary affine matrix before being
+        submitted to the server.  The visual display of strokes is
+        unaffected.  Inference-result overlay points (``xi``, ``yi``) are
+        assumed to be in secondary pixel space and are automatically
+        transformed back to primary image space before rendering.
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -352,10 +361,46 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const IS_MULTICHANNEL    = __IS_MULTICHANNEL__;
   const SAMPLE_SECONDARY_META   = __SAMPLE_SECONDARY_META__;
   const SAMPLE_SECONDARY_MATRIX = __SAMPLE_SECONDARY_MATRIX__;
+  const DRAW_ON_SECONDARY        = __DRAW_ON_SECONDARY__;
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
   function log(msg) { statusLeft.textContent = msg; }
+
+  // ── secondary ↔ primary coord helpers (active when DRAW_ON_SECONDARY) ──────
+  function _primToSec(mat, x, y) {
+    var dx = x - mat.tx, dy = y - mat.ty;
+    return { x: mat.mi00 * dx + mat.mi01 * dy,
+             y: mat.mi10 * dx + mat.mi11 * dy };
+  }
+  function _secToPrim(mat, x, y) {
+    return { x: mat.m00 * x + mat.m01 * y + mat.tx,
+             y: mat.m10 * x + mat.m11 * y + mat.ty };
+  }
+  function _tfmStrokeList(list, fn) {
+    return list.map(function(s) {
+      return Object.assign({}, s, { points: s.points.map(function(p) { return fn(p.x, p.y); }) });
+    });
+  }
+  // Returns a transformed copy of strokesBySample suitable for the server.
+  // When DRAW_ON_SECONDARY is true, each sample's strokes are converted
+  // from primary→secondary pixel space using the per-sample inverse matrix.
+  function _buildServerStrokesPayload() {
+    var out = {};
+    for (var _s in strokesBySample) {
+      var _raw = strokesBySample[_s];
+      var _mat = DRAW_ON_SECONDARY && SAMPLE_SECONDARY_MATRIX[_s];
+      if (_mat) {
+        out[_s] = {
+          strokes_positive: _tfmStrokeList(_raw.strokes_positive, function(x, y) { return _primToSec(_mat, x, y); }),
+          strokes_negative: _tfmStrokeList(_raw.strokes_negative, function(x, y) { return _primToSec(_mat, x, y); }),
+        };
+      } else {
+        out[_s] = _raw;
+      }
+    }
+    return out;
+  }
 
   // ── network gauges (pending requests + data received last 60 s) ───────────
   (function () {
@@ -947,7 +992,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           await fetch(BASE_URL + '/strokes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ by_sample: strokesBySample }),
+            body: JSON.stringify({ by_sample: _buildServerStrokesPayload() }),
           });
         } catch (e) { /* non-fatal; save continues with whatever server already has */ }
         fetch(BASE_URL + '/save_classifier', {
@@ -1051,13 +1096,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   // ── run-inference handler (hoisted via `function` declaration) ────────────
   async function runInference(runBtn) {
     if (!HAS_RUN_INFERENCE) return;
-    // 1. Flush current stokes to server
+    // 1. Flush current strokes to server (converting to secondary space if needed)
     strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
     try {
       await fetch(BASE_URL + '/strokes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ by_sample: strokesBySample }),
+        body: JSON.stringify({ by_sample: _buildServerStrokesPayload() }),
       });
     } catch (e) {
       log('Flush error: ' + e);
@@ -1083,7 +1128,19 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       hideLoader();
       if (result.ok) {
         const ov = result.overlay;
-        const points = ov.xi.map((xi, i) => ({ xi, yi: ov.yi[i], pi: ov.pi[i] }));
+        let points = ov.xi.map((xi, i) => ({ xi, yi: ov.yi[i], pi: ov.pi[i] }));
+        // If DRAW_ON_SECONDARY, inference returns coords in secondary space;
+        // transform back to primary image space for display.
+        if (DRAW_ON_SECONDARY) {
+          const _ovSample = result.sample || ACTIVE_SAMPLE;
+          const _ovMat = SAMPLE_SECONDARY_MATRIX[_ovSample];
+          if (_ovMat) {
+            points = points.map(pt => {
+              const p = _secToPrim(_ovMat, pt.xi, pt.yi);
+              return { xi: p.x, yi: p.y, pi: pt.pi };
+            });
+          }
+        }
         const style  = { delta: ov.style.delta, alpha: ov.style.alpha,
                          colorLow: ov.style.colorLow, colorHigh: ov.style.colorHigh };
         if (result.sample && result.sample !== ACTIVE_SAMPLE) setActiveSample(result.sample);
@@ -1830,6 +1887,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__IS_MULTICHANNEL__', 'true' if is_multichannel else 'false') \
    .replace('__SAMPLE_SECONDARY_META__',   sample_secondary_meta_json) \
    .replace('__SAMPLE_SECONDARY_MATRIX__', sample_secondary_matrix_json) \
+   .replace('__DRAW_ON_SECONDARY__', 'true' if draw_on_secondary else 'false') \
    .replace('__JS__',      js)
 
     display(HTML(html))
