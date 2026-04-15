@@ -17,7 +17,7 @@ class XeniumCells:
     """
 
     def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125,
-                 cell_id_to_category=None, category_colors=None, max_cells=2000):
+                 cell_id_to_category=None, category_colors=None, max_cells=10000):
         self.bundle_path = Path(bundle_path)
         self.image_metadata = image_metadata
         self.tile_size = int(image_metadata['tile_size'])
@@ -107,6 +107,8 @@ class XeniumCells:
             coords = coords[keep]
         else:
             boundaries = self._get_boundaries(indices)
+
+            # print([len(boundaries), boundaries[0]] if boundaries is not None else 'no boundaries', 'cells in tile', end='; ') # DEBUG statement
 
         he_coords = self._xe_to_he(coords)
         points = []

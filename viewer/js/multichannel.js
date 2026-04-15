@@ -105,8 +105,8 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   const TILE   = meta.tile_size;
   const N_CH   = meta.n_channels;
   const CH_NAMES = meta.channel_names;
-  const MAX_GRAY_CACHED = 100;   // per-channel tile count cap
-  const MAX_COMP_CACHED = 80;    // composite tile canvas count cap
+  const MAX_GRAY_TOTAL  = 150;   // total gray tiles across ALL channels (not per-channel)
+  const MAX_COMP_CACHED = 60;    // composite tile canvas count cap
   const CHANNEL_FULL_RANGES = meta.channel_full_ranges;  // [[raw_min, raw_max], ...]
 
   let currentMeta    = meta;
@@ -263,7 +263,9 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     if (compCache.has(key)) return compCache.get(key);
     const tc = buildComposite(key);
     if (!tc) return null;
-    if (compCache.size >= MAX_COMP_CACHED) compCache.clear();
+    if (compCache.size >= MAX_COMP_CACHED) {
+      compCache.delete(compCache.keys().next().value);  // evict oldest (LRU by insertion)
+    }
     compCache.set(key, tc);
     return tc;
   }
@@ -299,7 +301,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
 
           grayCache[ch].set(k, { gray, lastUsed: Date.now() });
           compCache.delete(k);   // force rebuild of composite for this tile
-          evictGray(ch);
+          evictGray();
           scheduleRedraw();
           URL.revokeObjectURL(img.src);
         };
@@ -308,13 +310,21 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       .catch(() => { inflights[ch].delete(k); });
   }
 
-  function evictGray(ch) {
-    const cache = grayCache[ch];
-    if (cache.size <= MAX_GRAY_CACHED) return;
-    const sorted = [...cache.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-    for (const [k] of sorted.slice(0, cache.size - MAX_GRAY_CACHED)) {
-      cache.delete(k);
-      compCache.delete(k);
+  function evictGray() {
+    let total = 0;
+    for (const m of grayCache) total += m.size;
+    if (total <= MAX_GRAY_TOTAL) return;
+    // Collect all entries across every channel, evict LRU first.
+    const all = [];
+    for (let ch = 0; ch < N_CH; ch++)
+      for (const [k, v] of grayCache[ch]) all.push({ ch, k, t: v.lastUsed });
+    all.sort((a, b) => a.t - b.t);
+    let toRemove = total - MAX_GRAY_TOTAL;
+    for (const e of all) {
+      if (toRemove <= 0) break;
+      grayCache[e.ch].delete(e.k);
+      compCache.delete(e.k);
+      toRemove--;
     }
   }
 
@@ -336,22 +346,32 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       }
     }
 
-    // Fetch visible tiles + one-tile prefetch border for all enabled channels
-    const visPre = visibleRange(level, transform, 1);
+    // Abort stale inflight requests: wrong level OR outside visible+prefetch set.
+    // Then fetch visible tiles first (phase 1) and prefetch border second (phase 2).
+    const visOnly = visibleRange(level, transform, 0);
+    const visPre  = visibleRange(level, transform, 1);
+    const wantedKeys = new Set();
+    for (let r = visPre.r0; r <= visPre.r1; r++)
+      for (let c = visPre.c0; c <= visPre.c1; c++)
+        wantedKeys.add(tileKey(level, r, c));
+
     for (let ch = 0; ch < N_CH; ch++) {
       if (!chState[ch].enabled) continue;
-      // Abort in-flight requests for wrong levels
-      for (const [k, ctrl] of inflights[ch]) {
-        if (parseInt(k.split('-')[0], 10) !== level) {
+      // Abort inflight requests that are stale (wrong level or no longer wanted)
+      for (const [k, ctrl] of [...inflights[ch]]) {
+        if (parseInt(k.split('-')[0], 10) !== level || !wantedKeys.has(k)) {
           ctrl.abort();
           inflights[ch].delete(k);
         }
       }
-      for (let r = visPre.r0; r <= visPre.r1; r++) {
-        for (let c = visPre.c0; c <= visPre.c1; c++) {
+      // Phase 1: strictly visible tiles
+      for (let r = visOnly.r0; r <= visOnly.r1; r++)
+        for (let c = visOnly.c0; c <= visOnly.c1; c++)
           fetchTile(ch, level, r, c);
-        }
-      }
+      // Phase 2: prefetch border
+      for (let r = visPre.r0; r <= visPre.r1; r++)
+        for (let c = visPre.c0; c <= visPre.c1; c++)
+          fetchTile(ch, level, r, c);
     }
   }
 

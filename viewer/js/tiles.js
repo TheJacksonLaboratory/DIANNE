@@ -262,16 +262,33 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
     repositionAll(transform);
 
     // Fetch visible tiles + prefetch border and keep exactly those inflight.
+    // Visible tiles are queued *first* so the browser prioritises them over
+    // the prefetch border when only a few concurrent connections are available.
     const requestedKeys = new Set();
     const _prefetch = settings ? Math.round(settings.get('prefetchBorder')) : PREFETCH;
-    const all = visibleRange(currentLevel, transform, _prefetch);
-    for (let r = all.r0; r <= all.r1; r++) {
-      for (let c = all.c0; c <= all.c1; c++) {
+
+    // Phase 1 – strictly visible (highest priority)
+    const visOnly = visibleRange(currentLevel, transform, 0);
+    for (let r = visOnly.r0; r <= visOnly.r1; r++) {
+      for (let c = visOnly.c0; c <= visOnly.c1; c++) {
         const k = key(currentLevel, r, c);
         requestedKeys.add(k);
         fetchTile(currentLevel, r, c);
       }
     }
+
+    // Phase 2 – prefetch border (lower priority, already-queued tiles are skipped)
+    if (_prefetch > 0) {
+      const all = visibleRange(currentLevel, transform, _prefetch);
+      for (let r = all.r0; r <= all.r1; r++) {
+        for (let c = all.c0; c <= all.c1; c++) {
+          const k = key(currentLevel, r, c);
+          requestedKeys.add(k);
+          fetchTile(currentLevel, r, c);
+        }
+      }
+    }
+
     abortStale(requestedKeys);
     evict(transform);
   }

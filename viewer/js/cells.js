@@ -9,7 +9,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   const MAX_CACHED = 200;
   const PREFETCH = 1;
   const BOUNDARY_LINE_WIDTH = 1.5;
-  let POINT_RADIUS = 6;
+  let POINT_RADIUS = 3;
 
   let drawToken = 0;
   let redrawQueued = false;
@@ -76,6 +76,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
 
   function clearCache() {
     cache.clear();
+    for (const ctrl of inflight.values()) ctrl.abort();
     inflight.clear();
   }
 
@@ -130,11 +131,14 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
 
   function fetchTile(tile) {
     const key = cacheKey(tile);
-    if (cache.has(key)) return Promise.resolve(cache.get(key));
-    if (inflight.has(key) || !enabled) return Promise.resolve([]);
+    if (cache.has(key) || inflight.has(key) || !enabled) return;
 
-    const promise = fetch(
-      `${baseUrl}/xenium_cells?sample=${encodeURIComponent(currentSample)}&level=${tile.level}&row=${tile.row}&col=${tile.col}`
+    const ctrl = new AbortController();
+    inflight.set(key, ctrl);
+
+    fetch(
+      `${baseUrl}/xenium_cells?sample=${encodeURIComponent(currentSample)}&level=${tile.level}&row=${tile.row}&col=${tile.col}`,
+      { signal: ctrl.signal }
     )
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -146,21 +150,12 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
         inflight.delete(key);
 
         if (cache.size > (settings ? settings.get('cellCacheSize') : MAX_CACHED)) {
-          const firstKey = cache.keys().next().value;
-          cache.delete(firstKey);
+          cache.delete(cache.keys().next().value);
         }
 
         requestDraw();
-        return cells;
       })
-      .catch((err) => {
-        log(`cells fetch error: ${err.message}`);
-        inflight.delete(key);
-        return [];
-      });
-
-    inflight.set(key, promise);
-    return promise;
+      .catch(() => { inflight.delete(key); });
   }
 
   function requestDraw() {
@@ -230,6 +225,12 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     currentLevel = bestImageLevel(transform.scale);
     const _prefetch = settings ? Math.round(settings.get('prefetchBorder')) : PREFETCH;
     const tiles = visibleRange(currentLevel, transform, _prefetch);
+
+    // Abort inflight requests for tiles no longer in the visible+prefetch set.
+    const neededKeys = new Set(tiles.map(cacheKey));
+    for (const [k, ctrl] of [...inflight]) {
+      if (!neededKeys.has(k)) { ctrl.abort(); inflight.delete(k); }
+    }
 
     // Force-dot mode when visible cell count exceeds the settings threshold.
     const _maxBounds = settings ? settings.get('maxCellsBoundaries') : 0;
@@ -301,7 +302,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     const cellSizeSlider = document.createElement('input');
     cellSizeSlider.type = 'range';
     cellSizeSlider.min = '1';
-    cellSizeSlider.max = '24';
+    cellSizeSlider.max = '16';
     cellSizeSlider.step = '1';
     cellSizeSlider.value = String(POINT_RADIUS);
     cellSizeSlider.style.cssText = 'width:90px;';
