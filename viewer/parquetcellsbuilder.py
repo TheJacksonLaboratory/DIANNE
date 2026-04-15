@@ -17,7 +17,8 @@ Usage
     parquet_to_cells_zarr(
         parquet_path  = "cell_boundaries.parquet",
         output_path   = "cells.zarr.zip",
-        boundary_set  = 1,   # 1 = cell boundaries (reader default), 0 = nucleus
+        boundary_set  = 1,   # 1 = cell boundaries (reader default), 0 = nucleus,
+        scalefactor   = 0.2125,  # scaling applied to vertex coordinates (match Xenium mpp), or 0.3250 for Cell DIVE
     )
 
 Reader compatibility notes
@@ -142,7 +143,7 @@ def parquet_to_cells_zarr(
     parquet_path: str | Path,
     output_path: str | Path = "cells.zarr.zip",
     boundary_set: int = 1,
-    scalefactor: float = 0.325,
+    scalefactor: float = 0.2125,
     max_vertices: int | None = None,
     compressor: numcodecs.abc.Codec = _BLOSC_DEFAULT,
     extra_root_attrs: dict | None = None,
@@ -186,6 +187,8 @@ def parquet_to_cells_zarr(
 
     df["vertex_x"] = df["vertex_x"].astype(np.float32) * scalefactor
     df["vertex_y"] = df["vertex_y"].astype(np.float32) * scalefactor
+
+    print(scalefactor, "scaling applied to vertex coordinates")
 
     # ── 2. Factorize cell_id → integer codes in one vectorised pass ───────────
     # codes[i] = integer index of df["cell_id"].iloc[i] in cell_order.
@@ -319,12 +322,3 @@ def parquet_to_cells_zarr(
     store.close()
     print(f"Done — {output_path.stat().st_size / 1e6:.1f} MB")
 
-
-# ── CLI ───────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    src = sys.argv[1] if len(sys.argv) > 1 else "cell_boundaries.parquet"
-    dst = sys.argv[2] if len(sys.argv) > 2 else "cells.zarr.zip"
-    scalefactor = sys.argv[3] if len(sys.argv) > 3 else 0.3250
-    parquet_to_cells_zarr(src, dst, scalefactor)
