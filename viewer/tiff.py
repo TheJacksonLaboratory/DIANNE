@@ -64,7 +64,7 @@ class PyramidImage:
             }
         )
 
-    def get_tile(self, level: int, row: int, col: int) -> bytes:
+    def get_tile(self, level: int, row: int, col: int, quality: int = 85) -> bytes:
         """
         Return JPEG bytes for the tile at (row, col) in the given pyramid level.
         Clamps at image edges so partial border tiles work correctly.
@@ -81,7 +81,7 @@ class PyramidImage:
         x0 = col * T;  x1 = min(x0 + T, w)
 
         if y0 >= h or x0 >= w:
-            return self._blank_tile(y1-y0, x1-x0)
+            return self._blank_tile(y1-y0, x1-x0, quality=quality)
 
         # read (C, th, tw) — three channel reads, each hits 1 chunk column
         data = arr[:, y0:y1, x0:x1]       # numpy (3, th, tw) uint8
@@ -96,7 +96,7 @@ class PyramidImage:
             canvas[:th, :tw] = rgb
             rgb         = canvas
 
-        return self._to_jpeg(rgb)
+        return self._to_jpeg(rgb, quality=quality)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -105,10 +105,10 @@ class PyramidImage:
         Image.fromarray(rgb).save(buf, format='JPEG', quality=quality)
         return buf.getvalue()
 
-    def _blank_tile(self, h: int = TILE, w: int = TILE) -> bytes:
-        return self._to_jpeg(np.zeros((h or self.TILE, w or self.TILE, 3), dtype=np.uint8))
+    def _blank_tile(self, h: int = TILE, w: int = TILE, quality: int = 85) -> bytes:
+        return self._to_jpeg(np.zeros((h or self.TILE, w or self.TILE, 3), dtype=np.uint8), quality=quality)
 
-    def get_level_thumbnail(self, level: int, size: int = 256, background=(15, 15, 15)) -> bytes:
+    def get_level_thumbnail(self, level: int, size: int = 256, background=(15, 15, 15), quality: int = 85) -> bytes:
         """
         Render the entire pyramid `level` into a square thumbnail of `size`×`size`.
         Preserves aspect ratio by scaling the level image to fit inside the square
@@ -139,5 +139,5 @@ class PyramidImage:
         canvas.paste(resized, (off_x, off_y))
 
         buf = io.BytesIO()
-        canvas.save(buf, format='JPEG', quality=85)
+        canvas.save(buf, format='JPEG', quality=quality)
         return buf.getvalue()

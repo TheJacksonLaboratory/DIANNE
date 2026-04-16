@@ -164,7 +164,7 @@ class MultichannelImage:
 
         return self._to_png(data)
 
-    def get_rgb_tile(self, level: int, row: int, col: int) -> bytes:
+    def get_rgb_tile(self, level: int, row: int, col: int, quality: int = 85) -> bytes:
         """
         Composite all channels to an RGB JPEG tile using default IF colours.
         Used by the server when serving secondary (background) image tiles.
@@ -181,7 +181,7 @@ class MultichannelImage:
 
         if y0 >= h or x0 >= w:
             buf = io.BytesIO()
-            Image.fromarray(np.zeros((T, T, 3), dtype=np.uint8)).save(buf, format='JPEG', quality=85)
+            Image.fromarray(np.zeros((T, T, 3), dtype=np.uint8)).save(buf, format='JPEG', quality=quality)
             return buf.getvalue()
 
         default_colors = np.array([
@@ -200,11 +200,11 @@ class MultichannelImage:
 
         rgb = np.clip(rgb * 255, 0, 255).astype(np.uint8)
         buf = io.BytesIO()
-        Image.fromarray(rgb).save(buf, format='JPEG', quality=85)
+        Image.fromarray(rgb).save(buf, format='JPEG', quality=quality)
         return buf.getvalue()
 
     def get_level_thumbnail(self, level: int = None, size: int = 256,
-                            background=(15, 15, 15)) -> bytes:
+                            background=(15, 15, 15), quality: int = 85) -> bytes:
         """
         Composite up to four channels with default IF colours into a JPEG thumbnail.
         """
@@ -220,7 +220,6 @@ class MultichannelImage:
             (68,  136, 255),   # blue  — DAPI / nuclear stain
             (0,   255,  68),   # green
             (255,  34,  34),   # red
-            (255, 255,   0),   # yellow
         ]
 
         rgb = np.zeros((h, w, 3), dtype=np.float32)
@@ -245,5 +244,5 @@ class MultichannelImage:
         canvas.paste(resized, (off_x, off_y))
 
         buf = io.BytesIO()
-        canvas.save(buf, format='JPEG', quality=85)
+        canvas.save(buf, format='JPEG', quality=quality)
         return buf.getvalue()

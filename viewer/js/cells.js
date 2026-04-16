@@ -55,6 +55,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
 
   const cache = new Map();
   const inflight = new Map();
+  let lastNeededKeys = new Set();
 
   let isVisible = true;
   let currentLevel = 0;
@@ -149,8 +150,15 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
         cache.set(key, cells);
         inflight.delete(key);
 
-        if (cache.size > (settings ? settings.get('cellCacheSize') : MAX_CACHED)) {
-          cache.delete(cache.keys().next().value);
+        const _maxCached = Math.max(
+          settings ? settings.get('cellCacheSize') : MAX_CACHED,
+          lastNeededKeys.size + 10
+        );
+        if (cache.size > _maxCached) {
+          // Evict oldest entry that is not currently needed by the viewport.
+          for (const k of cache.keys()) {
+            if (!lastNeededKeys.has(k)) { cache.delete(k); break; }
+          }
         }
 
         requestDraw();
@@ -228,6 +236,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
 
     // Abort inflight requests for tiles no longer in the visible+prefetch set.
     const neededKeys = new Set(tiles.map(cacheKey));
+    lastNeededKeys = neededKeys;
     for (const [k, ctrl] of [...inflight]) {
       if (!neededKeys.has(k)) { ctrl.abort(); inflight.delete(k); }
     }

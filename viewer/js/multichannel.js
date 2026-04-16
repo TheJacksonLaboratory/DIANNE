@@ -105,7 +105,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   const TILE   = meta.tile_size;
   const N_CH   = meta.n_channels;
   const CH_NAMES = meta.channel_names;
-  const MAX_GRAY_TOTAL  = 150;   // total gray tiles across ALL channels (not per-channel)
+  const MAX_GRAY_TOTAL  = 500;   // total gray tiles across ALL channels (not per-channel)
   const MAX_COMP_CACHED = 60;    // composite tile canvas count cap
   const CHANNEL_FULL_RANGES = meta.channel_full_ranges;  // [[raw_min, raw_max], ...]
 
@@ -143,6 +143,8 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   const inflights  = Array.from({ length: N_CH }, () => new Map());
   // compCache maps tileKey → HTMLCanvasElement (composited TILE×TILE)
   const compCache  = new Map();
+  // tile keys currently needed by the viewport (updated every redraw)
+  let wantedKeys = new Set();
 
   // ── main composite canvas ─────────────────────────────────────────────────
   const canvas = document.createElement('canvas');
@@ -263,8 +265,14 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     if (compCache.has(key)) return compCache.get(key);
     const tc = buildComposite(key);
     if (!tc) return null;
-    if (compCache.size >= MAX_COMP_CACHED) {
-      compCache.delete(compCache.keys().next().value);  // evict oldest (LRU by insertion)
+    const enabledCount = chState.filter(s => s.enabled).length || 1;
+    const compFloor = wantedKeys.size + 10;
+    const compCap = Math.max(MAX_COMP_CACHED, compFloor);
+    if (compCache.size >= compCap) {
+      // Evict oldest entry that is not in the current viewport.
+      for (const k of compCache.keys()) {
+        if (!wantedKeys.has(k)) { compCache.delete(k); break; }
+      }
     }
     compCache.set(key, tc);
     return tc;
@@ -313,15 +321,20 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   function evictGray() {
     let total = 0;
     for (const m of grayCache) total += m.size;
-    if (total <= MAX_GRAY_TOTAL) return;
+    const enabledCount = chState.filter(s => s.enabled).length || 1;
+    const grayFloor = wantedKeys.size * enabledCount + 10;
+    const grayMax = Math.max(MAX_GRAY_TOTAL, grayFloor);
+    if (total <= grayMax) return;
     // Collect all entries across every channel, evict LRU first.
+    // Never evict a tile whose key is currently needed by the viewport.
     const all = [];
     for (let ch = 0; ch < N_CH; ch++)
       for (const [k, v] of grayCache[ch]) all.push({ ch, k, t: v.lastUsed });
     all.sort((a, b) => a.t - b.t);
-    let toRemove = total - MAX_GRAY_TOTAL;
+    let toRemove = total - grayMax;
     for (const e of all) {
       if (toRemove <= 0) break;
+      if (wantedKeys.has(e.k)) continue;
       grayCache[e.ch].delete(e.k);
       compCache.delete(e.k);
       toRemove--;
@@ -350,7 +363,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     // Then fetch visible tiles first (phase 1) and prefetch border second (phase 2).
     const visOnly = visibleRange(level, transform, 0);
     const visPre  = visibleRange(level, transform, 1);
-    const wantedKeys = new Set();
+    wantedKeys = new Set();
     for (let r = visPre.r0; r <= visPre.r1; r++)
       for (let c = visPre.c0; c <= visPre.c1; c++)
         wantedKeys.add(tileKey(level, r, c));

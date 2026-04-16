@@ -20,7 +20,7 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
   let currentMeta = meta;
   let activeSample = sampleName;
   const TILE      = meta.tile_size;   // 512
-  const MAX_CACHED = 200;
+  const MAX_CACHED = 300;
   const PREFETCH   = 1;               // tiles outside viewport to prefetch
 
   // cache: key "L-R-C" → { img, lastUsed, loading }
@@ -125,7 +125,8 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
     inflight.set(k, ctrl);
 
     const sampleQuery = activeSample == null ? '' : `&sample=${encodeURIComponent(activeSample)}`;
-    const url = `${baseUrl}/tile?level=${level}&row=${row}&col=${col}${sampleQuery}`;
+    const qualityQuery = settings ? `&quality=${Math.round(settings.get('jpegQuality'))}` : '';
+    const url = `${baseUrl}/tile?level=${level}&row=${row}&col=${col}${sampleQuery}${qualityQuery}`;
     fetch(url, { signal: ctrl.signal })
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -162,7 +163,14 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
 
   // ── LRU eviction ──────────────────────────────────────────────────────────
   function evict(transform) {
-    const maxCached = settings ? settings.get('tileCacheSize') : MAX_CACHED;
+    const _prefetch = settings ? Math.round(settings.get('prefetchBorder')) : PREFETCH;
+    const vis = visibleRange(currentLevel, transform, _prefetch);
+    let minNeeded = (vis.r1 - vis.r0 + 1) * (vis.c1 - vis.c0 + 1);
+    if (fallbackLevel !== currentLevel) {
+      const fv = visibleRange(fallbackLevel, transform, 0);
+      minNeeded += (fv.r1 - fv.r0 + 1) * (fv.c1 - fv.c0 + 1);
+    }
+    const maxCached = Math.max(settings ? settings.get('tileCacheSize') : MAX_CACHED, minNeeded + 10);
     if (cache.size <= maxCached) return;
 
     // Protect visible tiles of current and fallback levels from eviction.

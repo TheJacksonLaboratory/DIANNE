@@ -184,10 +184,11 @@ class ViewerServer:
 
                 elif parsed.path == '/tile':
                     try:
-                        level = int(qs['level'][0])
-                        row   = int(qs['row'][0])
-                        col   = int(qs['col'][0])
-                        data  = image.get_tile(level, row, col)
+                        level   = int(qs['level'][0])
+                        row     = int(qs['row'][0])
+                        col     = int(qs['col'][0])
+                        quality = max(1, min(95, int(qs.get('quality', ['85'])[0])))
+                        data    = image.get_tile(level, row, col, quality=quality)
                         self._respond(200, data, 'image/jpeg')
                     except Exception as e:
                         self._respond(400, str(e).encode())
@@ -262,13 +263,14 @@ class ViewerServer:
                         self._respond(404)
                     else:
                         try:
-                            level = int(qs['level'][0])
-                            row   = int(qs['row'][0])
-                            col   = int(qs['col'][0])
+                            level   = int(qs['level'][0])
+                            row     = int(qs['row'][0])
+                            col     = int(qs['col'][0])
+                            quality = max(1, min(95, int(qs.get('quality', ['85'])[0])))
                             if hasattr(sec_image, 'n_channels'):
-                                data = sec_image.get_rgb_tile(level, row, col)
+                                data = sec_image.get_rgb_tile(level, row, col, quality=quality)
                             else:
-                                data = sec_image.get_tile(level, row, col)
+                                data = sec_image.get_tile(level, row, col, quality=quality)
                             self._respond(200, data, 'image/jpeg')
                         except Exception as e:
                             self._respond(400, str(e).encode())

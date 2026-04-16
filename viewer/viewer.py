@@ -847,7 +847,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
             entry = { img, ready: false };
             _secRgbCache.set(k, entry);
             fetch(BASE_URL + '/secondary_tile?sample=' + encodeURIComponent(ACTIVE_SAMPLE)
-                + '&level=' + secLevel + '&row=' + row + '&col=' + col,
+                + '&level=' + secLevel + '&row=' + row + '&col=' + col
+                + '&quality=' + Math.round(settings.get('jpegQuality')),
               { signal: ctrl.signal })
               .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
               .then(blob => {

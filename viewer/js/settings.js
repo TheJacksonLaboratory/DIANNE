@@ -17,12 +17,13 @@ function createSettings(toolbarEl, rootEl, defaults) {
   const DEFAULTS = Object.assign({
     zoomSpeed          : 0.001,      // zoom factor per mouse-wheel deltaY unit
     levelSensitivity   : 1.0,        // multiplier for pyramid level-switch threshold
-    tileCacheSize      : 200,        // max image tile blobs held in browser memory
+    tileCacheSize      : 300,        // max image tile blobs held in browser memory
     prefetchBorder     : 1,          // extra tile rows/cols loaded outside viewport
     renderQuality      : 'pixelated',// CSS image-rendering for tile <img> elements
-    cellCacheSize      : 200,        // max cell JSON tile responses in memory
-    maxCellsBoundaries : 2000,       // force dots when visible cell count exceeds this (0 = off)
-    inferMsPerCell     : 0.15,       // loader animation ms per cell in inference sample
+    jpegQuality        : 90,         // JPEG compression quality for image tiles (1–95)
+    cellCacheSize      : 500,        // max cell JSON tile responses in memory
+    maxCellsBoundaries : 10000,       // force dots when visible cell count exceeds this (0 = off)
+    inferMsPerCell     : 0.25,       // loader animation ms per cell in inference sample
   }, defaults || {});
 
   // Load persisted values; only accept keys/types that exist in DEFAULTS.
@@ -251,6 +252,15 @@ function createSettings(toolbarEl, rootEl, defaults) {
         ],
       }),
       'CSS image-rendering applied to each tile img when zoomed in.'));
+
+    panel.appendChild(_makeRow(
+      'JPEG tile quality',
+      _makeSlider({ key: 'jpegQuality', min: 10, max: 95, step: 5,
+        format: v => String(Math.round(v)) }),
+      'Server-side JPEG compression quality for RGB image tiles.\n' +
+      'Lower = smaller network payload, faster loading, more artifacts.\n' +
+      'Higher = better fidelity, larger transfers. Change takes effect on next tile fetch.'));
+    panel.appendChild(_makeHint('\u25c4 Smaller / faster ────────────────── Sharper / larger ►'));
 
     // ── Cell overlay ───────────────────────────────────────────────────────────
     panel.appendChild(_makeSectionHeader('Cell Overlay'));
