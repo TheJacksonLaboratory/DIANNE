@@ -145,12 +145,46 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     else:
       matrices = {str(k): v for k, v in matrices.items()}
 
-    if annotations is None:
-      annotations = {}
-    elif not isinstance(annotations, dict):
-      raise TypeError('annotations must be a dict[sample] -> cell_id_to_category')
-    else:
-      annotations = {str(k): v for k, v in annotations.items()}
+    # ── normalise annotations + category_colors → ordered list of named layers ──
+    # Each layer: {'name': str, 'data': {sample: cell_id->category}, 'colors': {cat: color}}
+    # Accepts a plain dict (single layer, backward compat) or a list of dicts (multi-layer).
+    def _norm_annotation_layers(ann, col):
+      if ann is None:
+        ann_list = [{}]
+      elif isinstance(ann, list):
+        ann_list = list(ann)
+      else:
+        ann_list = [ann]  # backward compat: wrap single dict
+      if col is None:
+        col_list = [{}] * len(ann_list)
+      elif isinstance(col, list):
+        col_list = list(col)
+      else:
+        col_list = [col] * len(ann_list)
+      while len(col_list) < len(ann_list):
+        col_list.append({})
+      layers = []
+      for i, (a, c) in enumerate(zip(ann_list, col_list)):
+        a = a or {}
+        if not isinstance(a, dict):
+          raise TypeError(f'annotations layer {i} must be a dict[sample] -> cell_id_to_category')
+        a = {str(k): v for k, v in a.items()}
+        c = c or {}
+        if hasattr(c, 'to_dict'):
+          c = c.to_dict()
+        if not hasattr(c, 'items'):
+          c = {}
+        # Per-sample colors support (backward compat): if keys match sample names, unwrap
+        first_sample = next(iter(a), None)
+        if first_sample and first_sample in c:
+          c = c.get(first_sample) or c
+        colors = {str(k): str(v) for k, v in c.items()}
+        name = 'Annotations' if len(ann_list) == 1 else f'Layer {i}'
+        layers.append({'name': name, 'data': a, 'colors': colors})
+      return layers
+
+    annotation_layers = _norm_annotation_layers(annotations, category_colors)
+    _layer0 = annotation_layers[0]
 
     if sample_sizes is None:
       sample_sizes = {}
@@ -213,8 +247,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         continue
 
       matrix_path = matrices.get(sample)
-      sample_annotations = annotations.get(sample)
-      sample_colors = category_colors.get(sample) if isinstance(category_colors, dict) and sample in category_colors else category_colors
+      sample_annotations = _layer0['data'].get(sample)
+      sample_colors = _layer0['colors']
 
       sample_xenium = XeniumTranscripts(bundle_path, sample_images[sample].metadata,
                         matrix_path=matrix_path,
@@ -264,6 +298,25 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     sample_secondary_meta_json   = json.dumps(sample_secondary_meta)
     sample_secondary_matrix_json = json.dumps(sample_secondary_matrix)
     base_url  = server.base_url
+
+    def _layer_to_js(layer):
+      js_ann = {}
+      for s, ann in layer['data'].items():
+        if ann is None:
+          js_ann[s] = {}
+          continue
+        if hasattr(ann, 'to_dict'):
+          # pandas Series (index = cell_id, values = category)
+          ann = ann.to_dict()
+        elif hasattr(ann, 'items'):
+          ann = dict(ann)
+        else:
+          # pandas Categorical or other sequence: enumerate positionally
+          ann = {i: v for i, v in enumerate(ann)}
+        js_ann[s] = {str(k): str(v) for k, v in ann.items()}
+      return {'name': layer['name'], 'colors': layer['colors'], 'annotations_by_sample': js_ann}
+
+    annotation_layers_json = json.dumps([_layer_to_js(l) for l in annotation_layers])
 
     # inline all JS files
     js = '\n\n'.join(_read_js(f) for f in [
@@ -362,6 +415,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const SAMPLE_SECONDARY_META   = __SAMPLE_SECONDARY_META__;
   const SAMPLE_SECONDARY_MATRIX = __SAMPLE_SECONDARY_MATRIX__;
   const DRAW_ON_SECONDARY        = __DRAW_ON_SECONDARY__;
+  const ANNOTATION_LAYERS        = __ANNOTATION_LAYERS__;
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
@@ -979,7 +1033,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     log,
     rightControlsRow,
     ACTIVE_SAMPLE,
-    settings
+    settings,
+    ANNOTATION_LAYERS
   );
   const draw     = createDraw(root, viewport);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
@@ -1893,6 +1948,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__SAMPLE_SECONDARY_META__',   sample_secondary_meta_json) \
    .replace('__SAMPLE_SECONDARY_MATRIX__', sample_secondary_matrix_json) \
    .replace('__DRAW_ON_SECONDARY__', 'true' if draw_on_secondary else 'false') \
+   .replace('__ANNOTATION_LAYERS__', annotation_layers_json) \
    .replace('__JS__',      js)
 
     display(HTML(html))

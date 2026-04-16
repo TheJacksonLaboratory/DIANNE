@@ -5,7 +5,7 @@
  * Supports sample switching and per-sample enable/disable at runtime.
  */
 
-function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow, sampleName = null, settings = null) {
+function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow, sampleName = null, settings = null, annotationLayers = []) {
   const MAX_CACHED = 200;
   const PREFETCH = 1;
   const BOUNDARY_LINE_WIDTH = 1.5;
@@ -62,15 +62,39 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   let hasCategories = false;
   let categoryColors = { All: '#888888' };
   const selectedCategories = new Set();
+  let activeLayerIdx = 0;
+  let activeCellIdToCategory = {};  // {cell_id_str: category_str} for current sample + layer
+
+  function _buildCellIdLookup() {
+    if (!annotationLayers.length) { activeCellIdToCategory = {}; return; }
+    const layer = annotationLayers[Math.min(activeLayerIdx, annotationLayers.length - 1)];
+    activeCellIdToCategory = (layer.annotations_by_sample || {})[currentSample] || {};
+  }
+
+  function _applyCategoryColorsFromLayer() {
+    if (!annotationLayers.length) return;
+    const layer = annotationLayers[Math.min(activeLayerIdx, annotationLayers.length - 1)];
+    if (layer.colors && Object.keys(layer.colors).length) {
+      categoryColors = Object.assign({}, layer.colors);
+    } else {
+      categoryColors = { All: '#888888' };
+    }
+    hasCategories = !!(enabled && Object.keys(activeCellIdToCategory).length);
+  }
 
   function applyMeta(meta) {
     currentCellsMeta = meta;
     enabled = !!currentCellsMeta;
-    hasCategories = !!(enabled && currentCellsMeta.has_categories);
-    if (enabled && hasCategories && currentCellsMeta.category_colors && Object.keys(currentCellsMeta.category_colors).length) {
-      categoryColors = Object.assign({}, currentCellsMeta.category_colors);
+    if (annotationLayers.length) {
+      _buildCellIdLookup();
+      _applyCategoryColorsFromLayer();
     } else {
-      categoryColors = { All: '#888888' };
+      hasCategories = !!(enabled && currentCellsMeta.has_categories);
+      if (enabled && hasCategories && currentCellsMeta.category_colors && Object.keys(currentCellsMeta.category_colors).length) {
+        categoryColors = Object.assign({}, currentCellsMeta.category_colors);
+      } else {
+        categoryColors = { All: '#888888' };
+      }
     }
     selectedCategories.clear();
   }
@@ -176,6 +200,10 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   }
 
   function resolveCategory(cell) {
+    if (annotationLayers.length) {
+      const cat = activeCellIdToCategory[String(cell.cell_id)];
+      return (cat != null) ? String(cat) : 'All';
+    }
     if (!hasCategories) return 'All';
     return (cell.category != null) ? String(cell.category) : 'All';
   }
@@ -303,6 +331,35 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
       return;
     }
 
+    // ── annotation layer picker (only when multiple layers available) ───────────────
+    if (annotationLayers.length > 1) {
+      const layerRow = document.createElement('div');
+      layerRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 0 6px;border-bottom:1px solid rgba(255,255,255,0.12);margin-bottom:4px;';
+      const layerLabel = document.createElement('span');
+      layerLabel.textContent = 'Layer';
+      layerLabel.style.cssText = 'color:#ddd;white-space:nowrap;';
+      const layerSelect = document.createElement('select');
+      layerSelect.style.cssText = 'background:#1a1a1a;color:#eee;border:1px solid #555;border-radius:4px;padding:2px 4px;font:12px monospace;flex:1;min-width:0;';
+      for (let i = 0; i < annotationLayers.length; i++) {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = annotationLayers[i].name || ('Layer ' + i);
+        if (i === activeLayerIdx) opt.selected = true;
+        layerSelect.appendChild(opt);
+      }
+      layerSelect.addEventListener('change', () => {
+        activeLayerIdx = parseInt(layerSelect.value, 10);
+        _buildCellIdLookup();
+        _applyCategoryColorsFromLayer();
+        selectedCategories.clear();
+        rebuildCategoryPanel();
+        requestDraw();
+      });
+      layerRow.appendChild(layerLabel);
+      layerRow.appendChild(layerSelect);
+      panel.appendChild(layerRow);
+    }
+
     const cats = Object.keys(categoryColors);
 
     const sizeRow = document.createElement('div');
@@ -406,7 +463,10 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   function setContext(sample, imageMetaNext, cellsMetaNext, stateToRestore) {
     currentSample = sample;
     currentImageMeta = imageMetaNext;
-    applyMeta(cellsMetaNext);  // clears selectedCategories
+    if (stateToRestore && stateToRestore.activeLayerIdx != null) {
+      activeLayerIdx = stateToRestore.activeLayerIdx;
+    }
+    applyMeta(cellsMetaNext);  // clears selectedCategories, rebuilds lookup
     if (stateToRestore && stateToRestore.selectedCategories) {
       stateToRestore.selectedCategories.forEach(c => selectedCategories.add(c));
     }
@@ -425,6 +485,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
       selectedCategories: [...selectedCategories],
       panelOpen: panel.style.display !== 'none',
       visible: isVisible,
+      activeLayerIdx,
     };
   }
 
