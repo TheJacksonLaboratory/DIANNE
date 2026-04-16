@@ -8,18 +8,12 @@ import multiprocessing
 # Prefer the 'spawn' start method to avoid forking from non-main threads.
 # Forking from a non-main thread can leave Intel TBB in an invalid state and
 # cause Numba/TBB errors like: "Attempted to fork from a non-main thread...".
+# force=True overrides any prior setting (e.g. Jupyter's default 'fork').
 try:
-    multiprocessing.set_start_method('spawn')
-except RuntimeError:
-    # start method already set for this process; warn if it's not 'spawn'
-    try:
-        cur = multiprocessing.get_start_method()
-    except RuntimeError:
-        cur = None
-    if cur != 'spawn':
-        print(f"Warning: multiprocessing start method is '{cur}'."
-              " Consider using 'spawn' to avoid Numba/TBB fork issues when"
-              " running inference from background threads.")
+    if multiprocessing.get_start_method(allow_none=True) != 'spawn':
+        multiprocessing.set_start_method('spawn', force=True)
+except Exception:
+    pass
 
 
 class ViewerServer:
