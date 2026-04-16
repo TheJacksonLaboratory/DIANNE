@@ -43,9 +43,9 @@ All DIANNE workflows operate on standardized, processed WSIs. Raw slides are pre
 <details open><summary>Option A (click to expand). Use local environment. Create conda environment, and install packages into it, launch Jupyter server</summary><p>
 
 ```bash
-conda create --name dianne python=3.9 -y
+conda create --name dianne python=3.10 -y
 conda activate dianne
-conda install -y -c conda-forge jupyter "notebook>=7" numpy numba pandas pyarrow scanpy scipy scikit-learn matplotlib tifffile imagecodecs tqdm opencv zarr fsspec
+conda install -y -c conda-forge jupyter ipywidgets ipykernel "notebook>=7" numpy numba pandas pyarrow scanpy scipy scikit-image scikit-learn matplotlib tifffile imagecodecs tqdm opencv zarr fsspec
 
 jupyter notebook
 ```
