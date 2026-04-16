@@ -1,4 +1,5 @@
 import json
+import queue
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -78,8 +79,16 @@ class ViewerServer:
             for k, v in sample_sizes.items()
             if v is not None
         } if sample_sizes else {}
-        self._inference_lock = threading.Lock()
-        self._inference_running = False
+        # ── dedicated inference worker thread ─────────────────────────────────
+        # Numba / Intel TBB must always be called from the same thread to avoid
+        # "Attempted to fork from a non-main thread" warnings.  A single worker
+        # thread is created here (before the HTTP server starts) and all
+        # /run_inference requests are serialised through it via a queue.
+        self._inference_queue = queue.Queue(maxsize=1)
+        self._inference_worker = threading.Thread(
+            target=self._inference_loop, daemon=True, name='dianne-inference-worker'
+        )
+        self._inference_worker.start()
         self.save_fn           = save_fn
         self.load_fn           = load_fn
         self.list_names_fn     = list_names_fn
@@ -101,10 +110,25 @@ class ViewerServer:
         self._server.handle_error = lambda *a: None  # silence broken pipe / connection reset
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
+    def _inference_loop(self):
+        """Long-lived worker: picks up (fn_kwargs, result_event, result_box) tuples."""
+        while True:
+            item = self._inference_queue.get()
+            if item is None:   # sentinel → shut down
+                break
+            fn_kwargs, result_event, result_box = item
+            try:
+                result_box['result'] = self.run_inference_fn(**fn_kwargs)
+            except Exception as exc:
+                result_box['error'] = exc
+            finally:
+                result_event.set()
+
     def start(self):
         self._thread.start()
 
     def stop(self):
+        self._inference_queue.put(None)   # stop worker
         self._server.shutdown()
 
     @property
@@ -396,17 +420,30 @@ class ViewerServer:
                         data.get('active_sample', srv.chosen_sample)
                         if isinstance(data, dict) else srv.chosen_sample
                     )
-                    with srv._inference_lock:
-                        if srv._inference_running:
-                            body = json.dumps({'ok': False, 'error': 'inference already running'}).encode()
-                            self._respond(200, body, 'application/json')
-                            return
-                        srv._inference_running = True
+                    # Submit to the dedicated inference worker thread so that
+                    # Numba/TBB always runs in the same persistent thread.
+                    result_event = threading.Event()
+                    result_box   = {}
                     try:
-                        result = srv.run_inference_fn(
-                            strokes_by_sample=srv.strokes_by_sample,
-                            active_sample=active_sample,
-                        )
+                        srv._inference_queue.put_nowait((
+                            {'strokes_by_sample': srv.strokes_by_sample,
+                             'active_sample': active_sample},
+                            result_event,
+                            result_box,
+                        ))
+                    except queue.Full:
+                        body = json.dumps({'ok': False, 'error': 'inference already running'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    result_event.wait()  # block HTTP handler thread until done
+                    if 'error' in result_box:
+                        import traceback as _tb
+                        _tb.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(result_box['error'])}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        result = result_box['result']
                         if not isinstance(result, dict):
                             raise ValueError('run_inference_fn must return a dict')
                         sample_out = result.get('sample', active_sample)
@@ -428,9 +465,6 @@ class ViewerServer:
                         traceback.print_exc()
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
                         self._respond(200, body, 'application/json')
-                    finally:
-                        with srv._inference_lock:
-                            srv._inference_running = False
                     return
 
                 self._respond(200, b'ok')
