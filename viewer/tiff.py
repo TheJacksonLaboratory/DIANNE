@@ -14,9 +14,9 @@ class PyramidImage:
 
     TILE = 512  # must match zarr chunk size
 
-    def __init__(self, path):
+    def __init__(self, path, _zarr_store=None):
         self.path  = str(path)
-        store      = tifffile.imread(self.path, aszarr=True)
+        store      = _zarr_store if _zarr_store is not None else tifffile.imread(self.path, aszarr=True)
         self._z    = zarr.open(store, mode='r')
 
         arr = self._z["0"] if isinstance(self._z, zarr.Group) else self._z

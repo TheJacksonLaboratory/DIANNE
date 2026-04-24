@@ -24,16 +24,16 @@ def _open_image(path):
     """
     Auto-detect channel count and return a MultichannelImage (C > 3) or
     a PyramidImage (C == 1 or 3 — standard RGB / greyscale histology).
-    Opens the tifffile zarr store for a shape peek then instantiates the
-    appropriate class (which will open the file a second time internally).
+    Opens the tifffile zarr store once and passes it to the constructor to
+    avoid a redundant second open.
     """
     import tifffile, zarr
     store = tifffile.imread(str(path), aszarr=True)
     z     = zarr.open(store, mode='r')
     n_ch  = z['0'].shape[0]
     if n_ch > 3:
-        return MultichannelImage(path)
-    return PyramidImage(path)
+        return MultichannelImage(path, _zarr_store=store)
+    return PyramidImage(path, _zarr_store=store)
 
 
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
@@ -127,7 +127,16 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       raise KeyError(f'missing image path(s) for sample(s): {missing}')
 
     chosen_sample = sample_list[0]
-    sample_images = {s: _open_image(images[s]) for s in sample_list}
+    import time as _time
+    n_samples = len(sample_list)
+    print(f'[DIANNE] Opening {n_samples} sample image(s):', end=' ', flush=True)
+    _t0 = _time.monotonic()
+    sample_images = {}
+    for _i, s in enumerate(sample_list):
+      _ts = _time.monotonic()
+      print(s, end=', ', flush=True)
+      sample_images[s] = _open_image(images[s])
+    print(f'\n[DIANNE] Images loaded in {_time.monotonic()-_t0:.1f}s total', flush=True)
     image         = sample_images[chosen_sample]
     is_multichannel = isinstance(image, MultichannelImage)
 
@@ -219,7 +228,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       sec_path = secondary_images.get(sample)
       if sec_path is None:
         continue
+      # print(f'[DIANNE] Opening secondary image for {sample} … ', end='', flush=True)
+      _ts = _time.monotonic()
       secondary_sample_images[sample] = _open_image(sec_path)
+      # print(f'done ({_time.monotonic()-_ts:.1f}s)', flush=True)
       sample_secondary_meta[sample]   = secondary_sample_images[sample].metadata
       mat_path = secondary_matrices.get(sample)
       if mat_path is not None:
@@ -283,6 +295,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           load_fn=load_func,
           list_names_fn=list_names_func,
           secondary_images=secondary_sample_images)
+    # annotation_layers_json is built later; attach placeholder now, replace after build
+    server._annotation_layers_json = '[]'
     server.start()
 
     server.chosen_sample = chosen_sample
@@ -299,26 +313,41 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     sample_secondary_matrix_json = json.dumps(sample_secondary_matrix)
     base_url  = server.base_url
 
-    def _layer_to_js(layer):
-      js_ann = {}
-      for s, ann in layer['data'].items():
-        if ann is None:
-          js_ann[s] = {}
-          continue
-        if hasattr(ann, 'to_dict'):
-          # pandas Series (index = cell_id, values = category)
-          ann = ann.to_dict()
-        elif hasattr(ann, 'items'):
-          ann = dict(ann)
-        else:
-          # pandas Categorical or other sequence: enumerate positionally
-          ann = {i: v for i, v in enumerate(ann)}
-        js_ann[s] = {str(k): str(v) for k, v in ann.items()}
-      return {'name': layer['name'], 'colors': layer['colors'], 'annotations_by_sample': js_ann}
+    def _ann_to_json_str(ann):
+      """Convert a per-sample annotation to a JSON object string without building a Python dict."""
+      import pandas as _pd
+      if ann is None:
+        return '{}'
+      # pd.Series (index = cell_id, values = category) — to_json uses C-level ujson
+      if isinstance(ann, _pd.Series):
+        return ann.astype(str).to_json()
+      # pd.Categorical (positional, no index) — wrap in Series with RangeIndex
+      if isinstance(ann, _pd.Categorical):
+        return _pd.Series(ann.astype(str)).to_json()
+      # plain dict or other mapping
+      if hasattr(ann, 'to_dict'):
+        ann = ann.to_dict()
+      if hasattr(ann, 'items'):
+        return json.dumps({str(k): str(v) for k, v in ann.items()})
+      return json.dumps({str(i): str(v) for i, v in enumerate(ann)})
 
-    annotation_layers_json = json.dumps([_layer_to_js(l) for l in annotation_layers])
+    def _layer_to_json_str(layer):
+      """Serialize a layer to a JSON string, using fast per-sample ujson paths."""
+      parts = []
+      for s, ann in layer['data'].items():
+        parts.append(json.dumps(str(s)) + ':' + _ann_to_json_str(ann))
+      ann_by_sample = '{' + ','.join(parts) + '}'
+      return ('{"name":' + json.dumps(layer['name']) +
+              ',"colors":' + json.dumps(layer['colors']) +
+              ',"annotations_by_sample":' + ann_by_sample + '}')
+
+    _ts = _time.monotonic()
+    annotation_layers_json = '[' + ','.join(_layer_to_json_str(l) for l in annotation_layers) + ']'
+    print(f'[DIANNE] annotation_layers_json: {_time.monotonic()-_ts:.2f}s', flush=True)
+    server._annotation_layers_json = annotation_layers_json
 
     # inline all JS files
+    _ts = _time.monotonic()
     js = '\n\n'.join(_read_js(f) for f in [
         'viewport.js',
         'tiles.js',
@@ -330,7 +359,24 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         'toolbar.js',
         'demo.js',
     ])
+    # print(f'[DIANNE] JS read: {_time.monotonic()-_ts:.2f}s', flush=True)
 
+    # inline all JS files
+    _ts = _time.monotonic()
+    js = '\n\n'.join(_read_js(f) for f in [
+        'viewport.js',
+        'tiles.js',
+        'multichannel.js',
+        'transcripts.js',
+        'cells.js',
+        'draw.js',
+        'settings.js',
+        'toolbar.js',
+        'demo.js',
+    ])
+    # print(f'[DIANNE] JS read: {_time.monotonic()-_ts:.2f}s', flush=True)
+
+    _ts = _time.monotonic()
     html = """
 <div id="iv-shell" style="
   width: __WIDTH__;
@@ -415,7 +461,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const SAMPLE_SECONDARY_META   = __SAMPLE_SECONDARY_META__;
   const SAMPLE_SECONDARY_MATRIX = __SAMPLE_SECONDARY_MATRIX__;
   const DRAW_ON_SECONDARY        = __DRAW_ON_SECONDARY__;
-  const ANNOTATION_LAYERS        = __ANNOTATION_LAYERS__;
+  let ANNOTATION_LAYERS          = [];  // loaded asynchronously via /annotation_layers
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
 
@@ -1926,6 +1972,16 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   log('Ready: ' + ACTIVE_SAMPLE);
 
+  // ── async annotation layers fetch ─────────────────────────────────────────
+  // Annotations are large; served from HTTP server to avoid bloating the HTML.
+  fetch(BASE_URL + '/annotation_layers')
+    .then(r => r.json())
+    .then(layers => {
+      ANNOTATION_LAYERS = layers;
+      cells.setAnnotationLayers(layers);
+    })
+    .catch(() => {});  // non-fatal if no annotations
+
   // ── guided demo ───────────────────────────────────────────────────────────
   window.__ivDemo = createDemo();
 })();
@@ -1948,10 +2004,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__SAMPLE_SECONDARY_META__',   sample_secondary_meta_json) \
    .replace('__SAMPLE_SECONDARY_MATRIX__', sample_secondary_matrix_json) \
    .replace('__DRAW_ON_SECONDARY__', 'true' if draw_on_secondary else 'false') \
-   .replace('__ANNOTATION_LAYERS__', annotation_layers_json) \
    .replace('__JS__',      js)
+    # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 
+    _ts = _time.monotonic()
     display(HTML(html))
+    # print(f'[DIANNE] display(HTML): {_time.monotonic()-_ts:.2f}s', flush=True)
     display(out)
 
     return server.clicks, server.strokes_by_sample, server.stop

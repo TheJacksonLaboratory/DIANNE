@@ -493,6 +493,14 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
   });
 
+  function setAnnotationLayers(layers) {
+    annotationLayers = layers || [];
+    _buildCellIdLookup();
+    _applyCategoryColorsFromLayer();
+    rebuildCategoryPanel();
+    requestDraw();
+  }
+
   viewport.onChange(() => {
     requestDraw();
   });
@@ -504,6 +512,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   return {
     setVisible,
     setContext,
+    setAnnotationLayers,
     getState,
     getVisible: () => isVisible,
     getSelectedCategories: () => [...selectedCategories],

@@ -264,6 +264,10 @@ class ViewerServer:
                             self._respond(200, body, 'application/json')
                         except Exception as e:
                             self._respond(400, str(e).encode())
+                elif parsed.path == '/annotation_layers':
+                    body = srv._annotation_layers_json.encode()
+                    self._respond(200, body, 'application/json')
+
                 elif parsed.path == '/classifier_names':
                     if srv.list_names_fn is None:
                         body = json.dumps([]).encode()
