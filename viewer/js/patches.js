@@ -62,7 +62,18 @@ function createPatchOverlay(container, viewport, settings) {
     if (!coords) return;
 
     const { scale, ox, oy } = viewport.getTransform();
-    const half   = currentPatchSize / 2;
+
+    // Scale tile size from secondary-image pixels to primary-image pixels.
+    // The affine matrix maps secondary → primary; the scale factor for distances
+    // is √|det(M)| where M = [[m00, m01],[m10, m11]].
+    let tileSizePrimary = currentPatchSize;
+    if (currentSecMatrix && currentSecMatrix.m00 != null) {
+      const { m00, m01, m10, m11 } = currentSecMatrix;
+      const det = Math.abs(m00 * m11 - m01 * m10);
+      tileSizePrimary = currentPatchSize * Math.sqrt(det);
+    }
+
+    const half   = tileSizePrimary / 2;
     const margin = half + 2;
     const xMin = (-ox - margin) / scale;
     const xMax = (canvas.width  - ox + margin) / scale;
@@ -78,7 +89,7 @@ function createPatchOverlay(container, viewport, settings) {
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth   = Math.max(0.5, Math.min(2, scale));
 
-    const rectW = currentPatchSize * scale;
+    const rectW = tileSizePrimary * scale;
     const rectH = rectW;
 
     const xs = coords.xArr;
