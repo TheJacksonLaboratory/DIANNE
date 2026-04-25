@@ -13,7 +13,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -84,6 +84,11 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     toggleAnnotBtn.style.opacity = annotationsVisible ? '1' : '0.45';
   });
   bar.appendChild(toggleAnnotBtn);
+
+  // ── Tiles (patch overlay) toggle — only shown when patch coords are available ──
+  if (patchOverlay) {
+    bar.appendChild(patchOverlay.toggleBtn);
+  }
 
   // extra draw controls — only visible in draw mode
   const drawControls = document.createElement('div');

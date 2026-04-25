@@ -106,6 +106,14 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         unaffected.  Inference-result overlay points (``xi``, ``yi``) are
         assumed to be in secondary pixel space and are automatically
         transformed back to primary image space before rendering.
+    Tile overlay (automatic)
+        If ``run_inference_fn`` has a ``tile_coords`` attribute (a dict
+        ``{sample: {'x': array, 'y': array}}``) and a ``tile_size``
+        attribute (int, secondary-image pixels), the viewer automatically
+        shows a "Tiles" toggle button.  Coordinates are in secondary-image
+        pixel space and are transformed to primary-image space via the
+        secondary affine matrix.  Populated automatically by
+        ``dianne.makeRunFn(…)`` with no extra arguments needed.
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -297,6 +305,18 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           secondary_images=secondary_sample_images)
     # annotation_layers_json is built later; attach placeholder now, replace after build
     server._annotation_layers_json = '[]'
+
+    # ── store tile_coords_fn on server for lazy per-sample serving ────────────
+    # Derived from run_inference_fn.tile_coords / .tile_size when available.
+    _tile_coords_fn = None
+    tile_size = None
+    if run_inference_fn is not None and hasattr(run_inference_fn, 'tile_coords'):
+      _tc = run_inference_fn.tile_coords  # dict {sample: {'x': array, 'y': array}}
+      _tile_coords_fn = lambda s, _tc=_tc: _tc[s]
+      tile_size = getattr(run_inference_fn, 'tile_size', None)
+    server._tile_coords_fn = _tile_coords_fn
+    server._tile_size      = tile_size
+
     server.start()
 
     server.chosen_sample = chosen_sample
@@ -354,27 +374,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         'multichannel.js',
         'transcripts.js',
         'cells.js',
+        'patches.js',
         'draw.js',
         'settings.js',
         'toolbar.js',
         'demo.js',
     ])
-    # print(f'[DIANNE] JS read: {_time.monotonic()-_ts:.2f}s', flush=True)
-
-    # inline all JS files
-    _ts = _time.monotonic()
-    js = '\n\n'.join(_read_js(f) for f in [
-        'viewport.js',
-        'tiles.js',
-        'multichannel.js',
-        'transcripts.js',
-        'cells.js',
-        'draw.js',
-        'settings.js',
-        'toolbar.js',
-        'demo.js',
-    ])
-    # print(f'[DIANNE] JS read: {_time.monotonic()-_ts:.2f}s', flush=True)
 
     _ts = _time.monotonic()
     html = """
@@ -461,6 +466,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const SAMPLE_SECONDARY_META   = __SAMPLE_SECONDARY_META__;
   const SAMPLE_SECONDARY_MATRIX = __SAMPLE_SECONDARY_MATRIX__;
   const DRAW_ON_SECONDARY        = __DRAW_ON_SECONDARY__;
+  const TILE_SIZE                = __TILE_SIZE__;
+  const HAS_TILE_COORDS          = __HAS_TILE_COORDS__;
   let ANNOTATION_LAYERS          = [];  // loaded asynchronously via /annotation_layers
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
@@ -1082,6 +1089,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     settings,
     ANNOTATION_LAYERS
   );
+  const patches = HAS_TILE_COORDS
+    ? createPatchOverlay(root, viewport, settings)
+    : null;
+  if (patches) patches.setContext(ACTIVE_SAMPLE, BASE_URL, TILE_SIZE, SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE]);
   const draw     = createDraw(root, viewport);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
     HAS_RUN_INFERENCE ? { onRun: runInference } : null,
@@ -1123,7 +1134,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           .catch(() => []);
       } : null,
     } : null,
-    settings
+    settings,
+    patches
   );
 
   // per-sample stroke storage
@@ -1427,6 +1439,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         transcriptStateBySample[sampleName] || null);
       cells.setContext(ACTIVE_SAMPLE, META, SAMPLE_CELLS_META[ACTIVE_SAMPLE],
         cellStateBySample[sampleName] || null);
+      if (patches) patches.setContext(ACTIVE_SAMPLE, BASE_URL, TILE_SIZE, SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE]);
       predPoints = [];
       drawPredLayer();
       _drawSecondaryLayer(viewport.getTransform());
@@ -2004,6 +2017,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__SAMPLE_SECONDARY_META__',   sample_secondary_meta_json) \
    .replace('__SAMPLE_SECONDARY_MATRIX__', sample_secondary_matrix_json) \
    .replace('__DRAW_ON_SECONDARY__', 'true' if draw_on_secondary else 'false') \
+   .replace('__HAS_TILE_COORDS__', 'true' if _tile_coords_fn else 'false') \
+   .replace('__TILE_SIZE__', str(tile_size) if tile_size is not None else 'null') \
    .replace('__JS__',      js)
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 

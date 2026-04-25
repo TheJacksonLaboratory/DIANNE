@@ -24,6 +24,7 @@ function createSettings(toolbarEl, rootEl, defaults) {
     cellCacheSize      : 500,        // max cell JSON tile responses in memory
     maxCellsBoundaries : 10000,       // force dots when visible cell count exceeds this (0 = off)
     inferMsPerCell     : 0.25,       // loader animation ms per cell in inference sample
+    patchOpacity       : 0.35,       // semi-transparency of the patch/tile overlay (0–1)
   }, defaults || {});
 
   // Load persisted values; only accept keys/types that exist in DEFAULTS.
@@ -289,6 +290,15 @@ function createSettings(toolbarEl, rootEl, defaults) {
       'Tune to match actual inference wall-clock speed.\n' +
       'Example: 5 000 cells × 0.15 ms = 0.75 s'));
     panel.appendChild(_makeHint('Matches server-side INFERENCE_MS_PER_CELL'));
+
+    // ── Patch overlay ──────────────────────────────────────────────────────────
+    panel.appendChild(_makeSectionHeader('Patch Overlay'));
+
+    panel.appendChild(_makeRow(
+      'Patch opacity',
+      _makeSlider({ key: 'patchOpacity', min: 0, max: 1, step: 0.05,
+        format: v => v.toFixed(2) }),
+      'Fill opacity for the Tiles overlay rectangles (0 = invisible, 1 = solid).'));
 
     // ── Sticky footer with reset button ────────────────────────────────────────
     const footer = document.createElement('div');

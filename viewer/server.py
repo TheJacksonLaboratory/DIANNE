@@ -99,6 +99,9 @@ class ViewerServer:
             sample: {'strokes_positive': [], 'strokes_negative': []}
             for sample in self.images.keys()
         }
+        self._annotation_layers_json = '[]'
+        self._tile_coords_fn  = None   # callable(sample) -> {'x': [...], 'y': [...]}
+        self._tile_size       = None   # int, secondary-space pixels
 
         if port is None:
             with socket.socket() as s:
@@ -264,6 +267,22 @@ class ViewerServer:
                             self._respond(200, body, 'application/json')
                         except Exception as e:
                             self._respond(400, str(e).encode())
+                elif parsed.path == '/tile_coords':
+                    fn = srv._tile_coords_fn
+                    if fn is None:
+                        self._respond(404, b'no tile_coords_fn')
+                    else:
+                        try:
+                            result = fn(sample_name)
+                            xs = result.get('x', [])
+                            ys = result.get('y', [])
+                            if hasattr(xs, 'tolist'): xs = xs.tolist()
+                            if hasattr(ys, 'tolist'): ys = ys.tolist()
+                            body = json.dumps({'x': xs, 'y': ys}).encode()
+                            self._respond(200, body, 'application/json')
+                        except Exception as e:
+                            self._respond(500, str(e).encode())
+
                 elif parsed.path == '/annotation_layers':
                     body = srv._annotation_layers_json.encode()
                     self._respond(200, body, 'application/json')

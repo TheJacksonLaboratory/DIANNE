@@ -678,6 +678,10 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_job
                     delta=(ts / mpp) / multiplier, alpha=alpha_img,
                     color_low='#FFA500', color_high='#0000FF')
 
+    _runfn.tile_size = tile_size
+    _runfn.tile_coords = {s: {'x': ads[s].obs['pxl_col_in_wsi'].values, 'y': ads[s].obs['pxl_row_in_wsi'].values} for s in ads.keys()}
+    _runfn.sizes = {s: ads[s].shape[0] for s in samples}
+
     return _runfn
 
 def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0.25, N=4):
