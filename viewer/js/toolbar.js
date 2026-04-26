@@ -13,7 +13,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -88,6 +88,11 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   // ── Tiles (patch overlay) toggle — only shown when patch coords are available ──
   if (patchOverlay) {
     bar.appendChild(patchOverlay.toggleBtn);
+  }
+
+  // ── Genes (visium overlay) button — only shown when visium data available ──
+  if (visiumOverlay) {
+    bar.appendChild(visiumOverlay.genesBtn);
   }
 
   // extra draw controls — only visible in draw mode

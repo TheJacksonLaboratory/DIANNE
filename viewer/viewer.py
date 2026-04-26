@@ -42,7 +42,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   run_inference_fn=None, sample_sizes=None,
                   save_func=None, load_func=None, list_names_func=None,
                   secondary_images=None, secondary_matrices=None,
-                  draw_on_secondary=False):
+                  draw_on_secondary=False, visium_ads=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -317,8 +317,21 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     server._tile_coords_fn = _tile_coords_fn
     server._tile_size      = tile_size
 
-    server.start()
+    # ── store visium_ads on server ────────────────────────────────────────────
+    if visium_ads is not None:
+      if not isinstance(visium_ads, dict):
+        raise TypeError('visium_ads must be a dict[sample] -> AnnData')
+      server._visium_ads = {str(k): v for k, v in visium_ads.items()}
+    # Build per-sample gene list for JS (only the var_names as list of strings)
+    _visium_genes_by_sample = {}
+    for _s, _ad in server._visium_ads.items():
+      try:
+        _visium_genes_by_sample[_s] = list(_ad.var_names)
+      except Exception:
+        pass
+    _has_visium = bool(_visium_genes_by_sample)
 
+    server.start()
     server.chosen_sample = chosen_sample
 
     # output widget for server-side log (optional, hidden by default)
@@ -375,6 +388,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         'transcripts.js',
         'cells.js',
         'patches.js',
+        'visium.js',
         'draw.js',
         'settings.js',
         'toolbar.js',
@@ -468,6 +482,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const DRAW_ON_SECONDARY        = __DRAW_ON_SECONDARY__;
   const TILE_SIZE                = __TILE_SIZE__;
   const HAS_TILE_COORDS          = __HAS_TILE_COORDS__;
+  const HAS_VISIUM               = __HAS_VISIUM__;
+  const VISIUM_GENES_BY_SAMPLE   = __VISIUM_GENES_BY_SAMPLE__;
   let ANNOTATION_LAYERS          = [];  // loaded asynchronously via /annotation_layers
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
@@ -1093,6 +1109,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     ? createPatchOverlay(root, viewport, settings)
     : null;
   if (patches) patches.setContext(ACTIVE_SAMPLE, BASE_URL, TILE_SIZE, SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE]);
+  const visiumOverlay = HAS_VISIUM
+    ? createVisiumOverlay(root, viewport, VISIUM_GENES_BY_SAMPLE)
+    : null;
+  if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
   const draw     = createDraw(root, viewport);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
     HAS_RUN_INFERENCE ? { onRun: runInference } : null,
@@ -1135,7 +1155,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       } : null,
     } : null,
     settings,
-    patches
+    patches,
+    visiumOverlay
   );
 
   // per-sample stroke storage
@@ -1440,6 +1461,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       cells.setContext(ACTIVE_SAMPLE, META, SAMPLE_CELLS_META[ACTIVE_SAMPLE],
         cellStateBySample[sampleName] || null);
       if (patches) patches.setContext(ACTIVE_SAMPLE, BASE_URL, TILE_SIZE, SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE]);
+      if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
       predPoints = [];
       drawPredLayer();
       _drawSecondaryLayer(viewport.getTransform());
@@ -2019,6 +2041,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__DRAW_ON_SECONDARY__', 'true' if draw_on_secondary else 'false') \
    .replace('__HAS_TILE_COORDS__', 'true' if _tile_coords_fn else 'false') \
    .replace('__TILE_SIZE__', str(tile_size) if tile_size is not None else 'null') \
+   .replace('__HAS_VISIUM__', 'true' if _has_visium else 'false') \
+   .replace('__VISIUM_GENES_BY_SAMPLE__', json.dumps(_visium_genes_by_sample)) \
    .replace('__JS__',      js)
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 

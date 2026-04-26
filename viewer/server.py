@@ -102,6 +102,7 @@ class ViewerServer:
         self._annotation_layers_json = '[]'
         self._tile_coords_fn  = None   # callable(sample) -> {'x': [...], 'y': [...]}
         self._tile_size       = None   # int, secondary-space pixels
+        self._visium_ads      = {}     # dict[sample] -> AnnData (spots × genes)
 
         if port is None:
             with socket.socket() as s:
@@ -279,6 +280,33 @@ class ViewerServer:
                             if hasattr(xs, 'tolist'): xs = xs.tolist()
                             if hasattr(ys, 'tolist'): ys = ys.tolist()
                             body = json.dumps({'x': xs, 'y': ys}).encode()
+                            self._respond(200, body, 'application/json')
+                        except Exception as e:
+                            self._respond(500, str(e).encode())
+
+                elif parsed.path == '/visium_genes':
+                    ad = srv._visium_ads.get(sample_name)
+                    gene = qs.get('gene', [None])[0]
+                    if ad is None or gene is None:
+                        self._respond(404, b'no visium data for sample or gene missing')
+                    elif gene not in ad.var_names:
+                        self._respond(404, ('gene not found: ' + gene).encode())
+                    else:
+                        try:
+                            import numpy as _np
+                            xs  = ad.obs['x'].values.tolist()
+                            ys  = ad.obs['y'].values.tolist()
+                            col = ad[:, gene].X
+                            if hasattr(col, 'toarray'):
+                                col = col.toarray().ravel()
+                            else:
+                                col = _np.asarray(col).ravel()
+                            body = json.dumps({
+                                'x':         xs,
+                                'y':         ys,
+                                'values':    col.tolist(),
+                                'spot_size': float(ad.uns.get('spot_size', 100)),
+                            }).encode()
                             self._respond(200, body, 'application/json')
                         except Exception as e:
                             self._respond(500, str(e).encode())
