@@ -136,15 +136,24 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
     chosen_sample = sample_list[0]
     import time as _time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     n_samples = len(sample_list)
-    print(f'[DIANNE] Opening {n_samples} sample image(s):', end=' ', flush=True)
+    print(f'[DIANNE] Opening {n_samples} sample image(s) (parallel)…', flush=True)
     _t0 = _time.monotonic()
     sample_images = {}
-    for _i, s in enumerate(sample_list):
-      _ts = _time.monotonic()
-      print(s, end=', ', flush=True)
-      sample_images[s] = _open_image(images[s])
-    print(f'\n[DIANNE] Images loaded in {_time.monotonic()-_t0:.1f}s total', flush=True)
+
+    def _open_sample(s):
+      img = _open_image(images[s])
+      print(f'  ✓ {s}', end='; ', flush=True)
+      return s, img
+
+    with ThreadPoolExecutor(max_workers=min(n_samples, 16)) as _pool:
+      _futs = {_pool.submit(_open_sample, s): s for s in sample_list}
+      for _fut in as_completed(_futs):
+        s, img = _fut.result()
+        sample_images[s] = img
+
+    print(f'[DIANNE] Images loaded in {_time.monotonic()-_t0:.1f}s total', flush=True)
     image         = sample_images[chosen_sample]
     is_multichannel = isinstance(image, MultichannelImage)
 
@@ -232,15 +241,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     secondary_sample_images = {}
     sample_secondary_meta   = {s: None for s in sample_list}
     sample_secondary_matrix = {s: None for s in sample_list}
-    for sample in sample_list:
-      sec_path = secondary_images.get(sample)
-      if sec_path is None:
-        continue
-      # print(f'[DIANNE] Opening secondary image for {sample} … ', end='', flush=True)
-      _ts = _time.monotonic()
-      secondary_sample_images[sample] = _open_image(sec_path)
-      # print(f'done ({_time.monotonic()-_ts:.1f}s)', flush=True)
-      sample_secondary_meta[sample]   = secondary_sample_images[sample].metadata
+    _sec_samples = [s for s in sample_list if secondary_images.get(s) is not None]
+    if _sec_samples:
+      def _open_sec(sample):
+        return sample, _open_image(secondary_images[sample])
+      with ThreadPoolExecutor(max_workers=min(len(_sec_samples), 16)) as _pool:
+        for sample, img in _pool.map(_open_sec, _sec_samples):
+          secondary_sample_images[sample] = img
+          sample_secondary_meta[sample]   = img.metadata
+    for sample in _sec_samples:
       mat_path = secondary_matrices.get(sample)
       if mat_path is not None:
         import numpy as _np
