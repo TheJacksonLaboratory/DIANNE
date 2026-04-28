@@ -6,6 +6,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import multiprocessing
 
+
+class _ViewerHTTPServer(ThreadingHTTPServer):
+    # A larger accept backlog avoids short request bursts getting stuck in
+    # browser-pending state when many tiles/thumbnails are requested at once.
+    request_queue_size = 128
+    daemon_threads = True
+
 # Prefer the 'spawn' start method to avoid forking from non-main threads.
 # Forking from a non-main thread can leave Intel TBB in an invalid state and
 # cause Numba/TBB errors like: "Attempted to fork from a non-main thread...".
@@ -110,7 +117,7 @@ class ViewerServer:
                 port = s.getsockname()[1]
         self.port = port
 
-        self._server = ThreadingHTTPServer(('0.0.0.0', port), self._make_handler())
+        self._server = _ViewerHTTPServer(('0.0.0.0', port), self._make_handler())
         self._server.handle_error = lambda *a: None  # silence broken pipe / connection reset
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
@@ -163,6 +170,7 @@ class ViewerServer:
         srv = self
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
 
             def do_OPTIONS(self):
                 self._respond(204)
@@ -525,6 +533,7 @@ class ViewerServer:
             def _respond(self, status, body=b'', content_type='text/plain'):
                 self.send_response(status)
                 self.send_header('Content-Type',                  content_type)
+                self.send_header('Content-Length',                str(len(body)))
                 self.send_header('Access-Control-Allow-Origin',   '*')
                 self.send_header('Access-Control-Allow-Methods',  'GET, POST, OPTIONS')
                 self.send_header('Access-Control-Allow-Headers',  'Content-Type')

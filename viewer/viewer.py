@@ -1568,6 +1568,27 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
   function buildSampleRibbon() {
     samplesRibbon.innerHTML = '';
+    let thumbObserver = null;
+    if ('IntersectionObserver' in window) {
+      thumbObserver = new IntersectionObserver((entries, observer) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const wrap = entry.target;
+          const img = wrap.querySelector('img[data-thumb-src]');
+          if (!img || img.dataset.thumbLoaded === '1') {
+            observer.unobserve(wrap);
+            continue;
+          }
+          img.src = img.dataset.thumbSrc;
+          img.dataset.thumbLoaded = '1';
+          observer.unobserve(wrap);
+        }
+      }, {
+        root: samplesRibbon,
+        rootMargin: '120px 0px',
+        threshold: 0.01,
+      });
+    }
 
     const legend = document.createElement('div');
     legend.style.cssText = [
@@ -1619,13 +1640,21 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       console.log(`Using thumbnail level ${thumbLevel} for sample ${sampleName}`);
       const img = document.createElement('img');
       img.alt = sampleName;
+      img.loading = 'lazy';
+      img.decoding = 'async';
       img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center center;display:block;';
       // Request a server-generated square thumbnail (256×256) of the full
       // lowest-resolution level so we always get the entire image resized
       // preserving aspect ratio.
-      img.src = BASE_URL + '/thumb?sample=' + encodeURIComponent(sampleName)
+      img.dataset.thumbSrc = BASE_URL + '/thumb?sample=' + encodeURIComponent(sampleName)
         + '&level=' + thumbLevel + '&size=256';
+      img.dataset.thumbLoaded = '0';
+      if (!thumbObserver) {
+        img.src = img.dataset.thumbSrc;
+        img.dataset.thumbLoaded = '1';
+      }
       thumbWrap.appendChild(img);
+      if (thumbObserver) thumbObserver.observe(thumbWrap);
 
       // Overlay canvas for viewport rectangle
       const thumbCanvas = document.createElement('canvas');
