@@ -42,7 +42,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   run_inference_fn=None, sample_sizes=None,
                   save_func=None, load_func=None, list_names_func=None,
                   secondary_images=None, secondary_matrices=None,
-                  draw_on_secondary=False, visium_ads=None):
+                  draw_on_secondary=False, visium_ads=None,
+                  sample_mapping=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -144,7 +145,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
     def _open_sample(s):
       img = _open_image(images[s])
-      print(f'  ✓ {s}', end='; ', flush=True)
+      print(f' {s}', end='; ', flush=True)
       return s, img
 
     with ThreadPoolExecutor(max_workers=min(n_samples, 16)) as _pool:
@@ -154,6 +155,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         sample_images[s] = img
 
     print(f'[DIANNE] Images loaded in {_time.monotonic()-_t0:.1f}s total', flush=True)
+    print(f'[DIANNE] Loading layers…', flush=True)
+
     image         = sample_images[chosen_sample]
     is_multichannel = isinstance(image, MultichannelImage)
 
@@ -493,6 +496,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const HAS_TILE_COORDS          = __HAS_TILE_COORDS__;
   const HAS_VISIUM               = __HAS_VISIUM__;
   const VISIUM_GENES_BY_SAMPLE   = __VISIUM_GENES_BY_SAMPLE__;
+  const SAMPLE_MAPPING           = __SAMPLE_MAPPING__;
   let ANNOTATION_LAYERS          = [];  // loaded asynchronously via /annotation_layers
   let ACTIVE_SAMPLE = SAMPLES[0];
   let META = SAMPLE_META[ACTIVE_SAMPLE] || __META__;
@@ -1486,7 +1490,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       card.style.outline = isActive ? '2px solid #53d9ff' : 'none';
       card.style.background = isActive ? '#272727' : '#1d1d1d';
     }
-    log('Sample: ' + sampleName);
+    log('Sample: ' + sampleName + (SAMPLE_MAPPING[sampleName] ? ' (' + SAMPLE_MAPPING[sampleName] + ')' : ''));
   }
 
   // per-sample thumbnail overlay canvases (keyed by sample name)
@@ -1681,6 +1685,16 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         'font:12px monospace', 'line-height:1.3',
         'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
       ].join(';');
+
+      if (SAMPLE_MAPPING[sampleName]) {
+        const sublabel = document.createElement('div');
+        sublabel.textContent = '(' + SAMPLE_MAPPING[sampleName] + ')';
+        sublabel.style.cssText = [
+          'font:11px monospace', 'line-height:1.3', 'color:#aaa',
+          'white-space:nowrap', 'overflow:hidden', 'text-overflow:ellipsis',
+        ].join(';');
+        label.appendChild(sublabel);
+      }
 
       const badge = document.createElement('div');
       badge.textContent = hasXe ? 'XE' : 'HE';
@@ -2027,7 +2041,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     for (let i = 0; i < META.n_levels; i++) {
       if (t.scale >= 1 / lvl[i].downsample) { level = i; break; }
     }
-    log('sample ' + ACTIVE_SAMPLE + '  |  zoom ' + t.scale.toFixed(3) + 'x  |  level ' + level
+    const _mappedName = SAMPLE_MAPPING[ACTIVE_SAMPLE] ? ' (' + SAMPLE_MAPPING[ACTIVE_SAMPLE] + ')' : '';
+    log('sample ' + ACTIVE_SAMPLE + _mappedName + '  |  zoom ' + t.scale.toFixed(3) + 'x  |  level ' + level
       + '  (' + lvl[level].width + 'x' + lvl[level].height + ')');
   });
 
@@ -2081,6 +2096,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__TILE_SIZE__', str(tile_size) if tile_size is not None else 'null') \
    .replace('__HAS_VISIUM__', 'true' if _has_visium else 'false') \
    .replace('__VISIUM_GENES_BY_SAMPLE__', json.dumps(_visium_genes_by_sample)) \
+   .replace('__SAMPLE_MAPPING__', json.dumps({str(k): str(v) for k, v in sample_mapping.items()} if sample_mapping else {})) \
    .replace('__JS__',      js)
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 
