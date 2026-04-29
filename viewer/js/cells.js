@@ -157,6 +157,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   function fetchTile(tile) {
     const key = cacheKey(tile);
     if (cache.has(key) || inflight.has(key) || !enabled) return;
+    if (selectedCategories.size === 0) return;
 
     const ctrl = new AbortController();
     inflight.set(key, ctrl);

@@ -665,6 +665,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     '  <input id="iv-primary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
     '</span>',
     '<span id="iv-secondary-opacity-wrap" title="Secondary image opacity" style="display:none;align-items:center;gap:4px;">',
+    '  <input id="iv-secondary-enabled" type="checkbox" checked title="Enable secondary image fetching (uncheck to stop fetching for better network performance)" style="cursor:pointer;margin:0 2px 0 0;">',
     '  <span>Secondary</span>',
     '  <input id="iv-secondary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
     '</span>',
@@ -681,8 +682,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const _primaryOpacityWrap   = overlayControls.querySelector('#iv-primary-opacity-wrap');
   const _primaryOpacitySlider = overlayControls.querySelector('#iv-primary-opacity');
   // secondary-image opacity slider — shown whenever a secondary image exists for the active sample
-  const _secondaryOpacityWrap   = overlayControls.querySelector('#iv-secondary-opacity-wrap');
-  const _secondaryOpacitySlider = overlayControls.querySelector('#iv-secondary-opacity');
+  const _secondaryOpacityWrap      = overlayControls.querySelector('#iv-secondary-opacity-wrap');
+  const _secondaryOpacitySlider    = overlayControls.querySelector('#iv-secondary-opacity');
+  const _secondaryEnabledCheckbox  = overlayControls.querySelector('#iv-secondary-enabled');
+  let _secondaryFetchEnabled = true;
 
   function _updateOpacitySliderVisibility() {
     const hasSecondary = !!(SAMPLE_SECONDARY_META[ACTIVE_SAMPLE]);
@@ -696,6 +699,18 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   });
   _secondaryOpacitySlider.addEventListener('input', () => {
     secondaryCanvas.style.opacity = _secondaryOpacitySlider.value;
+  });
+  _secondaryEnabledCheckbox.addEventListener('change', () => {
+    _secondaryFetchEnabled = _secondaryEnabledCheckbox.checked;
+    if (!_secondaryFetchEnabled) {
+      // abort all in-flight secondary requests and clear canvas
+      for (const m of _secChInFlight) for (const ctrl of m.values()) ctrl.abort();
+      for (const ctrl of _secRgbInFlight.values()) ctrl.abort();
+      _secRgbInFlight.clear();
+      secCtx.clearRect(0, 0, secondaryCanvas.width, secondaryCanvas.height);
+    } else {
+      _drawSecondaryLayer(viewport.getTransform());
+    }
   });
 
   // Fullscreen toggle button (expands iv-shell to fill the browser viewport)
@@ -878,7 +893,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     const { scale, ox, oy } = t;
     const secMeta = SAMPLE_SECONDARY_META[ACTIVE_SAMPLE];
     secCtx.clearRect(0, 0, secondaryCanvas.width, secondaryCanvas.height);
-    if (!secMeta) return;
+    if (!secMeta || !_secondaryFetchEnabled) return;
     const isSecMC = !!(secMeta.n_channels);
     const mat     = SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE];
     const SECTILE = secMeta.tile_size;
