@@ -1172,7 +1172,20 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name }),
         }).then(r => r.json()).then(res => {
-          log(res.ok ? ('Loaded classifier: ' + name) : ('Load error: ' + (res.error || 'unknown')));
+          if (res.ok) {
+            log('Loaded classifier: ' + name);
+            const bySample = res.strokes_by_sample || {};
+            for (const [s, sd] of Object.entries(bySample)) {
+              strokesBySample[s] = {
+                strokes_positive: sd.strokes_positive || [],
+                strokes_negative: sd.strokes_negative || [],
+              };
+            }
+            const activeSd = strokesBySample[ACTIVE_SAMPLE] || { strokes_positive: [], strokes_negative: [] };
+            draw.setStrokes(activeSd.strokes_positive, activeSd.strokes_negative);
+          } else {
+            log('Load error: ' + (res.error || 'unknown'));
+          }
         }).catch(err => log('Load error: ' + err))
           .finally(() => { if (btn) btn.disabled = false; });
       } : null,

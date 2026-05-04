@@ -442,8 +442,8 @@ class ViewerServer:
                         body = json.dumps({'ok': False, 'error': 'save not configured'}).encode()
                         self._respond(200, body, 'application/json')
                         return
-                    try:
-                        srv.save_fn(name, srv.strokes_by_sample)
+                    try: 
+                        srv.save_fn(strokes_by_sample=srv.strokes_by_sample, clfname=name)
                         body = json.dumps({'ok': True}).encode()
                     except Exception as exc:
                         import traceback; traceback.print_exc()
@@ -462,8 +462,18 @@ class ViewerServer:
                         self._respond(200, body, 'application/json')
                         return
                     try:
-                        srv.load_fn(name, srv.strokes_by_sample)
-                        body = json.dumps({'ok': True}).encode()
+                        result = srv.load_fn(clfname=name)
+                        # load_fn may return (drawings, clf) or just clf
+                        if isinstance(result, tuple) and len(result) == 2:
+                            drawings, _clf = result
+                        else:
+                            drawings = None
+                        if drawings and isinstance(drawings, dict):
+                            for sample, sample_strokes in drawings.items():
+                                if sample in srv.strokes_by_sample and isinstance(sample_strokes, dict):
+                                    srv.strokes_by_sample[sample]['strokes_positive'] = list(sample_strokes.get('strokes_positive', []))
+                                    srv.strokes_by_sample[sample]['strokes_negative'] = list(sample_strokes.get('strokes_negative', []))
+                        body = json.dumps({'ok': True, 'strokes_by_sample': drawings or {}}).encode()
                     except Exception as exc:
                         import traceback; traceback.print_exc()
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
