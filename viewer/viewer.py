@@ -22,16 +22,17 @@ def _read_js(name):
 
 def _open_image(path):
     """
-    Auto-detect channel count and return a MultichannelImage (C > 3) or
-    a PyramidImage (C == 1 or 3 — standard RGB / greyscale histology).
-    Opens the tifffile zarr store once and passes it to the constructor to
-    avoid a redundant second open.
+    Auto-detect channel count to choose PyramidImage vs MultichannelImage.
     """
     import tifffile, zarr
+    with tifffile.TiffFile(str(path)) as tf:
+        page = tf.pages.first
+        photometric = page.tags.get("PhotometricInterpretation")
+        is_rgb = (photometric is not None and photometric.value == 2)  # 2 = RGB
     store = tifffile.imread(str(path), aszarr=True)
-    z     = zarr.open(store, mode='r')
-    n_ch  = z['0'].shape[0]
-    if n_ch > 3:
+    if is_rgb:
+        return PyramidImage(path, _zarr_store=store)
+    else:
         return MultichannelImage(path, _zarr_store=store)
     return PyramidImage(path, _zarr_store=store)
 

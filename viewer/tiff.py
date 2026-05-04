@@ -29,9 +29,15 @@ class PyramidImage:
 
         self.n_levels = len(self._z)
         self.levels   = {}          # level_idx → {shape, n_tiles_x, n_tiles_y}
+        # Detect channel layout: (C, H, W) vs (H, W, C)
+        _arr0 = self._z["0"]
+        self._channels_last = (_arr0.ndim == 3 and _arr0.shape[2] in (3, 4) and _arr0.shape[0] > 4)
         for i in range(self.n_levels):
             arr = self._z[str(i)]
-            _, h, w = arr.shape
+            if self._channels_last:
+                h, w, _ = arr.shape
+            else:
+                _, h, w = arr.shape
             self.levels[i] = dict(
                 shape      = (h, w),
                 n_tiles_y  = (h + self.TILE - 1) // self.TILE,
@@ -83,11 +89,13 @@ class PyramidImage:
         if y0 >= h or x0 >= w:
             return self._blank_tile(y1-y0, x1-x0, quality=quality)
 
-        # read (C, th, tw) — three channel reads, each hits 1 chunk column
-        data = arr[:, y0:y1, x0:x1]       # numpy (3, th, tw) uint8
-
-        # → (th, tw, 3) for PIL
-        rgb  = np.moveaxis(data, 0, -1)
+        # read tile data in channel-first or channel-last layout
+        if self._channels_last:
+            data = arr[y0:y1, x0:x1, :]    # numpy (th, tw, 3) uint8
+            rgb  = data
+        else:
+            data = arr[:, y0:y1, x0:x1]   # numpy (3, th, tw) uint8
+            rgb  = np.moveaxis(data, 0, -1)
 
         # pad to full TILE if border tile (keeps tile size uniform for JS)
         th, tw = rgb.shape[:2]
@@ -118,9 +126,13 @@ class PyramidImage:
         if level not in self.levels:
             raise ValueError(f"level {level} out of range 0–{self.n_levels-1}")
 
-        arr = self._z[str(level)]  # (C, H, W)
-        _, h, w = arr.shape
-        rgb = np.moveaxis(arr, 0, -1)  # (H, W, 3)
+        arr = self._z[str(level)]
+        if self._channels_last:
+            h, w, _ = arr.shape
+            rgb = np.asarray(arr)           # already (H, W, C)
+        else:
+            _, h, w = arr.shape
+            rgb = np.moveaxis(arr, 0, -1)   # (C, H, W) → (H, W, C)
 
         # Create PIL image
         img = Image.fromarray(rgb)
