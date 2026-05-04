@@ -610,7 +610,68 @@ def saveGUIClassifier(clf, classifierPaths, clfname, samples, ts, mpp, patch_siz
 
     return
 
-def loadGUIClassifier(classifierPaths, clfname, ext='pklz'):
+def makeSaveFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8,
+              tile_size=448, patch_size=8, body_overlap=0.25, classifierPaths=None):
+
+    """Return a save_classifier_fn compatible with viewer.create_viewer().
+    All dataset-level variables are captured once at call time; only the viewer-supplied strokes and active_sample change per invocation.
+    Parameters
+    ----------
+    patchCoordinates : DataFrame
+    ads : dict[sample -> AnnData]
+    samples : list[str]
+    qs : quantiles array
+    ts : float  tile spacing in µm
+    mpp : float microns per pixel
+    tile_size : int   tile size in image pixels
+    patch_size : int  patch side length in tiles
+    body_overlap : float
+    classifierPaths : str  path to save classifiers
+
+    Returns
+    -------
+    Callable suitable for ``save_classifier_fn=`` in ``viewer.create_viewer()``.
+    """
+
+    from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
+
+    def _savefn(*, strokes_by_sample, clfname):
+
+        clf, patchesCDFsMod, annotations = getClassifierForFromStrokes(
+            strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size,
+            ads, samples, qs, augFunc=PCMA, alpha=PCMA_alpha, seed=0, showPatches=False)
+
+        if clf is None:
+            raise ValueError("No classifier to save.")
+
+        saveGUIClassifier(clf, classifierPaths, clfname=clfname, samples=samples, ts=ts, mpp=mpp,
+                            patch_size=patch_size, tile_size=tile_size, body_overlap=body_overlap, qs=qs,
+                            patchesCDFsMod=patchesCDFsMod, annotationsMod=annotations, drawings=strokes_by_sample, ext='pklz')
+
+        return None
+
+    return _savefn
+
+def makeLoadFn(classifierPaths=None):
+
+    """Return a load_classifier_fn compatible with viewer.create_viewer().
+    All dataset-level variables are captured once at call time; only the viewer-supplied strokes and active_sample change per invocation.
+    Parameters
+    ----------
+    classifierPaths : str  path to load classifiers
+
+    Returns
+    -------
+    Callable suitable for ``load_classifier_fn=`` in ``viewer.create_viewer()``.
+    """
+
+    def _loadfn(*, clfname):
+
+        return loadGUIClassifier(classifierPaths, clfname, ext='pklz', return_drawings=True)
+
+    return _loadfn
+
+def loadGUIClassifier(classifierPaths, clfname, ext='pklz', return_drawings=False):
 
     """Load a classifier and its associated information from a file."""
 
@@ -634,8 +695,33 @@ def loadGUIClassifier(classifierPaths, clfname, ext='pklz'):
         count_neg += len(d.get('strokes_negative', []))
     print(f"Loaded classifier with {count_pos} positive and {count_neg} negative strokes.")
 
+    if return_drawings:
+        return drawings, clf
+
     return clf
 
+def makeListFn(classifierPaths=None, ext='pklz'):
+
+    """Return a list_classifier_fn compatible with viewer.create_viewer().
+    Parameters
+    ----------
+    classifierPaths : str  path to load classifiers
+    ext : str  file extension for classifier files
+    Returns
+    -------
+    Callable suitable for ``list_classifier_fn=`` in ``viewer.create_viewer()``.
+    """
+
+    def _listfn():
+        if classifierPaths is None:
+            return []
+        try:
+            return sorted([f[:-len(ext)-1] for f in os.listdir(classifierPaths) if f.endswith(f'.{ext}')])
+        except FileNotFoundError:
+            print(f"Classifier directory '{classifierPaths}' not found. Returning an empty list.")
+            return []
+
+    return _listfn
 
 def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_jobs=16, R=2,
               tile_size=448, patch_size=8, body_overlap=0.25, multiplier=4, alpha_img=0.5):
