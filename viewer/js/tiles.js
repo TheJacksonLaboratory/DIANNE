@@ -87,6 +87,8 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
     img.style.top       = screenY + 'px';
     img.style.width     = screenW + 'px';
     img.style.height    = screenW + 'px';
+    img.style.maxWidth  = 'none';
+    img.style.maxHeight = 'none';
     img.style.imageRendering = 'pixelated';
   }
 
