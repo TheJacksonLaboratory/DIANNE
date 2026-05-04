@@ -1176,9 +1176,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
             log('Loaded classifier: ' + name);
             const bySample = res.strokes_by_sample || {};
             for (const [s, sd] of Object.entries(bySample)) {
+              const mat = DRAW_ON_SECONDARY && SAMPLE_SECONDARY_MATRIX[s];
+              const toP = mat ? (list => _tfmStrokeList(list, (x, y) => _secToPrim(mat, x, y))) : (list => list);
               strokesBySample[s] = {
-                strokes_positive: sd.strokes_positive || [],
-                strokes_negative: sd.strokes_negative || [],
+                strokes_positive: toP(sd.strokes_positive || []),
+                strokes_negative: toP(sd.strokes_negative || []),
               };
             }
             const activeSd = strokesBySample[ACTIVE_SAMPLE] || { strokes_positive: [], strokes_negative: [] };
