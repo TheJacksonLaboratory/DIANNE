@@ -262,8 +262,54 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
         'cursor:pointer', 'font-size:14px', 'line-height:1.4', 'margin-left:4px',
       ].join(';');
       saveBtn.addEventListener('click', () => {
-        const name = prompt('Save classifier as:');
-        if (name && name.trim()) saveLoadOptions.onSave(name.trim(), saveBtn);
+        // Styled save-name dialog matching the load picker
+        const overlay = document.createElement('div');
+        overlay.style.cssText = [
+          'position:fixed','left:0','top:0','width:100%','height:100%',
+          'display:flex','align-items:center','justify-content:center',
+          'z-index:2147483649','background:rgba(0,0,0,0.55)',
+        ].join(';');
+        const box = document.createElement('div');
+        box.style.cssText = [
+          'min-width:260px','background:#1b1b1b','color:#eee',
+          'border-radius:8px','border:1px solid #3a3a3a',
+          'box-shadow:0 6px 24px rgba(0,0,0,0.8)',
+          'padding:16px 18px','font:13px monospace',
+        ].join(';');
+        box.innerHTML = '<div style="font-weight:700;color:#53d9ff;margin-bottom:10px;">Save classifier</div>';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Classifier name…';
+        input.style.cssText = 'width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #555;border-radius:4px;padding:5px 6px;font:13px monospace;margin-bottom:12px;outline:none;';
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = 'padding:5px 10px;border-radius:6px;border:1px solid #555;background:#333;color:#bbb;cursor:pointer;font:12px monospace';
+        const okBtn = document.createElement('button');
+        okBtn.textContent = 'Save';
+        okBtn.style.cssText = 'padding:5px 14px;border-radius:6px;border:none;background:#1f8cff;color:#fff;cursor:pointer;font:12px monospace';
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(okBtn);
+        box.appendChild(input);
+        box.appendChild(btnRow);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        input.focus();
+        function _close() { overlay.remove(); document.removeEventListener('keydown', _key); }
+        function _submit() {
+          const name = input.value.trim();
+          _close();
+          if (name) saveLoadOptions.onSave(name, saveBtn);
+        }
+        function _key(e) {
+          if (e.key === 'Enter') _submit();
+          else if (e.key === 'Escape' || e.key === 'Esc') _close();
+        }
+        cancelBtn.addEventListener('click', _close);
+        okBtn.addEventListener('click', _submit);
+        overlay.addEventListener('click', e => { if (e.target === overlay) _close(); });
+        document.addEventListener('keydown', _key);
       });
       bar.appendChild(saveBtn);
     }
