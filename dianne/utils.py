@@ -723,7 +723,7 @@ def makeListFn(classifierPaths=None, ext='pklz'):
 
     return _listfn
 
-def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_jobs=16, R=2,
+def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_jobs=16, R=2, erode=False,
               tile_size=448, patch_size=8, body_overlap=0.25, multiplier=4, alpha_img=0.5):
     """Return a run_inference_fn compatible with viewer.create_viewer().
 
@@ -758,7 +758,7 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_job
         if clf is None:
             return
         x, y, p = inferProbFast(ads[active_sample], clf, qs,
-                                 tsize=ts / mpp, R=R, erode=False, n_jobs=n_jobs, verbose=False)
+                                 tsize=ts / mpp, R=R, erode=erode, n_jobs=n_jobs, verbose=False)
         xi, yi, pi = interpolatePoints(x, y, p, multiplier=multiplier)
         return dict(sample=active_sample, xi=xi, yi=yi, pi=pi,
                     delta=(ts / mpp) / multiplier, alpha=alpha_img,
