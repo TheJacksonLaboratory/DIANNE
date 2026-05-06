@@ -1,5 +1,10 @@
 
-# DIANNE: Segmentation-free localization of histology differential attributes
+<div style="text-align: center; width: 500px; margin: 0 auto;">
+<img src="./docs/logo.svg" alt="DIANNE logo" width="500"/>
+</div>
+<br>
+
+# Segmentation-free localization of histology differential attributes
 
 ## About
 
