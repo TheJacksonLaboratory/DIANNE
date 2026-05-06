@@ -29,6 +29,8 @@ def _open_image(path):
         page = tf.pages.first
         photometric = page.tags.get("PhotometricInterpretation")
         is_rgb = (photometric is not None and photometric.value == 2)  # 2 = RGB
+        if len(tf.pages) == 3:
+            is_rgb = True  # heuristic for RGB when PhotometricInterpretation tag is missing
     store = tifffile.imread(str(path), aszarr=True)
     if is_rgb:
         return PyramidImage(path, _zarr_store=store)
