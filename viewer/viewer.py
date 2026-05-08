@@ -412,12 +412,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     # Inject JS to auto-enter fullscreen if requested
     if fullscreen_on_load:
       js += """
-      ;window.addEventListener('DOMContentLoaded', function() {
-        setTimeout(function() {
+      ;(function _autoFullscreen() {
+        // DOMContentLoaded has already fired in Jupyter; poll for the button instead
+        var _attempts = 0;
+        var _poll = setInterval(function() {
           var fsBtn = document.querySelector('[data-demo-id="fs-btn"]');
-          if (fsBtn) { fsBtn.click(); }
-        }, 400);
-      });
+          if (fsBtn) { clearInterval(_poll); fsBtn.click(); return; }
+          if (++_attempts > 600) clearInterval(_poll);  // give up after 60 s
+        }, 100);
+      })();
       """
 
     _ts = _time.monotonic()
