@@ -46,7 +46,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   save_func=None, load_func=None, list_names_func=None,
                   secondary_images=None, secondary_matrices=None,
                   draw_on_secondary=False, visium_ads=None,
-                  sample_mapping=None):
+                  sample_mapping=None, fullscreen_on_load=True):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -397,18 +397,28 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     # inline all JS files
     _ts = _time.monotonic()
     js = '\n\n'.join(_read_js(f) for f in [
-        'viewport.js',
-        'tiles.js',
-        'multichannel.js',
-        'transcripts.js',
-        'cells.js',
-        'patches.js',
-        'visium.js',
-        'draw.js',
-        'settings.js',
-        'toolbar.js',
-        'demo.js',
+      'viewport.js',
+      'tiles.js',
+      'multichannel.js',
+      'transcripts.js',
+      'cells.js',
+      'patches.js',
+      'visium.js',
+      'draw.js',
+      'settings.js',
+      'toolbar.js',
+      'demo.js',
     ])
+    # Inject JS to auto-enter fullscreen if requested
+    if fullscreen_on_load:
+      js += """
+      ;window.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+          var fsBtn = document.querySelector('[data-demo-id="fs-btn"]');
+          if (fsBtn) { fsBtn.click(); }
+        }, 400);
+      });
+      """
 
     _ts = _time.monotonic()
     html = """
