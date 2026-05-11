@@ -21,6 +21,67 @@ from matplotlib.collections import PatchCollection
 from collections import defaultdict
 import scipy
 from skimage.measure import label
+from scipy.spatial import KDTree
+
+def assign_nearest_shape(
+    df: pd.DataFrame,
+    contours: dict,
+    x_col: str = "x_centroid",
+    y_col: str = "y_centroid",
+    id_col: str = "nearest_shape_id",
+    dist_col: str = "nearest_shape_dist",
+) -> pd.DataFrame:
+    """
+    Assign each cell the ID of the nearest shape contour and the distance to it.
+
+    For each cell, the distance is computed as the minimum Euclidean distance
+    from the cell's (x, y) position to any point on any shape's contour.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with columns x_col and y_col (cell centroids).
+    contours : dict
+        Mapping of shape_id -> np.ndarray of shape (N_points, 2),
+        where each row is an (x, y) contour point.
+    x_col : str
+        Column name for x coordinates in df.
+    y_col : str
+        Column name for y coordinates in df.
+    id_col : str
+        Name of the output column for nearest shape ID.
+    dist_col : str
+        Name of the output column for distance to nearest shape.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input DataFrame with two new columns: id_col and dist_col.
+    """
+    # Stack all contour points into one array, tracking which shape each belongs to
+    all_points = []
+    all_ids = []
+
+    for shape_id, contour in contours.items():
+        contour = np.asarray(contour)
+        all_points.append(contour)
+        all_ids.extend([shape_id] * len(contour))
+
+    all_points = np.vstack(all_points)       # (total_points, 2)
+    all_ids = np.array(all_ids)              # (total_points,)
+
+    # Build a single KDTree over all contour points
+    tree = KDTree(all_points)
+
+    # Query the tree for every cell centroid in one shot
+    cell_coords = df[[x_col, y_col]].to_numpy()  # (n_cells, 2)
+    distances, indices = tree.query(cell_coords, workers=-1)  # parallel
+
+    df = df.copy()
+    df[id_col] = all_ids[indices]
+    df[dist_col] = distances
+
+    return df
 
 def get_tile_mask_means3(mfile, ts, mpp, coords, scale=None):
     try:
