@@ -321,11 +321,15 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
   scheduleUpdate(viewport.getTransform());
 
   // When render quality changes, update imageRendering on all cached tiles.
+  // When levelSensitivity changes, re-evaluate the best level immediately.
   if (settings) {
     settings.onChange((key) => {
       if (key === 'renderQuality' || key === null) {
         const q = settings.get('renderQuality');
         for (const [, entry] of cache) entry.img.style.imageRendering = q;
+      }
+      if (key === 'levelSensitivity' || key === null) {
+        scheduleUpdate(viewport.getTransform());
       }
     });
   }
@@ -333,6 +337,7 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
   return {
     update: scheduleUpdate,
     setLevel: l => { currentLevel = l; },
+    getLevel: () => currentLevel,
     setMeta,
     setSample,
   };

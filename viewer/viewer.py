@@ -914,8 +914,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     const mat     = SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE];
     const SECTILE = secMeta.tile_size;
     let secLevel = secMeta.n_levels - 1;
+    const _secSens = settings ? settings.get('levelSensitivity') : 1.0;
     for (let i = 0; i < secMeta.n_levels; i++) {
-      if (scale >= 1 / secMeta.levels[i].downsample) { secLevel = i; break; }
+      if (scale >= _secSens / secMeta.levels[i].downsample) { secLevel = i; break; }
     }
     const lm    = secMeta.levels[secLevel];
     const l0sec = secMeta.levels[0];
@@ -2083,10 +2084,14 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     drawPredLayer();
     updateThumbOverlays();
     const lvl = META.levels;
-    let level = META.n_levels - 1;
-    for (let i = 0; i < META.n_levels; i++) {
-      if (t.scale >= 1 / lvl[i].downsample) { level = i; break; }
-    }
+    const level = (tiles && tiles.getLevel) ? tiles.getLevel() : (() => {
+      let l = META.n_levels - 1;
+      const sens = settings ? settings.get('levelSensitivity') : 1.0;
+      for (let i = 0; i < META.n_levels; i++) {
+        if (t.scale >= sens / lvl[i].downsample) { l = i; break; }
+      }
+      return l;
+    })();
     const _mappedName = SAMPLE_MAPPING[ACTIVE_SAMPLE] ? ' (' + SAMPLE_MAPPING[ACTIVE_SAMPLE] + ')' : '';
     log('sample ' + ACTIVE_SAMPLE + _mappedName + '  |  zoom ' + t.scale.toFixed(3) + 'x  |  level ' + level
       + '  (' + lvl[level].width + 'x' + lvl[level].height + ')');
