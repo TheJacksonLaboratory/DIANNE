@@ -1,4 +1,6 @@
 import io
+import os
+import threading
 import numpy as np
 import tifffile
 import zarr
@@ -65,6 +67,32 @@ class MultichannelImage:
             meta['downsample'] = h0 / h
 
         self._channel_ranges = self._compute_channel_ranges()
+
+        # Pre-load thumbnail from sidecar file if present; otherwise compute in background
+        self._thumb_ready = threading.Event()
+        base = os.path.splitext(self.path)[0]
+        self.thumb: bytes | None = None
+        for _ext in ('thumbnail.jpeg', 'thumbnail.tiff'):
+            _thumb_path = base + _ext
+            if os.path.isfile(_thumb_path):
+                with open(_thumb_path, 'rb') as _f:
+                    _raw = _f.read()
+                img = Image.open(io.BytesIO(_raw))
+                img.thumbnail((256, 256), resample=Image.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=85)
+                self.thumb = buf.getvalue()
+                break
+
+        if self.thumb is not None:
+            self._thumb_ready.set()
+        else:
+            def _build_thumb(self=self):
+                try:
+                    self.thumb = self.get_level_thumbnail(self.n_levels - 1)
+                finally:
+                    self._thumb_ready.set()
+            threading.Thread(target=_build_thumb, daemon=True, name=f'thumb-{os.path.basename(self.path)}').start()
 
     # ── internal helpers ───────────────────────────────────────────────────────
 

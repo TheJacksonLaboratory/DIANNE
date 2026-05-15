@@ -236,9 +236,14 @@ class ViewerServer:
 
                 elif parsed.path == '/thumb':
                     try:
-                        level = int(qs.get('level', [str(image.n_levels - 1)])[0])
-                        size = int(qs.get('size', ['256'])[0])
-                        data = image.get_level_thumbnail(level, size=size)
+                        ready = getattr(image, '_thumb_ready', None)
+                        if ready is not None:
+                            ready.wait(timeout=120)
+                        data = image.thumb
+                        if data is None:
+                            level = int(qs.get('level', [str(image.n_levels - 1)])[0])
+                            size = int(qs.get('size', ['256'])[0])
+                            data = image.get_level_thumbnail(level, size=size)
                         self._respond(200, data, 'image/jpeg')
                     except Exception as e:
                         self._respond(400, str(e).encode())
