@@ -1,3 +1,4 @@
+import os
 import json
 import zarr
 import tifffile
@@ -6,6 +7,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from packaging import version
+from scipy.ndimage import distance_transform_edt, binary_fill_holes
+from scipy.spatial import cKDTree
 
 def makeProbMask(ad, imgpath, x, y, p, ts=56, mpp=0.25, downfactor=16, savepath=None, saveimg=True, prefix='', extension='jpeg', savecsv=False, verbose=False):
 
@@ -171,6 +174,333 @@ def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime'
     plt.show()
 
     return
+
+def readContoursFromGeoJSON(geojson_input, output_shape, scalefactor=1.0, downfactor=16):
+    """
+    Read contours from a GeoJSON file/dict and reconstruct a downsampled binary map.
+    
+    Parameters:
+        geojson_input:  Path to a .geojson file, or a already-loaded dict.
+        output_shape:   Full image shape (height, width).
+        scalefactor:    Must match the scalefactor used during export (default 1.0).
+        downfactor:     Must match the downfactor used during export (default 16).
+    
+    Returns:
+        binary_map:     2D uint8 numpy array of shape `(output_shape[0] // downfactor, output_shape[1] // downfactor)` with filled
+                        polygons drawn as 255, holes as 0.
+    """
+    import json
+    import numpy as np
+    import cv2
+
+    # ── load ────────────────────────────────────────────────────────────────────
+    if isinstance(geojson_input, (str, bytes, os.PathLike)):
+        with open(geojson_input, 'r') as f:
+            geojson = json.load(f)
+    else:
+        geojson = geojson_input
+
+    binary_map = np.zeros((output_shape[0]//downfactor, output_shape[1]//downfactor), dtype=np.uint8)
+
+    combined = downfactor * scalefactor          # same scale applied in export
+    inv      = 1.0 / combined                    # invert it
+
+    for feature in geojson.get("features", []):
+        geom = feature.get("geometry", {})
+        if geom.get("type") != "Polygon":
+            continue
+
+        rings = geom.get("coordinates", [])
+        if not rings:
+            continue
+
+        # ── outer ring → fill white ──────────────────────────────────────────
+        outer_pts = _ring_to_cv2(rings[0], inv)
+        if outer_pts is not None:
+            cv2.fillPoly(binary_map, [outer_pts], 255)
+
+        # ── inner rings (holes) → fill black ────────────────────────────────
+        for hole in rings[1:]:
+            hole_pts = _ring_to_cv2(hole, inv)
+            if hole_pts is not None:
+                cv2.fillPoly(binary_map, [hole_pts], 0)
+
+    return binary_map
+
+def _ring_to_cv2(ring, inv_scale):
+    """
+    Convert a GeoJSON ring (list of [x, y] pairs) to an int32 OpenCV contour.
+    The closing duplicate point is dropped; fewer than 3 points returns None.
+    """
+    import numpy as np
+    pts = np.array(ring, dtype=np.float64)
+    # drop the closing repeat added in export
+    if len(pts) > 1 and np.allclose(pts[0], pts[-1]):
+        pts = pts[:-1]
+    if len(pts) < 3:
+        return None
+    pts = (pts * inv_scale).round().astype(np.int32)
+    return pts.reshape(-1, 1, 2)          # shape OpenCV expects
+
+def analyze_membrane_masks(df, A, B, C):
+    """
+    Analyze cell positions relative to binary masks A, B, C.
+
+    Parameters:
+        df:  DataFrame with columns 'x_centroid' and 'y_centroid'.
+             Index is preserved in the output.
+        A, B, C: 2D boolean numpy arrays (same shape).
+
+    Returns:
+        DataFrame indexed like df with columns:
+            in_A, in_B, in_C          – bool
+            in_neither                – bool (not in A and not in C)
+            dist_to_A                 – float, for 'neither' cells only (else NaN)
+            dist_to_C                 – float, for 'neither' cells only (else NaN)
+            angle_AC_deg              – float, angle between the two lines (else NaN)
+            dist_to_C_border          – float, for cells in C only (else NaN)
+    """
+    xs = df['x_centroid'].to_numpy()   # col index  → axis-1
+    ys = df['y_centroid'].to_numpy()   # row index  → axis-0
+
+    xi = np.clip(np.round(xs).astype(int), 0, A.shape[1] - 1)
+    yi = np.clip(np.round(ys).astype(int), 0, A.shape[0] - 1)
+
+    # ── membership ─────────────────────────────────────────────────────────────
+    in_A = A[yi, xi].astype(bool)
+    in_B = B[yi, xi].astype(bool)
+    in_C = C[yi, xi].astype(bool)
+    in_neither = ~in_A & ~in_C
+
+    result = pd.DataFrame(
+        {"in_A": in_A, "in_B": in_B, "in_C": in_C, "in_neither": in_neither},
+        index=df.index,
+    )
+    result["dist_to_A"]       = np.nan
+    result["dist_to_C"]       = np.nan
+    result["angle_AC_deg"]    = np.nan
+    result["dist_to_C_border"] = np.nan
+
+    # ── 'neither' cells: nearest pixel in A and nearest pixel in C ─────────────
+    neither_mask = in_neither
+    if neither_mask.any():
+        # pixel coordinates of every True pixel in A and C
+        A_rows, A_cols = np.where(A)
+        C_rows, C_cols = np.where(C)
+
+        if len(A_rows) == 0 or len(C_rows) == 0:
+            pass  # masks empty – distances stay NaN
+        else:
+            cell_xy = np.column_stack([xs[neither_mask], ys[neither_mask]])
+
+            # KDTree queries return the single nearest pixel ──────────────────
+            tree_A = cKDTree(np.column_stack([A_cols, A_rows]))   # (x, y)
+            tree_C = cKDTree(np.column_stack([C_cols, C_rows]))
+
+            dist_A, idx_A = tree_A.query(cell_xy, workers=-1)
+            dist_C, idx_C = tree_C.query(cell_xy, workers=-1)
+
+            # Optimise: for each cell find the pair (pA, pC) that minimises
+            # dist(cell→pA) + dist(cell→pC).  The KDTree nearest neighbour
+            # already gives the individually optimal pixel; their sum is the
+            # correct joint minimum because the two choices are independent.
+            nearest_A_xy = np.column_stack([A_cols[idx_A], A_rows[idx_A]])
+            nearest_C_xy = np.column_stack([C_cols[idx_C], C_rows[idx_C]])
+
+            # vectors from cell to each nearest pixel
+            vec_A = nearest_A_xy - cell_xy   # shape (n, 2)
+            vec_C = nearest_C_xy - cell_xy
+
+            # angle between the two vectors
+            dot   = (vec_A * vec_C).sum(axis=1)
+            norm  = dist_A * dist_C
+            # guard against zero-length vectors (cell sitting exactly on pixel)
+            cos_a = np.where(norm > 0, np.clip(dot / norm, -1.0, 1.0), 0.0)
+            angle = np.degrees(np.arccos(cos_a))
+
+            result.loc[neither_mask, "dist_to_A"]    = dist_A
+            result.loc[neither_mask, "dist_to_C"]    = dist_C
+            result.loc[neither_mask, "angle_AC_deg"] = angle
+
+    # ── cells in C: distance to nearest outer non-C pixel ──────────────────────
+    C_mask = in_C
+    if C_mask.any():
+        C_filled   = binary_fill_holes(C)        # fill internal holes first
+        outside_C  = ~C_filled                   # True = outside solid C region
+
+        # distance_transform_edt on the *inverse* of outside gives, for every
+        # pixel inside C_filled, the Euclidean distance to the nearest outside pixel.
+        dist_map = distance_transform_edt(C_filled)   # dist from every C pixel to border
+
+        result.loc[C_mask, "dist_to_C_border"] = dist_map[yi[C_mask], xi[C_mask]]
+
+    return result
+
+def showMasksMembr(classifierPaths, fshape=(37807, 44066), donor='11', rotate=True):
+
+    prefix = f'Amnion-{donor}'
+    rA = readContoursFromGeoJSON(f'{classifierPaths}/{prefix}.geojson', output_shape=fshape, downfactor=16) / 255.
+    prefix = f'Chorion-{donor}'
+    rB = readContoursFromGeoJSON(f'{classifierPaths}/{prefix}.geojson', output_shape=fshape, downfactor=16) / 255.
+    prefix = f'Decidua-{donor}'
+    rC = readContoursFromGeoJSON(f'{classifierPaths}/{prefix}.geojson', output_shape=fshape, downfactor=16) / 255.
+    rB[rC>0] = 0. # 0.00023 of area
+    prefix = f'Background-{donor}'
+    rD = readContoursFromGeoJSON(f'{classifierPaths}/{prefix}.geojson', output_shape=fshape, downfactor=16) / 255.
+    rA[(rD>0)] = 0
+    rB[(rD>0)] = 0
+    rC[(rD>0)] = 0
+
+    if rotate:
+        fshape = fshape[1], fshape[0]
+    
+    exshape = 0.001*fshape[0]*0.25, 0.001*fshape[1]*0.25
+    
+    r3 = np.dstack([rA]*4)
+    r3[..., 0] *= 1
+    r3[..., 1] *= 0
+    r3[..., 2] *= 0
+    r3[..., 3] = r3[..., 3] >0
+    if rotate:
+        r3 = np.rot90(r3)
+    plt.imshow(r3, extent=[0, exshape[1], exshape[0], 0])
+    
+    r3 = np.dstack([rB]*4)
+    r3[..., 0] *= 0.15
+    r3[..., 1] *= 0.5
+    r3[..., 2] *= 0.5
+    r3[..., 3] = r3[..., 3] >0
+    if rotate:
+        r3 = np.rot90(r3)
+    plt.imshow(r3, extent=[0, exshape[1], exshape[0], 0])
+    
+    r3 = np.dstack([rC]*4)
+    r3[..., 0] *= 0.35
+    r3[..., 1] *= 0
+    r3[..., 2] *= 0.5
+    r3[..., 3] = r3[..., 3] >0
+    if rotate:
+        r3 = np.rot90(r3)
+    plt.imshow(r3, extent=[0, exshape[1], exshape[0], 0])
+    
+    r3 = np.dstack([rD]*4)
+    r3[..., 0] *= 0.8
+    r3[..., 1] *= 0.8
+    r3[..., 2] *= 0.8
+    r3[..., 3] = r3[..., 3] >0
+    if rotate:
+        r3 = np.rot90(r3)
+    plt.imshow(r3, extent=[0, exshape[1], exshape[0], 0])
+    
+    ax = plt.gca()
+    ax.set_aspect('equal')
+    ax.tick_params(labelsize=16)
+    ax.set_xlabel('Coordinate x, mm', fontsize=16)
+    ax.set_ylabel('Coordinate y, mm', fontsize=16)
+
+    # Add legend patches
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='red', edgecolor='none', label='Amnion'),
+        Patch(facecolor='teal', edgecolor='none', label='Chorion'),
+        Patch(facecolor='purple', edgecolor='none', label='Decidua'),
+        Patch(facecolor='lightgray', edgecolor='none', label='No tissue')
+    ]
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=16, bbox_to_anchor=(1.65, 1), fancybox=False, frameon=False)
+    
+    plt.show()
+    return
+
+def plotDistanceDeciduaToChorion(df_out, co_he, downfactor=16, m=5000, cmap='viridis_r', rotate=True):
+    v = df_out['dist_to_C_border'].copy()
+    v *= downfactor
+    v[v>m] = m
+    wh = ~np.isnan(v)
+    f = 0.001 * 0.25
+    v *= f
+
+    x, y = co_he[:, 0]*f, co_he[:, 1]*f
+    if rotate:
+        x, y = y, x
+        y = np.max(y) - y
+
+    plt.scatter(x[~wh], y[~wh], s=0.5, c='grey', edgecolor='none')
+    plt.scatter(x[wh], y[wh], s=0.5, c=v[wh], edgecolor='none', cmap=cmap)
+    ax = plt.gca()
+    ax.set_aspect('equal')
+    ax.invert_yaxis()
+    ax.set_xlabel('Coordiate x, mm', fontsize=16)
+    ax.set_ylabel('Coordiate y, mm', fontsize=16)
+    ax.tick_params(labelsize=16)
+    cbar = plt.colorbar(shrink=0.5)
+    cbar.set_label('Distance to chorion, mm', size=14)
+    # Increase colorbar font size
+    cbar = plt.gcf().axes[-1]
+    cbar.tick_params(labelsize=16)
+
+    plt.show()
+    return
+
+def plotDistanceDeciduaToAmnion(df_out, co_he, downfactor=16, m=5000, cmap='viridis_r', rotate=True):
+    v = df_out['dist_to_A'].copy()
+    v *= downfactor
+    v[v>m] = np.nan
+    wh = ~np.isnan(v)
+    f = 0.001 * 0.25
+    v *= f
+
+    x, y = co_he[:, 0]*f, co_he[:, 1]*f
+    if rotate:
+        x, y = y, x
+        y = np.max(y) - y
+
+    plt.scatter(x[~wh], y[~wh], s=0.5, c='grey', edgecolor='none')
+    plt.scatter(x[wh], y[wh], s=0.5, c=v[wh], edgecolor='none', cmap=cmap)
+    ax = plt.gca()
+    ax.set_aspect('equal')
+    ax.invert_yaxis()
+    ax.set_xlabel('Coordiate x, mm', fontsize=16)
+    ax.set_ylabel('Coordiate y, mm', fontsize=16)
+    ax.tick_params(labelsize=16)
+    cbar = plt.colorbar(shrink=0.5)
+    cbar.set_label('Distance to amnion, mm', size=14)
+    # Increase colorbar font size
+    cbar = plt.gcf().axes[-1]
+    cbar.tick_params(labelsize=16)
+
+    plt.show()
+    return
+
+def plotDistanceChorionToDecidua(df_out, co_he, downfactor=16, m=5000, cmap='viridis_r', rotate=True):
+    v = df_out['dist_to_C'].copy()
+    v *= downfactor
+    v[v>m] = np.nan
+    wh = ~np.isnan(v)
+    f = 0.001 * 0.25
+    v *= f
+
+    x, y = co_he[:, 0]*f, co_he[:, 1]*f
+    if rotate:
+        x, y = y, x
+        y = np.max(y) - y
+
+    plt.scatter(x[~wh], y[~wh], s=0.5, c='grey', edgecolor='none')
+    plt.scatter(x[wh], y[wh], s=0.5, c=v[wh], edgecolor='none', cmap=cmap)
+    ax = plt.gca()
+    ax.set_aspect('equal')
+    ax.invert_yaxis()
+    ax.set_xlabel('Coordiate x, mm', fontsize=16)
+    ax.set_ylabel('Coordiate y, mm', fontsize=16)
+    ax.tick_params(labelsize=16)
+    cbar = plt.colorbar(shrink=0.5)
+    cbar.set_label('Distance to decidua, mm', size=14)
+    # Increase colorbar font size
+    cbar = plt.gcf().axes[-1]
+    cbar.tick_params(labelsize=16)
+
+    plt.show()
+    return
+
 
 if __name__ == "__main__":
     

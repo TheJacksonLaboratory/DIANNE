@@ -23,6 +23,14 @@ import scipy
 from skimage.measure import label
 from scipy.spatial import KDTree
 
+def createH2(slide, mpath=None):
+    df_temp = pd.read_csv(f'{mpath}/{slide}.matrix-H.csv', header=None)
+    df_temp.iloc[:2,:2] *= 0.25 / 0.2208187960959237
+    sname = f'{mpath}/{slide}.matrix-H-2.csv'
+    if not os.path.isfile(sname):
+        df_temp.to_csv(sname, index=False, header=False)
+    return
+
 def assign_nearest_shape(
     df: pd.DataFrame,
     contours: dict,
@@ -30,12 +38,16 @@ def assign_nearest_shape(
     y_col: str = "y_centroid",
     id_col: str = "nearest_shape_id",
     dist_col: str = "nearest_shape_dist",
+    inside_col: str = "inside_shape",
 ) -> pd.DataFrame:
     """
-    Assign each cell the ID of the nearest shape contour and the distance to it.
+    Assign each cell the ID of the nearest shape contour, the distance to it,
+    and whether the cell is inside or outside that shape.
 
     For each cell, the distance is computed as the minimum Euclidean distance
     from the cell's (x, y) position to any point on any shape's contour.
+    A cell is considered "inside" if it falls within the polygon defined by
+    its nearest shape's contour.
 
     Parameters
     ----------
@@ -52,23 +64,24 @@ def assign_nearest_shape(
         Name of the output column for nearest shape ID.
     dist_col : str
         Name of the output column for distance to nearest shape.
+    inside_col : str
+        Name of the output column for inside/outside flag (bool).
 
     Returns
     -------
     pd.DataFrame
-        Input DataFrame with two new columns: id_col and dist_col.
+        Input DataFrame with three new columns: id_col, dist_col, and inside_col.
     """
     # Stack all contour points into one array, tracking which shape each belongs to
     all_points = []
     all_ids = []
-
     for shape_id, contour in contours.items():
         contour = np.asarray(contour)
         all_points.append(contour)
         all_ids.extend([shape_id] * len(contour))
 
-    all_points = np.vstack(all_points)       # (total_points, 2)
-    all_ids = np.array(all_ids)              # (total_points,)
+    all_points = np.vstack(all_points)  # (total_points, 2)
+    all_ids = np.array(all_ids)         # (total_points,)
 
     # Build a single KDTree over all contour points
     tree = KDTree(all_points)
@@ -81,6 +94,26 @@ def assign_nearest_shape(
     df[id_col] = all_ids[indices]
     df[dist_col] = distances
 
+    # Pre-format contours for cv2: each must be (N, 1, 2) int32
+    cv2_contours = {
+        shape_id: np.asarray(contour, dtype=np.float32).reshape(-1, 1, 2)
+        for shape_id, contour in contours.items()
+    }
+
+    # Check inside/outside for each cell against its nearest shape
+    inside = np.empty(len(df), dtype=bool)
+    nearest_ids = df[id_col].to_numpy()
+
+    for i, (point, shape_id) in enumerate(zip(cell_coords, nearest_ids)):
+        # pointPolygonTest returns: +1 inside, 0 on boundary, -1 outside
+        result = cv2.pointPolygonTest(
+            cv2_contours[shape_id],
+            (float(point[0]), float(point[1])),
+            measureDist=False,
+        )
+        inside[i] = result >= 0  # True if inside or on boundary
+
+    df[inside_col] = inside
     return df
 
 def get_tile_mask_means3(mfile, ts, mpp, coords, scale=None):
@@ -390,6 +423,9 @@ def getClassifierForFromStrokes(strokes_by_sample, patchCoordinates, tile_size, 
 
     patchesCDFsMod = pd.concat(all_patchesCDFsMod)
     annotations = all_annotations
+
+    # print(patchesCDFsMod)
+    # print(annotations)
 
     try:
         clf = trainClassifier(annotations, patchesCDFsMod, alpha=alpha, seed=seed, augFunc=augFunc)
