@@ -67,11 +67,17 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, F=2, model='ct
 
         runfn = makeRunFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, tile_size=tile_size, 
                         patch_size=patch_size, PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=2, erode=True)
-        savefn = makeSaveFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, 
-                        tile_size=tile_size, patch_size=patch_size, body_overlap=0.25, classifierPaths=classifierPaths)
-    
-        loadfn = makeLoadFn(classifierPaths)
-        listfn = makeListFn(classifierPaths)
+
+        if classifierPaths is not None:
+            savefn = makeSaveFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, 
+                            tile_size=tile_size, patch_size=patch_size, body_overlap=0.25, classifierPaths=classifierPaths)
+        
+            loadfn = makeLoadFn(classifierPaths)
+            listfn = makeListFn(classifierPaths)
+        else:
+            savefn = None
+            loadfn = None
+            listfn = None
 
         imgs = {s: os.path.join(dpath, s, imfname) for s in valid_samples}
 
