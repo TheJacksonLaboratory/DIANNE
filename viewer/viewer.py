@@ -23,20 +23,23 @@ def _read_js(name):
 def _open_image(path):
     """
     Auto-detect channel count to choose PyramidImage vs MultichannelImage.
+    Uses zarr array shape as the primary signal:
+      - (C, H, W) with C <= 4  → PyramidImage (channels-first RGB/RGBA)
+      - (H, W, C) with C in {3,4} → PyramidImage (channels-last RGB/RGBA)
+      - anything else (C > 4 in first dim) → MultichannelImage
     """
     import tifffile, zarr
-    with tifffile.TiffFile(str(path)) as tf:
-        page = tf.pages.first
-        photometric = page.tags.get("PhotometricInterpretation")
-        is_rgb = (photometric is not None and photometric.value == 2)  # 2 = RGB
-        if len(tf.pages) == 3:
-            is_rgb = True  # heuristic for RGB when PhotometricInterpretation tag is missing
     store = tifffile.imread(str(path), aszarr=True)
-    if is_rgb:
+    z = zarr.open(store, mode='r')
+    arr0 = z["0"] if isinstance(z, zarr.Group) else z
+    shape = arr0.shape
+    # channels-last  (H, W, 3) or (H, W, 4)
+    if arr0.ndim == 3 and shape[2] in (3, 4):
         return PyramidImage(path, _zarr_store=store)
-    else:
-        return MultichannelImage(path, _zarr_store=store)
-    return PyramidImage(path, _zarr_store=store)
+    # channels-first (3, H, W) or (4, H, W)
+    if arr0.ndim == 3 and shape[0] in (3, 4):
+        return PyramidImage(path, _zarr_store=store)
+    return MultichannelImage(path, _zarr_store=store)
 
 
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
@@ -1499,6 +1502,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       META = SAMPLE_META[sampleName];
       const l0Sample = META.levels[0];
 
+      // Update tiles meta/sample BEFORE resizing viewport so that the
+      // onChange listener always sees a level index valid for the new META.
+      tiles.setSample(ACTIVE_SAMPLE);
+      tiles.setMeta(META);
+
       // Restore viewport: reset if first visit, else restore saved transform
       const savedVP = viewportStateBySample[sampleName];
       if (savedVP) {
@@ -1507,9 +1515,6 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       } else {
         viewport.setImageSize(l0Sample.width, l0Sample.height, true);
       }
-
-      tiles.setSample(ACTIVE_SAMPLE);
-      tiles.setMeta(META);
       for (const ctrl of _secRgbInFlight.values()) ctrl.abort();
       _secRgbInFlight.clear();
       for (const m of _secChInFlight) { for (const ctrl of m.values()) ctrl.abort(); m.clear(); }
