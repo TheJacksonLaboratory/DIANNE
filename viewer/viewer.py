@@ -24,20 +24,20 @@ def _open_image(path):
     """
     Auto-detect channel count to choose PyramidImage vs MultichannelImage.
     Uses zarr array shape as the primary signal:
-      - (C, H, W) with C <= 4  → PyramidImage (channels-first RGB/RGBA)
-      - (H, W, C) with C in {3,4} → PyramidImage (channels-last RGB/RGBA)
-      - anything else (C > 4 in first dim) → MultichannelImage
+      - (C, H, W) with C < 4  → PyramidImage (channels-first RGB)
+      - (H, W, C) with C in {3,} → PyramidImage (channels-last RGB)
+      - anything else (C >= 4 in first dim) → MultichannelImage
     """
     import tifffile, zarr
     store = tifffile.imread(str(path), aszarr=True)
     z = zarr.open(store, mode='r')
     arr0 = z["0"] if isinstance(z, zarr.Group) else z
     shape = arr0.shape
-    # channels-last  (H, W, 3) or (H, W, 4)
-    if arr0.ndim == 3 and shape[2] in (3, 4):
+    # channels-last  (H, W, 3)
+    if arr0.ndim == 3 and shape[2] in (3,):
         return PyramidImage(path, _zarr_store=store)
-    # channels-first (3, H, W) or (4, H, W)
-    if arr0.ndim == 3 and shape[0] in (3, 4):
+    # channels-first (3, H, W)
+    if arr0.ndim == 3 and shape[0] in (3,):
         return PyramidImage(path, _zarr_store=store)
     return MultichannelImage(path, _zarr_store=store)
 
