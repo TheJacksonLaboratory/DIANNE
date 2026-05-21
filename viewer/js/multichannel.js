@@ -147,6 +147,11 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   // tile keys currently needed by the viewport (updated every redraw)
   let wantedKeys = new Set();
 
+  // ── RGB fallback (for samples without channels) ───────────────────────────
+  let _rgbMode       = (meta.n_channels || 0) === 0;
+  const _rgbCache    = new Map();   // tileKey → HTMLImageElement
+  const _rgbInflight = new Map();   // tileKey → AbortController
+
   // ── main composite canvas ─────────────────────────────────────────────────
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;top:0;left:0;z-index:0;pointer-events:none;';
@@ -283,6 +288,25 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     compCache.clear();
   }
 
+  // ── RGB tile fetcher (fallback when n_channels === 0) ───────────────────
+  function fetchRgbTile(level, row, col) {
+    const k = tileKey(level, row, col);
+    if (_rgbCache.has(k) || _rgbInflight.has(k)) return;
+    const ctrl = new AbortController();
+    _rgbInflight.set(k, ctrl);
+    const sq  = activeSample ? `&sample=${encodeURIComponent(activeSample)}` : '';
+    const url = `${baseUrl}/tile?level=${level}&row=${row}&col=${col}${sq}`;
+    fetch(url, { signal: ctrl.signal })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); })
+      .then(blob => {
+        _rgbInflight.delete(k);
+        const img = new Image();
+        img.onload = () => { _rgbCache.set(k, img); scheduleRedraw(); };
+        img.src = URL.createObjectURL(blob);
+      })
+      .catch(() => { _rgbInflight.delete(k); });
+  }
+
   // ── tile fetcher ──────────────────────────────────────────────────────────
   function fetchTile(ch, level, row, col) {
     const k = tileKey(level, row, col);
@@ -349,7 +373,42 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const vis = visibleRange(level, transform, 0);
+    const visOnly = visibleRange(level, transform, 0);
+    const visPre  = visibleRange(level, transform, 1);
+    wantedKeys = new Set();
+    for (let r = visPre.r0; r <= visPre.r1; r++)
+      for (let c = visPre.c0; c <= visPre.c1; c++)
+        wantedKeys.add(tileKey(level, r, c));
+
+    if (_rgbMode) {
+      // ── RGB fallback: draw cached JPEG tiles directly ─────────────────────
+      for (let r = visOnly.r0; r <= visOnly.r1; r++) {
+        for (let c = visOnly.c0; c <= visOnly.c1; c++) {
+          const k = tileKey(level, r, c);
+          const img = _rgbCache.get(k);
+          if (img) {
+            const { sx, sy, sw } = tileScreenRect(level, r, c, transform);
+            ctx.drawImage(img, sx, sy, sw, sw);
+          }
+        }
+      }
+      // Abort stale RGB inflights
+      for (const [k, ctrl] of [..._rgbInflight]) {
+        if (parseInt(k.split('-')[0], 10) !== level || !wantedKeys.has(k)) {
+          ctrl.abort();
+          _rgbInflight.delete(k);
+        }
+      }
+      for (let r = visOnly.r0; r <= visOnly.r1; r++)
+        for (let c = visOnly.c0; c <= visOnly.c1; c++)
+          fetchRgbTile(level, r, c);
+      for (let r = visPre.r0; r <= visPre.r1; r++)
+        for (let c = visPre.c0; c <= visPre.c1; c++)
+          fetchRgbTile(level, r, c);
+      return;
+    }
+
+    const vis = visOnly;
     for (let r = vis.r0; r <= vis.r1; r++) {
       for (let c = vis.c0; c <= vis.c1; c++) {
         const k  = tileKey(level, r, c);
@@ -362,13 +421,6 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
 
     // Abort stale inflight requests: wrong level OR outside visible+prefetch set.
     // Then fetch visible tiles first (phase 1) and prefetch border second (phase 2).
-    const visOnly = visibleRange(level, transform, 0);
-    const visPre  = visibleRange(level, transform, 1);
-    wantedKeys = new Set();
-    for (let r = visPre.r0; r <= visPre.r1; r++)
-      for (let c = visPre.c0; c <= visPre.c1; c++)
-        wantedKeys.add(tileKey(level, r, c));
-
     for (let ch = 0; ch < chState.length; ch++) {
       if (!chState[ch].enabled) continue;
       // Abort inflight requests that are stale (wrong level or no longer wanted)
@@ -551,6 +603,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     grayCache = Array.from({ length: nCh }, () => new Map());
     inflights = Array.from({ length: nCh }, () => new Map());
     compCache.clear();
+    _rgbMode = nCh === 0;
 
     // Hide panel when there are no channels (e.g. RGB image)
     panel.style.display = nCh > 0 ? '' : 'none';
@@ -658,6 +711,9 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       grayCache[ch].clear();
     }
     compCache.clear();
+    for (const ctrl of _rgbInflight.values()) ctrl.abort();
+    _rgbInflight.clear();
+    _rgbCache.clear();
   }
 
   function setMeta(nextMeta) {

@@ -173,7 +173,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     print(f'[DIANNE] Loading layers…', flush=True)
 
     image         = sample_images[chosen_sample]
-    is_multichannel = isinstance(image, MultichannelImage)
+    is_multichannel = any(isinstance(img, MultichannelImage) for img in sample_images.values())
 
     if xenium_bundle_paths is None:
       xenium_bundle_paths = {}
@@ -718,7 +718,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   function _updateOpacitySliderVisibility() {
     const hasSecondary = !!(SAMPLE_SECONDARY_META[ACTIVE_SAMPLE]);
     const isSecMC = hasSecondary && !!(SAMPLE_SECONDARY_META[ACTIVE_SAMPLE].n_channels);
-    _primaryOpacityWrap.style.display   = (!IS_MULTICHANNEL && hasSecondary) ? 'flex' : 'none';
+    const isSampleMC = !!(META.n_channels);
+    _primaryOpacityWrap.style.display   = (!isSampleMC && hasSecondary) ? 'flex' : 'none';
     _secondaryOpacityWrap.style.display = (hasSecondary && !isSecMC) ? 'flex' : 'none';
     _secChPanelWrap.style.display       = isSecMC ? 'block' : 'none';
   }
