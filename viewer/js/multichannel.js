@@ -231,19 +231,21 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       const cb  = parseInt(hex.slice(4, 6), 16) / 255 * chState[ch].opacity;
       const gray = entry.gray;
 
-      // Map the user's intensity window (raw units) into 8-bit space.
-      // Server encodes: gray8 = clamp((raw - p1) / (p99 - p1), 0, 1) * 255
-      // so: raw = gray8 / 255 * (p99 - p1) + p1
-      // → lo8 = clamp((intensityMin - p1) / (p99 - p1) * 255, 0, 255)
+      // The server encodes: gray8 = clamp((raw - p1) / (p99 - p1), 0, 1) * 255
+      // The user sets a display window [vmin, vmax] in raw units.
+      // We want: v = clamp((raw - vmin) / (vmax - vmin), 0, 1)
+      // Substituting raw ≈ gray8/255*(p99-p1)+p1:
+      //   v = clamp(a*gray8 + b, 0, 1)
+      // where:
+      //   a = (p99 - p1) / (255 * winSpan)
+      //   b = (p1 - vmin) / winSpan
       const [p1, p99]  = currentMeta.channel_ranges[ch];
-      const span       = p99 - p1;
-      const lo8 = Math.max(0, Math.min(255, (chState[ch].intensityMin - p1) / span * 255));
-      const hi8 = Math.max(0, Math.min(255, (chState[ch].intensityMax - p1) / span * 255));
-      const win = hi8 - lo8;
+      const winSpan    = (chState[ch].intensityMax - chState[ch].intensityMin) || 1;
+      const a          = (p99 - p1) / (255 * winSpan);
+      const b          = (p1 - chState[ch].intensityMin) / winSpan;
 
       for (let i = 0; i < TILE * TILE; i++) {
-        const v = win > 0 ? Math.max(0, Math.min(1, (gray[i] - lo8) / win))
-                          : (gray[i] >= lo8 ? 1 : 0);
+        const v = Math.max(0, Math.min(1, a * gray[i] + b));
         R[i] += v * cr;
         G[i] += v * cg;
         B[i] += v * cb;
