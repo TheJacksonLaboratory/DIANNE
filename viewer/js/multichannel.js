@@ -103,11 +103,8 @@ function createDualRangeSlider(rawMin, rawMax, defaultLo, defaultHi, onChange) {
 function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName) {
   const root   = tileLayer.parentElement;
   const TILE   = meta.tile_size;
-  const N_CH   = meta.n_channels;
-  const CH_NAMES = meta.channel_names;
   const MAX_GRAY_TOTAL  = 500;   // total gray tiles across ALL channels (not per-channel)
   const MAX_COMP_CACHED = 60;    // composite tile canvas count cap
-  const CHANNEL_FULL_RANGES = meta.channel_full_ranges;  // [[raw_min, raw_max], ...]
 
   let currentMeta    = meta;
   let activeSample   = sampleName;
@@ -127,8 +124,12 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     '#ff0088',  // pink
   ];
 
+  // Per-sample channel state cache — persists across sample switches
+  const chStateCache = {};
+
+  // Per-channel state — rebuilt on every setMeta call
   // Per-channel state: enabled, display colour, brightness (0–1), intensity window (raw units)
-  const chState = Array.from({ length: N_CH }, (_, i) => ({
+  let chState = Array.from({ length: meta.n_channels }, (_, i) => ({
     enabled      : i === 0,
     color        : DEFAULT_COLORS[i % DEFAULT_COLORS.length],
     opacity      : 1.0,
@@ -138,9 +139,9 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
 
   // ── caches ────────────────────────────────────────────────────────────────
   // grayCache[ch] maps tileKey → { gray: Uint8Array(TILE²), lastUsed: number }
-  const grayCache  = Array.from({ length: N_CH }, () => new Map());
+  let grayCache  = Array.from({ length: meta.n_channels }, () => new Map());
   // in-flight AbortControllers per channel
-  const inflights  = Array.from({ length: N_CH }, () => new Map());
+  let inflights  = Array.from({ length: meta.n_channels }, () => new Map());
   // compCache maps tileKey → HTMLCanvasElement (composited TILE×TILE)
   const compCache  = new Map();
   // tile keys currently needed by the viewport (updated every redraw)
@@ -212,7 +213,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     const B = new Float32Array(TILE * TILE);
     let any = false;
 
-    for (let ch = 0; ch < N_CH; ch++) {
+    for (let ch = 0; ch < chState.length; ch++) {
       if (!chState[ch].enabled) continue;
       const entry = grayCache[ch].get(key);
       if (!entry) continue;
@@ -328,7 +329,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     // Collect all entries across every channel, evict LRU first.
     // Never evict a tile whose key is currently needed by the viewport.
     const all = [];
-    for (let ch = 0; ch < N_CH; ch++)
+    for (let ch = 0; ch < chState.length; ch++)
       for (const [k, v] of grayCache[ch]) all.push({ ch, k, t: v.lastUsed });
     all.sort((a, b) => a.t - b.t);
     let toRemove = total - grayMax;
@@ -368,7 +369,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       for (let c = visPre.c0; c <= visPre.c1; c++)
         wantedKeys.add(tileKey(level, r, c));
 
-    for (let ch = 0; ch < N_CH; ch++) {
+    for (let ch = 0; ch < chState.length; ch++) {
       if (!chState[ch].enabled) continue;
       // Abort inflight requests that are stale (wrong level or no longer wanted)
       for (const [k, ctrl] of [...inflights[ch]]) {
@@ -527,96 +528,131 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     toggleBtn.textContent  = open ? 'Channels \u25be' : 'Channels \u25b4';
   });
 
-  for (let ch = 0; ch < N_CH; ch++) {
-    const row = document.createElement('div');
-    row.style.cssText = [
-      'display:flex', 'align-items:center', 'gap:6px',
-      'padding:4px 0',
-      'border-bottom:1px solid #222',
-    ].join(';');
+  function _buildChannelPanel(m) {
+    // Rebuild chState/grayCache/inflights for the new channel count
+    const nCh = m.n_channels || 0;
+    // Abort any in-flight requests from before rebuild
+    for (let ch = 0; ch < inflights.length; ch++)
+      for (const [, ctrl] of inflights[ch]) ctrl.abort();
 
-    const chk = document.createElement('input');
-    chk.type    = 'checkbox';
-    chk.checked = chState[ch].enabled;
-    chk.title   = `Toggle ${CH_NAMES[ch]}`;
-    chk.style.cssText = 'cursor:pointer;flex-shrink:0;';
+    // Build default state, then restore saved state for this sample if available
+    const defaultState = Array.from({ length: nCh }, (_, i) => ({
+      enabled      : i === 0,
+      color        : DEFAULT_COLORS[i % DEFAULT_COLORS.length],
+      opacity      : 1.0,
+      intensityMin : m.channel_ranges[i][0],
+      intensityMax : m.channel_ranges[i][1],
+    }));
+    const saved = chStateCache[activeSample];
+    chState = (saved && saved.length === nCh)
+      ? saved.map((s, i) => Object.assign({}, defaultState[i], s))
+      : defaultState;
 
-    const label = document.createElement('span');
-    label.textContent = CH_NAMES[ch];
-    label.style.cssText = [
-      'flex:1', 'min-width:0', 'overflow:hidden',
-      'text-overflow:ellipsis', 'white-space:nowrap', 'color:#ddd',
-    ].join(';');
+    grayCache = Array.from({ length: nCh }, () => new Map());
+    inflights = Array.from({ length: nCh }, () => new Map());
+    compCache.clear();
 
-    // Small colour swatch driven by the colour picker
-    const swatch = document.createElement('span');
-    swatch.style.cssText = [
-      'display:inline-block', 'width:10px', 'height:10px',
-      'border-radius:50%', 'border:1px solid #666', 'flex-shrink:0',
-      'background:' + chState[ch].color,
-    ].join(';');
+    // Hide panel when there are no channels (e.g. RGB image)
+    panel.style.display = nCh > 0 ? '' : 'none';
+    dropdown.innerHTML  = '';
+    dropdown.style.display = 'none';
+    toggleBtn.textContent  = 'Channels \u25be';
 
-    const colorPicker = document.createElement('input');
-    colorPicker.type  = 'color';
-    colorPicker.value = chState[ch].color;
-    colorPicker.title = 'Channel colour';
-    colorPicker.style.cssText = [
-      'width:22px', 'height:22px', 'border:none', 'background:none',
-      'padding:0', 'cursor:pointer', 'flex-shrink:0',
-    ].join(';');
+    const chNames = m.channel_names || Array.from({ length: nCh }, (_, i) => 'Channel ' + i);
+    const channelFullRanges = m.channel_full_ranges || [];
 
-    const opSlider = document.createElement('input');
-    opSlider.type  = 'range';
-    opSlider.min   = '0';
-    opSlider.max   = '1';
-    opSlider.step  = '0.05';
-    opSlider.value = String(chState[ch].opacity);
-    opSlider.title = 'Brightness / contribution';
-    opSlider.style.cssText = 'width:64px;flex-shrink:0;';
+    for (let ch = 0; ch < nCh; ch++) {
+      const row = document.createElement('div');
+      row.style.cssText = [
+        'display:flex', 'align-items:center', 'gap:6px',
+        'padding:4px 0',
+        'border-bottom:1px solid #222',
+      ].join(';');
 
-    // ── event listeners ────────────────────────────────────────────────────
-    chk.addEventListener('change', () => {
-      chState[ch].enabled = chk.checked;
-      invalidateComposites();
-      scheduleRedraw();
-    });
+      const chk = document.createElement('input');
+      chk.type    = 'checkbox';
+      chk.checked = chState[ch].enabled;
+      chk.title   = `Toggle ${chNames[ch]}`;
+      chk.style.cssText = 'cursor:pointer;flex-shrink:0;';
 
-    colorPicker.addEventListener('input', () => {
-      chState[ch].color = colorPicker.value;
-      swatch.style.background = colorPicker.value;
-      invalidateComposites();
-      scheduleRedraw();
-    });
+      const label = document.createElement('span');
+      label.textContent = chNames[ch];
+      label.style.cssText = [
+        'flex:1', 'min-width:0', 'overflow:hidden',
+        'text-overflow:ellipsis', 'white-space:nowrap', 'color:#ddd',
+      ].join(';');
 
-    opSlider.addEventListener('input', () => {
-      chState[ch].opacity = parseFloat(opSlider.value);
-      invalidateComposites();
-      scheduleRedraw();
-    });
+      // Small colour swatch driven by the colour picker
+      const swatch = document.createElement('span');
+      swatch.style.cssText = [
+        'display:inline-block', 'width:10px', 'height:10px',
+        'border-radius:50%', 'border:1px solid #666', 'flex-shrink:0',
+        'background:' + chState[ch].color,
+      ].join(';');
 
-    const [rawMin, rawMax] = CHANNEL_FULL_RANGES[ch];
-    const [defLo, defHi]   = meta.channel_ranges[ch];
-    const rangeSlider = createDualRangeSlider(rawMin, rawMax, defLo, defHi, (lo, hi) => {
-      chState[ch].intensityMin = lo;
-      chState[ch].intensityMax = hi;
-      invalidateComposites();
-      scheduleRedraw();
-    });
+      const colorPicker = document.createElement('input');
+      colorPicker.type  = 'color';
+      colorPicker.value = chState[ch].color;
+      colorPicker.title = 'Channel colour';
+      colorPicker.style.cssText = [
+        'width:22px', 'height:22px', 'border:none', 'background:none',
+        'padding:0', 'cursor:pointer', 'flex-shrink:0',
+      ].join(';');
 
-    row.appendChild(chk);
-    row.appendChild(label);
-    row.appendChild(swatch);
-    row.appendChild(colorPicker);
-    row.appendChild(opSlider);
-    row.appendChild(rangeSlider);
-    dropdown.appendChild(row);
+      const opSlider = document.createElement('input');
+      opSlider.type  = 'range';
+      opSlider.min   = '0';
+      opSlider.max   = '1';
+      opSlider.step  = '0.05';
+      opSlider.value = String(chState[ch].opacity);
+      opSlider.title = 'Brightness / contribution';
+      opSlider.style.cssText = 'width:64px;flex-shrink:0;';
+
+      // ── event listeners ────────────────────────────────────────────────────
+      chk.addEventListener('change', () => {
+        chState[ch].enabled = chk.checked;
+        invalidateComposites();
+        scheduleRedraw();
+      });
+
+      colorPicker.addEventListener('input', () => {
+        chState[ch].color = colorPicker.value;
+        swatch.style.background = colorPicker.value;
+        invalidateComposites();
+        scheduleRedraw();
+      });
+
+      opSlider.addEventListener('input', () => {
+        chState[ch].opacity = parseFloat(opSlider.value);
+        invalidateComposites();
+        scheduleRedraw();
+      });
+
+      const [rawMin, rawMax] = channelFullRanges[ch] || [0, 255];
+      const rangeSlider = createDualRangeSlider(rawMin, rawMax, chState[ch].intensityMin, chState[ch].intensityMax, (lo, hi) => {
+        chState[ch].intensityMin = lo;
+        chState[ch].intensityMax = hi;
+        invalidateComposites();
+        scheduleRedraw();
+      });
+
+      row.appendChild(chk);
+      row.appendChild(label);
+      row.appendChild(swatch);
+      row.appendChild(colorPicker);
+      row.appendChild(opSlider);
+      row.appendChild(rangeSlider);
+      dropdown.appendChild(row);
+    }
   }
+
+  _buildChannelPanel(meta);
 
   root.appendChild(panel);
 
   // ── public API ────────────────────────────────────────────────────────────
   function _clearAllCaches() {
-    for (let ch = 0; ch < N_CH; ch++) {
+    for (let ch = 0; ch < inflights.length; ch++) {
       for (const [, ctrl] of inflights[ch]) ctrl.abort();
       inflights[ch].clear();
       grayCache[ch].clear();
@@ -627,11 +663,14 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   function setMeta(nextMeta) {
     currentMeta  = nextMeta;
     currentLevel = nextMeta.n_levels - 1;
-    _clearAllCaches();
+    _buildChannelPanel(nextMeta);
     scheduleRedraw();
   }
 
   function setSample(nextSample) {
+    // Save current channel state for the outgoing sample
+    if (activeSample && chState.length > 0)
+      chStateCache[activeSample] = chState.map(s => Object.assign({}, s));
     activeSample = nextSample;
     _clearAllCaches();
     scheduleRedraw();
