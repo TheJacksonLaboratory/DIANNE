@@ -28,8 +28,17 @@ def _open_image(path):
       - (H, W, C) with C in {3,} → PyramidImage (channels-last RGB)
       - anything else (C >= 4 in first dim) → MultichannelImage
     """
-    import tifffile, zarr
-    store = tifffile.imread(str(path), aszarr=True)
+    import tifffile, zarr, fsspec
+
+    path_str = str(path)
+    is_url = path_str.startswith('http://') or path_str.startswith('https://')
+    if is_url:
+        _fh  = fsspec.open(path_str, 'rb').open()
+        _tif = tifffile.TiffFile(_fh)
+        store = _tif.aszarr()
+        z = zarr.open(store, mode='r')
+    else:
+        store = tifffile.imread(str(path), aszarr=True)
     z = zarr.open(store, mode='r')
     arr0 = z["0"] if isinstance(z, zarr.Group) else z
     shape = arr0.shape

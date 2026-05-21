@@ -9,7 +9,14 @@ import xml.etree.ElementTree as ET
 import re
 
 def get_channel_names(path: str, clean: bool = True) -> list[str]:
-    with tifffile.TiffFile(path) as tif:
+    is_url = path.startswith('http://') or path.startswith('https://')
+    if is_url:
+        import fsspec
+        fh = fsspec.open(path, 'rb').open()
+        tif_ctx = tifffile.TiffFile(fh)
+    else:
+        tif_ctx = tifffile.TiffFile(path)
+    with tif_ctx as tif:
         if not tif.ome_metadata:
             return []
         root = ET.fromstring(tif.ome_metadata)
