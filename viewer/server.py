@@ -196,6 +196,10 @@ class ViewerServer:
                     }).encode()
                     self._respond(200, body, 'application/json')
 
+                elif parsed.path == '/stop':
+                    self._respond(200, b'{}', 'application/json')
+                    threading.Thread(target=srv.stop, daemon=True).start()
+
                 elif parsed.path == '/xenium_meta':
                     xenium = srv.xenium_by_sample.get(sample_name)
                     if xenium is None:

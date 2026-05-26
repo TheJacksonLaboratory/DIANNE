@@ -17,6 +17,29 @@ _JS_DIR = Path(__file__).parent / 'js'
 #           20 000 cells → 20000 * 0.4 = 8 000 ms (8 s)
 INFERENCE_MS_PER_CELL = 0.25
 
+# Registry of active viewer servers (port -> ViewerServer).
+# Used to prevent launching multiple viewers in the same notebook session.
+_active_viewers: dict = {}
+
+
+def _register_viewer(server):
+    """Track a newly started viewer server."""
+    _active_viewers[server.port] = server
+
+
+def _unregister_viewer(server):
+    """Remove a stopped viewer server from the registry."""
+    _active_viewers.pop(server.port, None)
+
+
+def _has_active_viewer():
+    """Return True if any tracked viewer server is still running."""
+    dead = [port for port, srv in _active_viewers.items() if not srv._thread.is_alive()]
+    for port in dead:
+        _active_viewers.pop(port, None)
+    return bool(_active_viewers)
+
+
 def _read_js(name):
     return (_JS_DIR / name).read_text()
 
@@ -150,6 +173,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           image-space coords
     stop    : callable — shuts down the background HTTP server
     """
+    if _has_active_viewer():
+      display(HTML(
+        '<div style="font-family:sans-serif;color:#c0392b;padding:12px;border:1px solid #c0392b;'
+        'border-radius:6px;background:#fdf3f3">'
+        '<b>Could not launch the viewer.</b> '
+        'Please clear all the viewer instances in this notebook.</div>'
+      ))
+      return [], {}, lambda: None
+
     if isinstance(samples, (list, tuple)):
       sample_list = [str(s) for s in samples]
     else:
@@ -375,6 +407,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     _has_visium = bool(_visium_genes_by_sample)
 
     server.start()
+    _register_viewer(server)
     server.chosen_sample = chosen_sample
 
     # output widget for server-side log (optional, hidden by default)
@@ -2228,6 +2261,30 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     display(HTML(html))
     # print(f'[DIANNE] display(HTML): {_time.monotonic()-_ts:.2f}s', flush=True)
     display(out)
+
+    # Auto-stop when the cell output is cleared: watch for the viewer root div
+    # being disconnected from the DOM and call the server's /stop endpoint.
+    _stop_url = f'{base_url}/stop'
+    display(Javascript(f"""
+(function () {{
+  var _stopUrl = {json.dumps(_stop_url)};
+  var _root = document.getElementById('iv-shell');
+  if (!_root) return;
+  var _obs = new MutationObserver(function () {{
+    if (!document.body.contains(_root)) {{
+      _obs.disconnect();
+      fetch(_stopUrl).catch(function () {{}});
+    }}
+  }});
+  _obs.observe(document.body, {{ childList: true, subtree: true }});
+}})();
+"""))
+
+    _orig_stop = server.stop
+    def _stop_and_unregister():
+        _unregister_viewer(server)
+        _orig_stop()
+    server.stop = _stop_and_unregister
 
     return server.clicks, server.strokes_by_sample, server.stop
 
