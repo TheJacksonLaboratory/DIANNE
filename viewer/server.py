@@ -218,8 +218,12 @@ class ViewerServer:
                         row     = int(qs['row'][0])
                         col     = int(qs['col'][0])
                         quality = max(1, min(95, int(qs.get('quality', ['85'])[0])))
-                        data    = image.get_tile(level, row, col, quality=quality)
-                        self._respond(200, data, 'image/jpeg')
+                        # MonochannelImage does not use JPEG quality — call without kwarg
+                        if hasattr(image, 'dtype_kind'):
+                            data = image.get_tile(level, row, col)
+                        else:
+                            data = image.get_tile(level, row, col, quality=quality)
+                        self._respond(200, data, 'image/jpeg' if not hasattr(image, 'dtype_kind') else 'image/png')
                     except Exception as e:
                         self._respond(400, str(e).encode())
 
@@ -369,6 +373,38 @@ class ViewerServer:
                             col     = int(qs['col'][0])
                             data    = sec_image.get_channel_tile(channel, level, row, col)
                             self._respond(200, data, 'image/png')
+                        except Exception as e:
+                            self._respond(400, str(e).encode())
+
+                elif parsed.path == '/mono_tile':
+                    # Single-channel greyscale PNG tile — use the requested sample's image
+                    _mono_img = srv.images.get(sample_name)
+                    if _mono_img is None or not hasattr(_mono_img, 'dtype_kind'):
+                        self._respond(404, b'not a monochannel image')
+                    else:
+                        try:
+                            level = int(qs['level'][0])
+                            row   = int(qs['row'][0])
+                            col   = int(qs['col'][0])
+                            data  = _mono_img.get_tile(level, row, col)
+                            self._respond(200, data, 'image/png')
+                        except Exception as e:
+                            self._respond(400, str(e).encode())
+
+                elif parsed.path == '/mono_lut':
+                    # 256-entry RGBA LUT — sample-agnostic; find any MonochannelImage
+                    _mono_img = next(
+                        (img for img in srv.images.values() if hasattr(img, 'get_lut')),
+                        None
+                    )
+                    if _mono_img is None:
+                        self._respond(404, b'no monochannel image available')
+                    else:
+                        try:
+                            cmap_name = qs.get('cmap', ['viridis'])[0]
+                            lut = _mono_img.get_lut(cmap_name)
+                            body = json.dumps({'lut': lut}).encode()
+                            self._respond(200, body, 'application/json')
                         except Exception as e:
                             self._respond(400, str(e).encode())
 

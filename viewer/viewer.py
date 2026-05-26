@@ -5,6 +5,7 @@ import ipywidgets as widgets
 
 from viewer.tiff          import PyramidImage
 from viewer.multichannel  import MultichannelImage
+from viewer.monochannel   import MonochannelImage
 from viewer.server        import ViewerServer
 from viewer.xetranscripts import XeniumTranscripts
 from viewer.xencells      import XeniumCells, XeniumCellsFast
@@ -22,11 +23,14 @@ def _read_js(name):
 
 def _open_image(path):
     """
-    Auto-detect channel count to choose PyramidImage vs MultichannelImage.
-    Uses zarr array shape as the primary signal:
-      - (C, H, W) with C < 4  → PyramidImage (channels-first RGB)
-      - (H, W, C) with C in {3,} → PyramidImage (channels-last RGB)
-      - anything else (C >= 4 in first dim) → MultichannelImage
+    Auto-detect channel count / layout to choose the right image class.
+
+    Decision table (based on zarr array shape at level 0):
+      (H, W)          → MonochannelImage  — single-channel mask / heatmap
+      (1, H, W)       → MonochannelImage  — explicit single-channel
+      (H, W, 3)       → PyramidImage      — RGB channels-last
+      (3, H, W)       → PyramidImage      — RGB channels-first
+      everything else → MultichannelImage  — multiplex / IF
     """
     import tifffile, zarr, fsspec
 
@@ -36,18 +40,25 @@ def _open_image(path):
         _fh  = fsspec.open(path_str, 'rb').open()
         _tif = tifffile.TiffFile(_fh)
         store = _tif.aszarr()
-        z = zarr.open(store, mode='r')
     else:
         store = tifffile.imread(str(path), aszarr=True)
     z = zarr.open(store, mode='r')
     arr0 = z["0"] if isinstance(z, zarr.Group) else z
     shape = arr0.shape
-    # channels-last  (H, W, 3)
-    if arr0.ndim == 3 and shape[2] in (3,):
-        return PyramidImage(path, _zarr_store=store)
-    # channels-first (3, H, W)
-    if arr0.ndim == 3 and shape[0] in (3,):
-        return PyramidImage(path, _zarr_store=store)
+    # 2-D: (H, W) — single channel, no explicit channel axis
+    if arr0.ndim == 2:
+        return MonochannelImage(path, _zarr_store=store)
+    # 3-D: inspect the channel axis
+    if arr0.ndim == 3:
+        # (1, H, W) — explicit single channel
+        if shape[0] == 1:
+            return MonochannelImage(path, _zarr_store=store)
+        # (H, W, 3) — channels-last RGB
+        if shape[2] in (3,) and shape[0] > 4:
+            return PyramidImage(path, _zarr_store=store)
+        # (3, H, W) — channels-first RGB
+        if shape[0] in (3,):
+            return PyramidImage(path, _zarr_store=store)
     return MultichannelImage(path, _zarr_store=store)
 
 
@@ -174,6 +185,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
     image         = sample_images[chosen_sample]
     is_multichannel = any(isinstance(img, MultichannelImage) for img in sample_images.values())
+    is_monochannel  = any(isinstance(img, MonochannelImage)  for img in sample_images.values())
+    # Use metadata from the first actual MonochannelImage, not from image (chosen sample),
+    # which might be a PyramidImage even when another sample is monochannel.
+    _mono_img = next((img for img in sample_images.values() if isinstance(img, MonochannelImage)), None)
+    mono_meta = _mono_img.metadata if _mono_img is not None else None
 
     if xenium_bundle_paths is None:
       xenium_bundle_paths = {}
@@ -412,6 +428,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       'viewport.js',
       'tiles.js',
       'multichannel.js',
+      'monochannel2d.js',
       'transcripts.js',
       'cells.js',
       'patches.js',
@@ -517,6 +534,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const INFERENCE_MS_PER_CELL = __INFERENCE_MS_PER_CELL__;
   const MAX_CELLS              = __MAX_CELLS__;
   const IS_MULTICHANNEL    = __IS_MULTICHANNEL__;
+  const IS_MONOCHANNEL     = __IS_MONOCHANNEL__;
+  const SAMPLE_IS_MONO     = __SAMPLE_IS_MONO__;
+  const MONO_META          = __MONO_META__;
   const SAMPLE_SECONDARY_META   = __SAMPLE_SECONDARY_META__;
   const SAMPLE_SECONDARY_MATRIX = __SAMPLE_SECONDARY_MATRIX__;
   const DRAW_ON_SECONDARY        = __DRAW_ON_SECONDARY__;
@@ -837,6 +857,34 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   const tiles    = IS_MULTICHANNEL
       ? createMultichannelTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE)
       : createTiles(tileLayer, BASE_URL, META, viewport, ACTIVE_SAMPLE, settings);
+
+  // ── monochannel image canvas (single-channel masks / heatmaps) ───────────
+  // Overlaid above the tile layer; the tile layer is hidden in monochannel mode.
+  let mono2d = null;
+  const monoCanvas = document.createElement('canvas');
+  monoCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;';
+  root.appendChild(monoCanvas);
+  if (IS_MONOCHANNEL && MONO_META) {
+    new ResizeObserver(() => {
+      monoCanvas.width  = root.clientWidth  || 1;
+      monoCanvas.height = root.clientHeight || 1;
+      if (mono2d) mono2d.redraw();
+    }).observe(root);
+    monoCanvas.width  = root.clientWidth  || 1;
+    monoCanvas.height = root.clientHeight || 1;
+    mono2d = createMono2D(
+      monoCanvas, BASE_URL, MONO_META, viewport, settings,
+      () => ACTIVE_SAMPLE,
+      s => !!(SAMPLE_IS_MONO[s])
+    );
+  }
+  // Set initial per-sample visibility (chosen sample may not be monochannel)
+  function _updateMonoLayerVisibility() {
+    const isMono = !!(IS_MONOCHANNEL && MONO_META && SAMPLE_IS_MONO[ACTIVE_SAMPLE]);
+    tileLayer.style.display  = isMono ? 'none'  : '';
+    monoCanvas.style.display = isMono ? ''      : 'none';
+  }
+  _updateMonoLayerVisibility();
 
   // ── secondary image layer ─────────────────────────────────────────────────
   // RGB secondary: one img per tile
@@ -1229,8 +1277,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     } : null,
     settings,
     patches,
-    visiumOverlay
+    visiumOverlay,
+    (IS_MONOCHANNEL && mono2d) ? { mono2d, monoMeta: MONO_META, isSampleMono: s => !!(SAMPLE_IS_MONO[s]) } : null
   );
+  // Initialise 2D Options button visibility for the starting sample
+  toolbar.setMonoActive(!!(IS_MONOCHANNEL && SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
 
   // per-sample stroke storage
   const strokesBySample = {};
@@ -1537,6 +1588,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         cellStateBySample[sampleName] || null);
       if (patches) patches.setContext(ACTIVE_SAMPLE, BASE_URL, TILE_SIZE, SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE]);
       if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
+      if (mono2d) mono2d.setSample(ACTIVE_SAMPLE);
+      _updateMonoLayerVisibility();
+      if (toolbar && typeof toolbar.setMonoActive === 'function')
+        toolbar.setMonoActive(!!(SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
       predPoints = [];
       drawPredLayer();
       _drawSecondaryLayer(viewport.getTransform());
@@ -2155,6 +2210,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__INFERENCE_MS_PER_CELL__', str(INFERENCE_MS_PER_CELL)) \
    .replace('__MAX_CELLS__', str(max_cells)) \
    .replace('__IS_MULTICHANNEL__', 'true' if is_multichannel else 'false') \
+   .replace('__IS_MONOCHANNEL__', 'true' if is_monochannel else 'false') \
+   .replace('__SAMPLE_IS_MONO__', json.dumps({s: isinstance(img, MonochannelImage) for s, img in sample_images.items()})) \
+   .replace('__MONO_META__', json.dumps(mono_meta) if mono_meta else 'null') \
    .replace('__SAMPLE_SECONDARY_META__',   sample_secondary_meta_json) \
    .replace('__SAMPLE_SECONDARY_MATRIX__', sample_secondary_matrix_json) \
    .replace('__DRAW_ON_SECONDARY__', 'true' if draw_on_secondary else 'false') \

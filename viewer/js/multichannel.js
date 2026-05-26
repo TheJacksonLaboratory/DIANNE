@@ -576,10 +576,27 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   ].join(';');
   panel.appendChild(dropdown);
 
+  function _closeChannelsPanel() {
+    dropdown.style.display = 'none';
+    toggleBtn.textContent  = 'Channels \u25be';
+    document.removeEventListener('keydown', _channelsPanelKeydown, true);
+  }
+  function _channelsPanelKeydown(e) {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      _closeChannelsPanel();
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
+  }
   toggleBtn.addEventListener('click', () => {
     const open = dropdown.style.display !== 'none';
-    dropdown.style.display = open ? 'none' : 'block';
-    toggleBtn.textContent  = open ? 'Channels \u25be' : 'Channels \u25b4';
+    if (open) {
+      _closeChannelsPanel();
+    } else {
+      dropdown.style.display = 'block';
+      toggleBtn.textContent  = 'Channels \u25b4';
+      document.addEventListener('keydown', _channelsPanelKeydown, true);
+    }
   });
 
   function _buildChannelPanel(m) {
@@ -610,8 +627,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     // Hide panel when there are no channels (e.g. RGB image)
     panel.style.display = nCh > 0 ? '' : 'none';
     dropdown.innerHTML  = '';
-    dropdown.style.display = 'none';
-    toggleBtn.textContent  = 'Channels \u25be';
+    _closeChannelsPanel();
 
     const chNames = m.channel_names || Array.from({ length: nCh }, (_, i) => 'Channel ' + i);
     const channelFullRanges = m.channel_full_ranges || [];
