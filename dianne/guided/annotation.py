@@ -23,9 +23,10 @@ from scipy.spatial import KDTree
 
 from sklearn.cluster import KMeans
 
-from .stqutils import inferProb
+from ..core import inferProbFast
+from ..interpolation import interpolate_points
+
 from .transcriptomics import fetch_xenium_zarr_cell_coords, fetch_cell_by_gene_matrix, extract_transcripts_from_grid_locs
-from .interpolation import interpolate_points
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -715,7 +716,7 @@ def runAnnotation(patchCoordinates, patchesCDFs, imgs, button_press_results, clf
             bndTiles = wrkTiles.difference(infTiles)
 
             ad_sub = ads[p[0]][wrkTiles].copy()
-            x_inf, y_inf, p_inf = inferProb(ad_sub, clfd['clf'], qs, tsize=2*sh, R=R, verbose=False, parallel=False, erode=True)
+            x_inf, y_inf, p_inf = inferProbFast(ad_sub, clfd['clf'], qs, tsize=2*sh, R=R, verbose=False, parallel=False, erode=True)
 
             searchTiles = ads[p[0]].obs.set_index(['pxl_col_in_wsi', 'pxl_row_in_wsi'])['original_barcode'].loc[pd.MultiIndex.from_arrays([x_inf, y_inf], names=['pxl_col_in_wsi', 'pxl_row_in_wsi'])].values
             df_inf = pd.DataFrame({'x': x_inf, 'y': y_inf, 'p': p_inf}, index=searchTiles).loc[infTiles]

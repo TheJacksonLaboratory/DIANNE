@@ -1,4 +1,4 @@
-from .annotation import jumpStart, runAnnotation, inspectAnnotatedPatches, loadPatch
+from .guided.annotation import jumpStart, runAnnotation, inspectAnnotatedPatches, loadPatch
 from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
 from .core import loadAd, preparePatchesWSI, getPatchRepresentation, inferProbFast, trainClassifier, loadDataAndPreparePatches
 from .utils import loadDataAndPreparePatchesStatic

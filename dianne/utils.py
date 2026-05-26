@@ -904,23 +904,3 @@ def showGroundTruth(id, ct, df_tile, patchCoordinates, vmax=10):
     se_coor = se_coor.loc[ind]
     x, y, c = se_coor['x'].values, se_coor['y'].values, se_color.values
     return x, y, c, vmax, pd.Series(index=ind, data=c)
-
-# def saveHEOMETIFF(foimg, pyramidScale=2, tileSise=512, saveName=None, compression='deflate'):
-#
-#     levels = [foimg]
-#     while min(levels[-1].shape) > tileSise:
-#         levels.append(np.array(levels[-1][::pyramidScale, ::pyramidScale]))
-#
-#     shape = levels[0].shape
-#   
-#     params = dict(tile=(tileSise, tileSise), planarconfig='separate', compression=compression)
-#
-#     with tifffile.TiffWriter(saveName, byteorder='>', ome=True, bigtiff=True) as tif:
-#         tif.write(levels[0], subifds=len(levels)-1, **params)
-#         for level in levels[1:]:
-#             tif.write(level, subfiletype=1, **params)
-#
-#         return
-#
-# f1conv = '/projects/activities/kappsen-tmc/USERS/domans/differential-annotator-dev/JAX_002_KD_C_conv.ome.tif'
-# # saveHEOMETIFF(img2, saveName=f1conv)
