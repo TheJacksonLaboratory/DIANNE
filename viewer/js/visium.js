@@ -124,6 +124,22 @@ function createVisiumOverlay(container, viewport, genesBySample) {
 
   let panelOpen = false;
 
+  function _closePanel() {
+    panelOpen = false;
+    panel.style.display = 'none';
+    genesBtn.style.background = 'transparent';
+    genesBtn.style.opacity    = '0.45';
+    document.removeEventListener('keydown', _genesPanelKeydown, true);
+  }
+
+  function _genesPanelKeydown(e) {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      _closePanel();
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }
+  }
+
   function _togglePanel() {
     panelOpen = !panelOpen;
     panel.style.display = panelOpen ? 'block' : 'none';
@@ -132,6 +148,9 @@ function createVisiumOverlay(container, viewport, genesBySample) {
     if (panelOpen) {
       _rebuildList();
       searchInput.focus();
+      document.addEventListener('keydown', _genesPanelKeydown, true);
+    } else {
+      document.removeEventListener('keydown', _genesPanelKeydown, true);
     }
   }
 

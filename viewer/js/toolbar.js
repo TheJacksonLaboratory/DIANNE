@@ -235,20 +235,20 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       overlay.appendChild(box);
       document.body.appendChild(overlay);
       input.focus();
-      function _close() { overlay.remove(); document.removeEventListener('keydown', _key); }
+      function _close() { overlay.remove(); document.removeEventListener('keydown', _key, true); }
       function _submit() {
         const name = input.value.trim();
         _close();
         if (name) saveLoadOptions.onSave(name, saveBtn);
       }
       function _key(e) {
-        if (e.key === 'Enter') _submit();
-        else if (e.key === 'Escape' || e.key === 'Esc') _close();
+        if (e.key === 'Enter') { e.stopImmediatePropagation(); _submit(); }
+        else if (e.key === 'Escape' || e.key === 'Esc') { e.stopImmediatePropagation(); e.preventDefault(); _close(); }
       }
       cancelBtn.addEventListener('click', _close);
       okBtn.addEventListener('click', _submit);
       overlay.addEventListener('click', e => { if (e.target === overlay) _close(); });
-      document.addEventListener('keydown', _key);
+      document.addEventListener('keydown', _key, true);
     });
     _saveRow.appendChild(saveBtn);
   }
@@ -300,11 +300,11 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       box.appendChild(btnRow);
       overlay.appendChild(box);
       document.body.appendChild(overlay);
-      function _close() { overlay.remove(); document.removeEventListener('keydown', _key); }
-      function _key(e) { if (e.key === 'Escape' || e.key === 'Esc') _close(); }
+      function _close() { overlay.remove(); document.removeEventListener('keydown', _key, true); }
+      function _key(e) { if (e.key === 'Escape' || e.key === 'Esc') { e.stopImmediatePropagation(); e.preventDefault(); _close(); } }
       cancelBtn.addEventListener('click', _close);
       overlay.addEventListener('click', e => { if (e.target === overlay) _close(); });
-      document.addEventListener('keydown', _key);
+      document.addEventListener('keydown', _key, true);
       okBtn.addEventListener('click', () => {
         const chosen = select.value;
         _close();
