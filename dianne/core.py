@@ -46,9 +46,9 @@ def loadImFeatures(dpath):
 
 def loadAdImage(spath, verbose=False):
     if os.path.isfile(f'{spath}/thumbnail.tiff'):
-        thumbnail = tifffile.imread(f'{spath}/thumbnail.tiff')
+        thumbnail = tifffile.imread(f'{spath}/thumbnail.tiff', is_mmstack=False, is_shaped=False)
     elif os.path.isfile(f'{spath}/thumbnail.jpeg'):
-        thumbnail = tifffile.imread(f'{spath}/thumbnail.jpeg')
+        thumbnail = tifffile.imread(f'{spath}/thumbnail.jpeg', is_mmstack=False, is_shaped=False)
     else:
         raise FileNotFoundError(f"Thumbnail image not found in {spath}. Please check the path.")
     if verbose:
