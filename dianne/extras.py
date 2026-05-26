@@ -7,7 +7,8 @@ from scipy.interpolate import make_interp_spline
 from matplotlib.patches import Patch
 from sklearn.metrics import roc_auc_score, average_precision_score
 from .utils import get_tile_mask_means3
-from .stqutils import inferProbFast, interpolate_points as interpolatePoints
+from .core import inferProbFast
+from .interpolation import interpolate_points as interpolatePoints
 
 # import tifffile; tifffile.TiffFile(f"{annopath}/JDC_WP_012_ae-standalone.ome.tif").pages[0].tags[270].value.split('PhysicalSizeX="')[1].split('"')[0]
 # import tifffile; tifffile.TiffFile(f"{annopath}/MC_PLACM_0015.ome.tif").pages[0].tags[270].value.split('PhysicalSizeX="')[1].split('"')[0]

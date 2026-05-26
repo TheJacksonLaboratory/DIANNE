@@ -24,6 +24,11 @@ Dependencies:
 - numba
 """
 
+import warnings
+from numba.core.errors import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
+warnings.simplefilter('ignore', category=NumbaDeprecationWarning)
+warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
+
 import numpy as np
 from numba import jit, prange
 
