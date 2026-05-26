@@ -8,7 +8,7 @@ from dianne.utils import loadDataAndPreparePatches, loadSTQParams
 from dianne.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
 from .viewer import create_viewer
 
-def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, F=2, model='ctranspath',
+def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
             patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8):
 
     """Creates a viewer for the given directory path containing sample subdirectories with image files.
@@ -16,6 +16,7 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, F=2, model='ct
         dpath (str): The directory path containing sample subdirectories.
         imfname (str): The expected filename of the image file within each sample subdirectory.
         load_features (bool): Whether to load features for the samples.
+        samples (list): A list of sample names to include in the viewer. If None, all valid samples will be included.
         F (int): A parameter used for feature loading.
         model (str): The model name used for feature loading.
         patch_size (int): The size of the patches to be used.
@@ -27,11 +28,14 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, F=2, model='ct
         viewer: A viewer object created with the valid samples and their corresponding images.
     """
 
-    samples = sorted([s for s in os.listdir(os.path.join(dpath)) if not s.startswith("pipeline") and os.path.isdir(os.path.join(dpath, s))])
+    samples_ = sorted([s for s in os.listdir(os.path.join(dpath)) if not s.startswith("pipeline") and os.path.isdir(os.path.join(dpath, s))])
+
+    if samples is not None:
+        samples_ = [s for s in samples_ if s in samples]
 
     # Verify that each sample has image, otherwise filter out from the list
     valid_samples = []
-    for s in samples:
+    for s in samples_:
         img_path = os.path.join(dpath, s, imfname)
         if os.path.isfile(img_path):
             valid_samples.append(s)
