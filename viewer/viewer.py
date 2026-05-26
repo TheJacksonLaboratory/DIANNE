@@ -34,7 +34,8 @@ def _unregister_viewer(server):
 
 def _has_active_viewer():
     """Return True if any tracked viewer server is still running."""
-    dead = [port for port, srv in _active_viewers.items() if not srv._thread.is_alive()]
+    dead = [port for port, srv in _active_viewers.items()
+            if getattr(srv, '_stopped', False) or not srv._thread.is_alive()]
     for port in dead:
         _active_viewers.pop(port, None)
     return bool(_active_viewers)
@@ -484,6 +485,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         }, 100);
       })();
       """
+
+    _stop_url = f'{base_url}/stop'
 
     _ts = _time.monotonic()
     html = """
@@ -2083,6 +2086,76 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     });
     ivFooter.appendChild(demoBtn);
 
+    // ── Stop button (bottom-right) ───────────────────────────────────────────
+    const stopViewerBtn = document.createElement('button');
+    stopViewerBtn.type = 'button';
+    stopViewerBtn.title = 'Stop viewer';
+    stopViewerBtn.style.cssText = [
+      'font:12px monospace','padding:5px 10px','border-radius:6px',
+      'border:1px solid #c0392b','background:rgba(38,38,38,0.9)',
+      'color:#ff6666','cursor:pointer','display:flex','gap:6px','align-items:center',
+      'margin-left:auto',
+    ].join(';');
+    stopViewerBtn.innerHTML = '<span style="font-size:13px">&#9632;</span><span style="font-size:11px">Stop</span>';
+    stopViewerBtn.addEventListener('click', () => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = [
+        'position:fixed','left:0','top:0','width:100%','height:100%',
+        'display:flex','align-items:center','justify-content:center',
+        'z-index:2147483649','background:rgba(0,0,0,0.55)',
+      ].join(';');
+      const box = document.createElement('div');
+      box.style.cssText = [
+        'min-width:260px','background:#1b1b1b','color:#eee',
+        'border-radius:8px','border:1px solid #3a3a3a',
+        'box-shadow:0 6px 24px rgba(0,0,0,0.8)',
+        'padding:16px 18px','font:13px monospace',
+      ].join(';');
+      const titleEl = document.createElement('div');
+      titleEl.style.cssText = 'font-weight:700;color:#ff6666;margin-bottom:10px;';
+      titleEl.textContent = 'Stop viewer';
+      const msgEl = document.createElement('div');
+      msgEl.style.cssText = 'margin-bottom:12px;color:#ccc;';
+      msgEl.textContent = 'Stop the viewer and shut down the server?';
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.style.cssText = 'padding:5px 10px;border-radius:6px;border:1px solid #555;background:#333;color:#bbb;cursor:pointer;font:12px monospace';
+      const okBtn = document.createElement('button');
+      okBtn.textContent = 'Stop';
+      okBtn.style.cssText = 'padding:5px 14px;border-radius:6px;border:none;background:#c0392b;color:#fff;cursor:pointer;font:12px monospace';
+      btnRow.appendChild(cancelBtn);
+      btnRow.appendChild(okBtn);
+      box.appendChild(titleEl);
+      box.appendChild(msgEl);
+      box.appendChild(btnRow);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      okBtn.focus();
+      function _close() {
+        overlay.remove();
+        document.removeEventListener('keydown', _key, true);
+        window.__iv_modal_visible = false;
+        window.__iv_modal_cancel = null;
+      }
+      function _key(e) {
+        if (e.key === 'Escape' || e.key === 'Esc') { e.stopImmediatePropagation(); e.preventDefault(); _close(); }
+      }
+      window.__iv_modal_visible = true;
+      window.__iv_modal_cancel = _close;
+      cancelBtn.addEventListener('click', _close);
+      overlay.addEventListener('click', e => { if (e.target === overlay) _close(); });
+      document.addEventListener('keydown', _key, true);
+      okBtn.addEventListener('click', () => {
+        _close();
+        fetch(__STOP_URL__).catch(() => {});
+        const shell = document.getElementById('iv-shell');
+        if (shell) shell.remove();
+      });
+    });
+    ivFooter.appendChild(stopViewerBtn);
+
     shell.appendChild(ivFooter);
 
     // ── About modal ───────────────────────────────────────────────────────────
@@ -2260,6 +2333,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
    .replace('__HAS_VISIUM__', 'true' if _has_visium else 'false') \
    .replace('__VISIUM_GENES_BY_SAMPLE__', json.dumps(_visium_genes_by_sample)) \
    .replace('__SAMPLE_MAPPING__', json.dumps({str(k): str(v) for k, v in sample_mapping.items()} if sample_mapping else {})) \
+   .replace('__STOP_URL__', json.dumps(_stop_url)) \
    .replace('__JS__',      js)
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 

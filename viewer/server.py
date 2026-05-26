@@ -120,6 +120,7 @@ class ViewerServer:
         self._server = _ViewerHTTPServer(('0.0.0.0', port), self._make_handler())
         self._server.handle_error = lambda *a: None  # silence broken pipe / connection reset
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._stopped = False  # set True as soon as /stop is received or stop() is called
 
     def _inference_loop(self):
         """Long-lived worker: picks up (fn_kwargs, result_event, result_box) tuples."""
@@ -139,6 +140,7 @@ class ViewerServer:
         self._thread.start()
 
     def stop(self):
+        self._stopped = True
         self._inference_queue.put(None)   # stop worker
         self._server.shutdown()
 
@@ -197,6 +199,7 @@ class ViewerServer:
                     self._respond(200, body, 'application/json')
 
                 elif parsed.path == '/stop':
+                    srv._stopped = True  # signal immediately so _has_active_viewer sees it
                     self._respond(200, b'{}', 'application/json')
                     threading.Thread(target=srv.stop, daemon=True).start()
 
