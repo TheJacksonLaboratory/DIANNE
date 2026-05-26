@@ -65,6 +65,23 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     draw(viewport.getTransform());
   });
   sizeRow.appendChild(transcriptSizeSlider);
+
+  const noneBtn = document.createElement('button');
+  noneBtn.textContent = 'None';
+  noneBtn.title = 'Deselect all genes';
+  noneBtn.style.cssText = [
+    'background:transparent', 'border:1px solid #666',
+    'color:#aaa', 'border-radius:4px', 'padding:1px 5px',
+    'cursor:pointer', 'font-size:11px', 'line-height:1.4', 'flex-shrink:0',
+  ].join(';');
+  noneBtn.addEventListener('click', () => {
+    selectedGenes.clear();
+    clearCache();
+    _renderList();
+    updateButton();
+    update(viewport.getTransform());
+  });
+  sizeRow.appendChild(noneBtn);
   panel.appendChild(sizeRow);
 
   const phStyle = document.createElement('style');
@@ -99,7 +116,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   searchRow.appendChild(searchClear);
 
   const geneList = document.createElement('div');
-  geneList.style.cssText = 'overflow-y:auto;max-height:180px;';
+  geneList.style.cssText = 'overflow-y:auto;max-height:360px;';
   panel.appendChild(geneList);
 
   const cache = new Map();
@@ -256,64 +273,81 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     toggleBtn.textContent = enabled ? `Genes (${selectedGenes.size}/${total})` : 'Genes (off)';
   }
 
-  function applyGeneFilter() {
+  function _makeGeneRow(gene) {
+    const row = document.createElement('div');
+    row.dataset.gene = gene;
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.style.cursor = 'pointer';
+    checkbox.checked = selectedGenes.has(gene);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selectedGenes.add(gene);
+      else selectedGenes.delete(gene);
+      updateButton();
+      _renderList();
+      update(viewport.getTransform());
+    });
+
+    const colorPicker = document.createElement('input');
+    colorPicker.type = 'color';
+    colorPicker.value = geneColor(gene);
+    colorPicker.title = `Color for ${gene}`;
+    colorPicker.style.cssText = 'width:20px;height:20px;border:none;background:none;padding:0;cursor:pointer;flex-shrink:0;';
+    colorPicker.addEventListener('input', () => {
+      geneColors[gene] = colorPicker.value;
+      draw(viewport.getTransform());
+    });
+
+    const label = document.createElement('label');
+    label.textContent = gene;
+    label.style.cursor = 'pointer';
+    label.addEventListener('click', () => {
+      checkbox.checked = !checkbox.checked;
+      checkbox.dispatchEvent(new Event('change'));
+    });
+
+    row.appendChild(checkbox);
+    row.appendChild(colorPicker);
+    row.appendChild(label);
+    return row;
+  }
+
+  function _renderList() {
+    geneList.innerHTML = '';
     const needle = geneFilter.trim().toLowerCase();
-    for (const row of geneList.children) {
-      const gene = row.dataset.gene || '';
-      row.style.display = (!needle || gene.toLowerCase().includes(needle)) ? 'flex' : 'none';
+    const pinned   = filteredGenes.filter(g => selectedGenes.has(g));
+    const rest     = filteredGenes.filter(g => !selectedGenes.has(g) && (!needle || g.toLowerCase().includes(needle)));
+
+    if (pinned.length > 0) {
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'padding:1px 4px;color:#7ac;font-size:10px;border-bottom:1px solid #333;margin-bottom:2px;letter-spacing:0.04em;';
+      hdr.textContent = `✓ Selected (${pinned.length})`;
+      geneList.appendChild(hdr);
+      for (const g of pinned) geneList.appendChild(_makeGeneRow(g));
+      if (rest.length > 0) {
+        const sep = document.createElement('div');
+        sep.style.cssText = 'padding:1px 4px;color:#666;font-size:10px;border-bottom:1px solid #333;margin:3px 0 2px 0;letter-spacing:0.04em;';
+        sep.textContent = 'All genes';
+        geneList.appendChild(sep);
+      }
     }
+    for (const g of rest) geneList.appendChild(_makeGeneRow(g));
+  }
+
+  function applyGeneFilter() {
+    _renderList();
   }
 
   function rebuildGenePanel() {
-    geneList.innerHTML = '';
     filteredGenes = enabled
       ? currentTranscriptMeta.genes.filter(gene => !/(Control|Unassigned|Deprecated|Negative)/i.test(gene))
       : [];
 
     selectedGenes.clear();
     clearCache();
-
-    for (const gene of filteredGenes) {
-      const row = document.createElement('div');
-      row.dataset.gene = gene;
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;';
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.style.cursor = 'pointer';
-      checkbox.checked = selectedGenes.has(gene);
-      checkbox.addEventListener('change', () => {
-        if (checkbox.checked) selectedGenes.add(gene);
-        else selectedGenes.delete(gene);
-        updateButton();
-        update(viewport.getTransform());
-      });
-
-      const colorPicker = document.createElement('input');
-      colorPicker.type = 'color';
-      colorPicker.value = geneColor(gene);
-      colorPicker.title = `Color for ${gene}`;
-      colorPicker.style.cssText = 'width:20px;height:20px;border:none;background:none;padding:0;cursor:pointer;flex-shrink:0;';
-      colorPicker.addEventListener('input', () => {
-        geneColors[gene] = colorPicker.value;
-        draw(viewport.getTransform());
-      });
-
-      const label = document.createElement('label');
-      label.textContent = gene;
-      label.style.cursor = 'pointer';
-      label.addEventListener('click', () => {
-        checkbox.checked = !checkbox.checked;
-        checkbox.dispatchEvent(new Event('change'));
-      });
-
-      row.appendChild(checkbox);
-      row.appendChild(colorPicker);
-      row.appendChild(label);
-      geneList.appendChild(row);
-    }
-
-    applyGeneFilter();
+    _renderList();
     updateButton();
   }
 
@@ -349,18 +383,8 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
         searchInput.value = geneFilter;
         searchClear.style.display = geneFilter ? 'block' : 'none';
       }
-      // Update checkboxes and color pickers to reflect restored state
-      for (const row of geneList.children) {
-        const gene = row.dataset.gene;
-        if (!gene) continue;
-        const checkbox = row.querySelector('input[type="checkbox"]');
-        if (checkbox) checkbox.checked = selectedGenes.has(gene);
-        if (stateToRestore.geneColors && stateToRestore.geneColors[gene]) {
-          const cp = row.querySelector('input[type="color"]');
-          if (cp) cp.value = stateToRestore.geneColors[gene];
-        }
-      }
-      applyGeneFilter();
+      // Rebuild list now that selectedGenes and geneColors are restored
+      _renderList();
       updateButton();
     }
     const shouldBeVisible = (stateToRestore && stateToRestore.visible !== undefined)
