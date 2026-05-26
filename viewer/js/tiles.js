@@ -78,15 +78,19 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
 
     const imgX   = col * TILE * downsample;
     const imgY   = row * TILE * downsample;
-    const screenX = imgX * scale + ox;
-    const screenY = imgY * scale + oy;
-    const screenW = TILE * downsample * scale;
+    const screenX = Math.floor(imgX * scale + ox);
+    const screenY = Math.floor(imgY * scale + oy);
+    // Ceil the size so adjacent tiles overlap by a sub-pixel rather than leaving a gap.
+    const screenX1 = Math.floor((col + 1) * TILE * downsample * scale + ox) + 1;
+    const screenY1 = Math.floor((row + 1) * TILE * downsample * scale + oy) + 1;
+    const screenW = screenX1 - screenX;
+    const screenH = screenY1 - screenY;
 
     img.style.position  = 'absolute';
     img.style.left      = screenX + 'px';
     img.style.top       = screenY + 'px';
     img.style.width     = screenW + 'px';
-    img.style.height    = screenW + 'px';
+    img.style.height    = screenH + 'px';
     img.style.maxWidth  = 'none';
     img.style.maxHeight = 'none';
     img.style.imageRendering = 'pixelated';

@@ -254,10 +254,12 @@ function createMono2D(monoCanvas, baseUrl, monoMeta, viewport, settings, getActi
         const rgba = _applyLutTile(gray);
         _offCtx.putImageData(new ImageData(rgba, TILE, TILE), 0, 0);
 
-        const sx = col * TILE * ds * scale + ox;
-        const sy = row * TILE * ds * scale + oy;
-        const sw = TILE * ds * scale;
-        ctx.drawImage(_offscreen, sx, sy, sw, sw);
+        const sx = Math.floor(col * TILE * ds * scale + ox);
+        const sy = Math.floor(row * TILE * ds * scale + oy);
+        // Ceil to next tile boundary to avoid sub-pixel gaps between tiles.
+        const sx1 = Math.floor((col + 1) * TILE * ds * scale + ox) + 1;
+        const sy1 = Math.floor((row + 1) * TILE * ds * scale + oy) + 1;
+        ctx.drawImage(_offscreen, sx, sy, sx1 - sx, sy1 - sy);
       }
     }
   }

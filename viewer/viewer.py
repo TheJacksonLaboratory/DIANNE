@@ -197,7 +197,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     import time as _time
     from concurrent.futures import ThreadPoolExecutor, as_completed
     n_samples = len(sample_list)
-    print(f'[DIANNE] Opening {n_samples} sample image(s) (parallel)…', flush=True)
+    print(f'[DIANNE] Opening {n_samples} image(s)…', flush=True)
     _t0 = _time.monotonic()
     sample_images = {}
 
@@ -1038,17 +1038,23 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       c1 = Math.min(lm.n_tiles_x - 1, Math.floor(x1/SECTILE));
       r1 = Math.min(lm.n_tiles_y - 1, Math.floor(y1/SECTILE));
     }
+    // Extra fractional pixel added to tile size to prevent sub-pixel stitching gaps (no-matrix path).
+    const _SEC_OVERLAP = 1;
     const _applyTileTransform = (row, col) => {
       if (mat) {
+        // Affine case: original transform — matrix handles positioning; draw as unit square.
         const a  = mat.m00*SECTILE*dsSec*scale, b  = mat.m10*SECTILE*dsSec*scale;
         const cm = mat.m01*SECTILE*dsSec*scale, d  = mat.m11*SECTILE*dsSec*scale;
         const e  = (mat.m00*col*SECTILE*dsSec + mat.m01*row*SECTILE*dsSec + mat.tx)*scale + ox;
         const f  = (mat.m10*col*SECTILE*dsSec + mat.m11*row*SECTILE*dsSec + mat.ty)*scale + oy;
         secCtx.setTransform(a, b, cm, d, e, f);
       } else {
-        const sx = col*SECTILE*dsSec*scale + ox, sy = row*SECTILE*dsSec*scale + oy;
-        const sw = SECTILE*dsSec*scale;
-        secCtx.setTransform(sw, 0, 0, sw, sx, sy);
+        // Simple axis-aligned case: snap to integer pixels and extend by _SEC_OVERLAP px.
+        const sx  = Math.floor(col*SECTILE*dsSec*scale + ox);
+        const sy  = Math.floor(row*SECTILE*dsSec*scale + oy);
+        const sw  = Math.floor((col+1)*SECTILE*dsSec*scale + ox) + _SEC_OVERLAP - sx;
+        const sh  = Math.floor((row+1)*SECTILE*dsSec*scale + oy) + _SEC_OVERLAP - sy;
+        secCtx.setTransform(sw, 0, 0, sh, sx, sy);
       }
     };
     for (let row = r0; row <= r1; row++) {

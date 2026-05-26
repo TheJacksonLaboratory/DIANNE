@@ -203,10 +203,11 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     const l0 = currentMeta.levels[0];
     const lm = currentMeta.levels[level];
     const ds = l0.width / lm.width;
-    const sx = col * TILE * ds * scale + ox;
-    const sy = row * TILE * ds * scale + oy;
-    const sw = TILE * ds * scale;
-    return { sx, sy, sw };
+    const sx  = Math.floor(col * TILE * ds * scale + ox);
+    const sy  = Math.floor(row * TILE * ds * scale + oy);
+    const sw  = Math.floor((col + 1) * TILE * ds * scale + ox) + 1 - sx;
+    const sh  = Math.floor((row + 1) * TILE * ds * scale + oy) + 1 - sy;
+    return { sx, sy, sw, sh };
   }
 
   // ── composite builder ─────────────────────────────────────────────────────
@@ -389,8 +390,8 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
           const k = tileKey(level, r, c);
           const img = _rgbCache.get(k);
           if (img) {
-            const { sx, sy, sw } = tileScreenRect(level, r, c, transform);
-            ctx.drawImage(img, sx, sy, sw, sw);
+            const { sx, sy, sw, sh } = tileScreenRect(level, r, c, transform);
+            ctx.drawImage(img, sx, sy, sw, sh);
           }
         }
       }
@@ -416,8 +417,8 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
         const k  = tileKey(level, r, c);
         const tc = getComposite(k);
         if (!tc) continue;
-        const { sx, sy, sw } = tileScreenRect(level, r, c, transform);
-        ctx.drawImage(tc, sx, sy, sw, sw);
+        const { sx, sy, sw, sh } = tileScreenRect(level, r, c, transform);
+        ctx.drawImage(tc, sx, sy, sw, sh);
       }
     }
 
