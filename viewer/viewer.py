@@ -777,7 +777,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     const isSampleMC = !!(META.n_channels);
     _primaryOpacityWrap.style.display   = (!isSampleMC && hasSecondary) ? 'flex' : 'none';
     _secondaryOpacityWrap.style.display = (hasSecondary && !isSecMC) ? 'flex' : 'none';
-    _secChPanelWrap.style.display       = isSecMC ? 'block' : 'none';
+    toolbar.setSecChVisible(isSecMC);
   }
   _primaryOpacitySlider.addEventListener('input', () => {
     tileLayer.style.opacity = _primaryOpacitySlider.value;
@@ -1137,36 +1137,14 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     }
   }
 
-  // ── secondary channel panel (multichannel secondary only) ─────────────────────
-  const _secChPanelWrap = document.createElement('div');
-  _secChPanelWrap.dataset.ivUi = 'true';
-  _secChPanelWrap.style.cssText = [
-    'position:absolute','top:48px','left:8px','z-index:12',
-    'font:12px monospace','text-align:left','display:none',
-  ].join(';');
-  const _secChToggleBtn = document.createElement('button');
-  _secChToggleBtn.textContent = 'Sec.Ch \u25be';
-  _secChToggleBtn.title = 'Secondary image channel controls';
-  _secChToggleBtn.style.cssText = [
-    'background:rgba(0,0,0,0.60)','border:1px solid #555',
-    'color:#eee','border-radius:6px','padding:4px 8px',
-    'cursor:pointer','font:12px monospace','white-space:nowrap',
-  ].join(';');
-  _secChPanelWrap.appendChild(_secChToggleBtn);
+  // ── secondary channel dropdown (button lives in toolbar Row 8) ────────────
   const _secChDropdown = document.createElement('div');
   _secChDropdown.style.cssText = [
-    'display:none','margin-top:4px',
+    'display:none',
     'background:rgba(12,12,12,0.92)','border:1px solid #444',
     'border-radius:6px','padding:6px 8px',
     'max-height:340px','overflow-y:auto','min-width:340px','text-align:left',
   ].join(';');
-  _secChPanelWrap.appendChild(_secChDropdown);
-  _secChToggleBtn.addEventListener('click', () => {
-    const open = _secChDropdown.style.display !== 'none';
-    _secChDropdown.style.display = open ? 'none' : 'block';
-    _secChToggleBtn.textContent  = open ? 'Sec.Ch \u25be' : 'Sec.Ch \u25b4';
-  });
-  root.appendChild(_secChPanelWrap);
 
   function _buildSecChPanel() {
     _secChDropdown.innerHTML = '';
@@ -1320,7 +1298,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     settings,
     patches,
     visiumOverlay,
-    (IS_MONOCHANNEL && mono2d) ? { mono2d, monoMeta: MONO_META, isSampleMono: s => !!(SAMPLE_IS_MONO[s]) } : null
+    (IS_MONOCHANNEL && mono2d) ? { mono2d, monoMeta: MONO_META, isSampleMono: s => !!(SAMPLE_IS_MONO[s]) } : null,
+    { dropdown: _secChDropdown }
   );
   // Initialise 2D Options button visibility for the starting sample
   toolbar.setMonoActive(!!(IS_MONOCHANNEL && SAMPLE_IS_MONO[ACTIVE_SAMPLE]));

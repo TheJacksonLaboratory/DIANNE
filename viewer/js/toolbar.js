@@ -25,7 +25,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -578,6 +578,42 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     } // end else (mono2d present)
   }
 
+  // ── Row 8: Secondary channel toggle ──────────────────────────────────────
+  let _secChRow = null;
+  if (secChOptions && secChOptions.dropdown) {
+    _secChRow = _mkRow('position:relative;');
+    _secChRow.style.display = 'none';
+    bar.appendChild(_secChRow);
+
+    // Secondary channel button name
+    const secChName = 'Secondary Channels';
+    const secChBtn = document.createElement('button');
+    secChBtn.textContent = ` ${secChName} \u25be`;
+    secChBtn.title = 'Secondary image channel controls';
+    secChBtn.dataset.demoId = 'sec-ch-btn';
+    secChBtn.style.cssText = [
+      'background:rgba(80,130,255,0.18)', 'border:1px solid #5599ff',
+      'color:#aac8ff', 'border-radius:4px', 'padding:2px 8px',
+      'cursor:pointer', 'font-size:12px', 'line-height:1.4', 'white-space:nowrap',
+    ].join(';');
+    _secChRow.appendChild(secChBtn);
+
+    const _secChDropdown = secChOptions.dropdown;
+    _secChDropdown.style.position = 'absolute';
+    _secChDropdown.style.top = '100%';
+    _secChDropdown.style.left = '0';
+    _secChDropdown.style.marginTop = '4px';
+    _secChDropdown.style.zIndex = '20';
+    _secChRow.appendChild(_secChDropdown);
+
+    secChBtn.addEventListener('click', () => {
+      const open = _secChDropdown.style.display !== 'none';
+      _secChDropdown.style.display = open ? 'none' : 'block';
+      secChBtn.textContent = open ? ` ${secChName} \u25be` : ` ${secChName} \u25b4`;
+      secChBtn.style.background = open ? 'rgba(80,130,255,0.18)' : 'rgba(85,153,255,0.35)';
+    });
+  }
+
   // Expose setMonoActive so setActiveSample can toggle the 2D Options row
   function setMonoActive(active) {
     const monoRow = bar.querySelector('[data-mono-row-el]');
@@ -831,9 +867,14 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     return Math.hypot(a.clientX - b.x, a.clientY - b.y);
   }
 
+  function setSecChVisible(visible) {
+    if (_secChRow) _secChRow.style.display = visible ? 'flex' : 'none';
+  }
+
   return {
     getActiveTool: () => activeTool,
     setTool,
     setMonoActive,
+    setSecChVisible,
   };
 }
