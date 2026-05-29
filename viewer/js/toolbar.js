@@ -475,6 +475,23 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     cmapSelect.addEventListener('change', () => mono2d.setDisplaySettings({ cmap: cmapSelect.value }));
     cmapSection.appendChild(cmapSelect);
 
+    // Reversed checkbox
+    const revRow = document.createElement('div');
+    revRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:5px;cursor:pointer;';
+    const revChk = document.createElement('input');
+    revChk.type = 'checkbox';
+    revChk.id = 'mono2d-reversed-chk';
+    revChk.checked = !!cur.reversed;
+    revChk.style.cursor = 'pointer';
+    const revLbl = document.createElement('label');
+    revLbl.htmlFor = 'mono2d-reversed-chk';
+    revLbl.textContent = 'Reversed';
+    revLbl.style.cssText = 'color:#dde;font-size:12px;cursor:pointer;user-select:none;';
+    revChk.addEventListener('change', () => mono2d.setDisplaySettings({ reversed: revChk.checked }));
+    revRow.appendChild(revChk);
+    revRow.appendChild(revLbl);
+    cmapSection.appendChild(revRow);
+
     cmapSection.appendChild(_panelLabel('Display range'));
     const rangeRow = document.createElement('div');
     rangeRow.style.cssText = 'display:flex;gap:6px;align-items:center;';
@@ -533,6 +550,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       colorsToggle.setActive(s.colors);
       vminInput.value = String(s.vmin);
       vmaxInput.value = String(s.vmax);
+      revChk.checked  = !!s.reversed;
       _updatePanelVisibility(s.mode);
     }
 

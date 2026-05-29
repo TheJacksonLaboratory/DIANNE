@@ -34,6 +34,7 @@ function createMono2D(monoCanvas, baseUrl, monoMeta, viewport, settings, getActi
   let _colors  = monoMeta.default_colors  || 'sequential';     // 'sequential' | 'random'
   let _vmin    = (monoMeta.default_vmin != null) ? monoMeta.default_vmin : 0;
   let _vmax    = (monoMeta.default_vmax != null) ? monoMeta.default_vmax : 1;
+  let _reversed = false;
 
   // Per-sample saved settings (restored when the user returns to a sample)
   const _settingsBySample = {};
@@ -81,7 +82,7 @@ function createMono2D(monoCanvas, baseUrl, monoMeta, viewport, settings, getActi
    * Index 0 is always [0,0,0,0] (transparent).
    */
   async function _buildLut() {
-    const key = [_mode, _cmap, _palette, _colors, _vmin, _vmax].join('|');
+    const key = [_mode, _cmap, _palette, _colors, _vmin, _vmax, _reversed].join('|');
     if (key === _lutKey && _lut) return;
     _lutKey = key;
 
@@ -89,7 +90,22 @@ function createMono2D(monoCanvas, baseUrl, monoMeta, viewport, settings, getActi
     lut[3] = 0; // index 0 → transparent (all four bytes default-zero already)
 
     const rawName = _mode === 'cmap' ? _cmap : _palette;
-    const raw = await _fetchRawLut(rawName);
+    const rawFetched = await _fetchRawLut(rawName);
+    // Optionally reverse the LUT (entries 0-255; keep index 0 transparent later)
+    let raw;
+    if (_reversed) {
+      raw = new Uint8Array(rawFetched.length);
+      for (let i = 0; i < 256; i++) {
+        const src = (255 - i) * 4;
+        const dst = i * 4;
+        raw[dst]     = rawFetched[src];
+        raw[dst + 1] = rawFetched[src + 1];
+        raw[dst + 2] = rawFetched[src + 2];
+        raw[dst + 3] = rawFetched[src + 3];
+      }
+    } else {
+      raw = rawFetched;
+    }
 
     if (_mode === 'palette') {
       // Build N distinct palette colours by sampling the 256-entry raw LUT
@@ -276,8 +292,9 @@ function createMono2D(monoCanvas, baseUrl, monoMeta, viewport, settings, getActi
     if (s.cmap    !== undefined && s.cmap    !== _cmap)    { _cmap    = s.cmap;           changed = true; }
     if (s.palette !== undefined && s.palette !== _palette) { _palette = s.palette;        changed = true; }
     if (s.colors  !== undefined && s.colors  !== _colors)  { _colors  = s.colors;         changed = true; }
-    if (s.vmin    !== undefined && Number(s.vmin) !== _vmin) { _vmin  = Number(s.vmin);   changed = true; }
-    if (s.vmax    !== undefined && Number(s.vmax) !== _vmax) { _vmax  = Number(s.vmax);   changed = true; }
+    if (s.vmin     !== undefined && Number(s.vmin) !== _vmin)       { _vmin     = Number(s.vmin);   changed = true; }
+    if (s.vmax     !== undefined && Number(s.vmax) !== _vmax)       { _vmax     = Number(s.vmax);   changed = true; }
+    if (s.reversed !== undefined && !!s.reversed  !== _reversed)   { _reversed = !!s.reversed;     changed = true; }
     if (changed) {
       _lut = null; // invalidate
       await _buildLut();
@@ -286,7 +303,7 @@ function createMono2D(monoCanvas, baseUrl, monoMeta, viewport, settings, getActi
   }
 
   function getDisplaySettings() {
-    return { mode: _mode, cmap: _cmap, palette: _palette, colors: _colors, vmin: _vmin, vmax: _vmax };
+    return { mode: _mode, cmap: _cmap, palette: _palette, colors: _colors, vmin: _vmin, vmax: _vmax, reversed: _reversed };
   }
 
   function getState()    { return getDisplaySettings(); }
@@ -307,6 +324,7 @@ function createMono2D(monoCanvas, baseUrl, monoMeta, viewport, settings, getActi
     if (saved) {
       _mode = saved.mode; _cmap = saved.cmap; _palette = saved.palette;
       _colors = saved.colors; _vmin = saved.vmin; _vmax = saved.vmax;
+      _reversed = !!saved.reversed;
       _lut = null;
     }
     _buildLut().then(() => _redraw()).catch(err => console.warn('[mono2d] LUT build failed:', err));
