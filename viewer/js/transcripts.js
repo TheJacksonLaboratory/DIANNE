@@ -217,13 +217,16 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
         const entry = cache.get(cacheKey(currentGrid, currentLevel, r, c, currentGeneKey));
         if (!entry) continue;
         entry.lastUsed = Date.now();
+        const gridDownsample = currentTranscriptMeta.grids[currentGrid]
+          ? currentTranscriptMeta.grids[currentGrid].downsample : 1;
         for (const pt of entry.points) {
+          const r = pt.count ? POINT_RADIUS * Math.sqrt(pt.count) / gridDownsample : POINT_RADIUS;
           const sp = viewport.toScreenSpace(pt.x, pt.y);
-          if (sp.x < -POINT_RADIUS || sp.y < -POINT_RADIUS || sp.x > layer.width + POINT_RADIUS || sp.y > layer.height + POINT_RADIUS) {
+          if (sp.x < -r || sp.y < -r || sp.x > layer.width + r || sp.y > layer.height + r) {
             continue;
           }
           ctx.beginPath();
-          ctx.arc(sp.x, sp.y, POINT_RADIUS, 0, Math.PI * 2);
+          ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
           ctx.fillStyle = geneColor(pt.gene);
           ctx.fill();
         }

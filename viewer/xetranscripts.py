@@ -150,12 +150,18 @@ class XeniumTranscripts:
 
             # Transform XE coords back to H&E pixel space for rendering
             he_coords = self._xe_to_he(coords[mask])
-            for he_coord, gene_id in zip(he_coords, gene_ids[mask]):
-                points.append({
+            counts = None
+            if grid != 0 and 'cluster_count' in cell:
+                counts = np.asarray(cell['cluster_count'][:]).reshape(-1)[mask]
+            for i, (he_coord, gene_id) in enumerate(zip(he_coords, gene_ids[mask])):
+                pt = {
                     'x': float(he_coord[0]),
                     'y': float(he_coord[1]),
                     'gene': self.index_to_gene[int(gene_id)],
-                })
+                }
+                if counts is not None:
+                    pt['count'] = int(counts[i])
+                points.append(pt)
 
         return points
 
