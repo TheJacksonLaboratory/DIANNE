@@ -99,13 +99,7 @@ class XeniumCells:
 
         use_dots = indices.size > self.max_cells
         boundaries = None
-        if use_dots:
-            seed = int((level * 1000000 + row * 1000 + col) % (2 ** 31))
-            rng = np.random.RandomState(seed)
-            keep = np.sort(rng.choice(indices.size, self.max_cells, replace=False))
-            indices = indices[keep]
-            coords = coords[keep]
-        else:
+        if not use_dots:
             boundaries = self._get_boundaries(indices)
 
             # print([len(boundaries), boundaries[0]] if boundaries is not None else 'no boundaries', 'cells in tile', end='; ') # DEBUG statement
@@ -341,13 +335,6 @@ class XeniumCellsFast:
         centroids_np = np.concatenate(all_centroids, axis=0)
 
         use_dots = len(cell_ids_np) > self.max_cells
-        if use_dots:
-            seed = int((level * 1_000_000 + row * 1_000 + col) % (2 ** 31))
-            rng  = np.random.RandomState(seed)
-            keep = np.sort(rng.choice(len(cell_ids_np), self.max_cells, replace=False))
-            cell_ids_np  = cell_ids_np[keep]
-            centroids_np = centroids_np[keep]
-            all_boundaries = [all_boundaries[k] for k in keep]
 
         he_coords = self._xe_to_he(centroids_np)
         points = []

@@ -271,10 +271,11 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     }
 
     // Force-dot mode when visible cell count exceeds the settings threshold.
+    // Use pad=0 so prefetch tiles beyond the viewport don't inflate the count.
     const _maxBounds = settings ? settings.get('maxCellsBoundaries') : 0;
     let _totalCells = 0;
     if (_maxBounds > 0) {
-      for (const _t of tiles) {
+      for (const _t of visibleRange(currentLevel, transform, 0)) {
         const _k = cacheKey(_t);
         if (cache.has(_k)) _totalCells += (cache.get(_k) || []).length;
       }

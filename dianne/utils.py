@@ -24,9 +24,9 @@ import scipy
 from skimage.measure import label
 from scipy.spatial import KDTree
 
-def createH2(slide, mpath=None):
+def createH2(slide, mpath=None, mpp=0.2208187960959237):
     df_temp = pd.read_csv(f'{mpath}/{slide}.matrix-H.csv', header=None)
-    df_temp.iloc[:2,:2] *= 0.25 / 0.2208187960959237
+    df_temp.iloc[:2,:2] *= 0.25 / mpp
     sname = f'{mpath}/{slide}.matrix-H-2.csv'
     if not os.path.isfile(sname):
         df_temp.to_csv(sname, index=False, header=False)
