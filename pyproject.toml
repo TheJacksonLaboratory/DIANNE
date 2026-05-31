@@ -1,0 +1,24 @@
+# Root-level workspace configuration.
+# This file is NOT published to PyPI. Its only purpose is to let you install
+# all three packages in editable mode in one command during local development:
+#
+#   pip install -e dianne-core -e dianne-utils -e dianne-viewer
+#
+# OR with uv (recommended — resolves inter-package deps from local sources):
+#
+#   uv sync          # installs all workspace members in editable mode
+#
+# If you use uv, it reads the [tool.uv.workspace] table below and treats all
+# three sub-directories as editable local packages automatically.
+#
+# If you use plain pip, run the one-liner above from this directory.
+
+[tool.uv.workspace]
+members = ["dianne-core", "dianne-utils", "dianne-viewer"]
+
+# Optional: override PyPI resolution with local editable sources so that
+# `dianne-utils` and `dianne-viewer` pick up your local `dianne-core` rather
+# than a published wheel.
+[tool.uv.sources]
+dianne-core = { workspace = true }
+dianne-utils = { workspace = true }

@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "dianne-viewer"
+version = "0.1.0"
+description = "Jupyter-based whole-slide image viewer for DIANNE with Xenium and spatial-transcriptomics overlays."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Sergii Domanskyi", email = "sergii.domanskyi@jax.org" },
+]
+keywords = ["whole slide imaging", "viewer", "spatial biology", "Xenium", "Zarr", "Jupyter"]
+# TODO: update once the JAX Non-Commercial Software License is finalised.
+# Non-commercial licenses are not OSI-approved, so use the catch-all classifier below.
+# PyPI will still accept the package and display the LICENSE file content.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Framework :: Jupyter",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "dianne-core>=0.1.0",
+    "dianne-utils>=0.1.0",
+    "numpy>=1.24",
+    "pandas>=1.5",
+    "scipy>=1.10",
+    "tifffile>=2023.1.23",
+    "zarr>=2.14",
+    "fsspec>=2023.1",
+    "Pillow>=9.4",
+    "ipywidgets>=8.0",
+    "ipython>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/TheJacksonLaboratory/DIANNE"
+Repository = "https://github.com/TheJacksonLaboratory/DIANNE"
+"Bug Tracker" = "https://github.com/TheJacksonLaboratory/DIANNE/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dianne_viewer*"]
+
+[tool.setuptools.package-data]
+dianne_viewer = ["js/*"]
