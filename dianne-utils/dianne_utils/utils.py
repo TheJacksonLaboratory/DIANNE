@@ -25,6 +25,10 @@ import scipy
 from skimage.measure import label
 from scipy.spatial import KDTree
 
+from dianne_core import PCMA
+from dianne_core import inferProbFast
+from .interpolation import interpolate_points as interpolatePoints
+
 def createH2(slide, mpath=None, mpp=0.2208187960959237):
     df_temp = pd.read_csv(f'{mpath}/{slide}.matrix-H.csv', header=None)
     df_temp.iloc[:2,:2] *= 0.25 / mpp
@@ -732,8 +736,6 @@ def makeSaveFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8,
     Callable suitable for ``save_classifier_fn=`` in ``viewer.create_viewer()``.
     """
 
-    from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
-
     def _savefn(*, strokes_by_sample, clfname):
 
         clf, patchesCDFsMod, annotations = getClassifierForFromStrokes(
@@ -846,9 +848,6 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_job
     -------
     Callable suitable for ``run_inference_fn=`` in ``viewer.create_viewer()``.
     """
-    from dianne_core import PCMA
-    from dianne_core import inferProbFast
-    from .interpolation import interpolate_points as interpolatePoints
 
     def _runfn(*, strokes_by_sample, active_sample):
         clf, _, _ = getClassifierForFromStrokes(
