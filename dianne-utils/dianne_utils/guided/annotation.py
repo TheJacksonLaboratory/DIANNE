@@ -23,7 +23,7 @@ from scipy.spatial import KDTree
 
 from sklearn.cluster import KMeans
 
-from ..core import inferProbFast
+from dianne_core.core import inferProbFast
 from ..interpolation import interpolate_points
 
 from .transcriptomics import fetch_xenium_zarr_cell_coords, fetch_cell_by_gene_matrix, extract_transcripts_from_grid_locs

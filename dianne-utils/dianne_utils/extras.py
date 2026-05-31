@@ -6,9 +6,10 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
 from matplotlib.patches import Patch
 from sklearn.metrics import roc_auc_score, average_precision_score
-from .utils import get_tile_mask_means3
-from .core import inferProbFast
+from .utils import get_tile_mask_means3, get_metrics
 from .interpolation import interpolate_points as interpolatePoints
+
+from dianne_core.core import inferProbFast
 
 # import tifffile; tifffile.TiffFile(f"{annopath}/JDC_WP_012_ae-standalone.ome.tif").pages[0].tags[270].value.split('PhysicalSizeX="')[1].split('"')[0]
 # import tifffile; tifffile.TiffFile(f"{annopath}/MC_PLACM_0015.ome.tif").pages[0].tags[270].value.split('PhysicalSizeX="')[1].split('"')[0]
@@ -45,7 +46,7 @@ def measureSample(annopath, infSample):
     print('Computing objects')
     m_labeled, means, objects = get_tile_mask_means3(mfile, int(ts/M), mpp, np.vstack([xi, yi]).T.round(0).astype(int), scale=scale)
     result = {'sample': infSample, 'manual_annotation': np.mean(means)}
-    result.update(dianne.get_metrics(pd.Series(pi), pd.Series(means), pth, 0.0, prefix='dianne_'))
+    result.update(get_metrics(pd.Series(pi), pd.Series(means), pth, 0.0, prefix='dianne_'))
     try:
         auroc = roc_auc_score(pd.Series(means)>0., pd.Series(pi))
         auprc = average_precision_score(pd.Series(means)>0., pd.Series(pi))

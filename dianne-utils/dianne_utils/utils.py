@@ -10,8 +10,9 @@ from tqdm import tqdm
 from IPython.display import display, HTML
 import pickle
 
-from .core import loadAd, preparePatchesWSI, getPatchRepresentation, trainClassifier
-from .core import loadDataAndPreparePatches
+from dianne_core import loadAd, preparePatchesWSI, getPatchRepresentation, trainClassifier
+from dianne_core import loadDataAndPreparePatches
+
 from joblib import Parallel, delayed
 
 import numpy as np
@@ -845,8 +846,8 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_job
     -------
     Callable suitable for ``run_inference_fn=`` in ``viewer.create_viewer()``.
     """
-    from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
-    from .core import inferProbFast
+    from dianne_core import PCMA
+    from dianne_core import inferProbFast
     from .interpolation import interpolate_points as interpolatePoints
 
     def _runfn(*, strokes_by_sample, active_sample):

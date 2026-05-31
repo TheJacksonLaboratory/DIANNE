@@ -30,7 +30,7 @@ from joblib import Parallel, delayed
 import cv2
 import tifffile
 
-from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
+from dianne_core import PCMA
 from .interpolation import interpolate_points
 
 import matplotlib
@@ -39,7 +39,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 
-from .core import (
+from dianne_core.core import (
     erodePointProbs,
     loadAd,
     loadImFeatures,

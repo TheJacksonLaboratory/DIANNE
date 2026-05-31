@@ -48,3 +48,6 @@ Repository = "https://github.com/TheJacksonLaboratory/DIANNE"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dianne_core*"]
+
+[tool.setuptools.package-data]
+dianne_core = ["py.typed"]

@@ -3,12 +3,12 @@ from pathlib import Path
 from IPython.display import display, HTML, Javascript
 import ipywidgets as widgets
 
-from viewer.tiff          import PyramidImage
-from viewer.multichannel  import MultichannelImage
-from viewer.monochannel   import MonochannelImage
-from viewer.server        import ViewerServer
-from viewer.xetranscripts import XeniumTranscripts
-from viewer.xencells      import XeniumCells, XeniumCellsFast
+from .tiff          import PyramidImage
+from .multichannel  import MultichannelImage
+from .monochannel   import MonochannelImage
+from .server        import ViewerServer
+from .xetranscripts import XeniumTranscripts
+from .xencells      import XeniumCells, XeniumCellsFast
 
 _JS_DIR = Path(__file__).parent / 'js'
 

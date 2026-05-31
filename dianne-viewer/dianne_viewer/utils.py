@@ -4,8 +4,8 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dianne.utils import loadDataAndPreparePatches, loadSTQParams
-from dianne.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
+from dianne_utils.utils import loadDataAndPreparePatches, loadSTQParams
+from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
 from .viewer import create_viewer
 
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
