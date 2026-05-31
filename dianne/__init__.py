@@ -1,6 +1,4 @@
 from .guided.annotation import jumpStart, runAnnotation, inspectAnnotatedPatches, loadPatch
-from .combineCDF import getDiscreteCombinedCDFofAllFeatures as PCMA
-from .core import loadAd, preparePatchesWSI, getPatchRepresentation, inferProbFast, trainClassifier, loadDataAndPreparePatches
 from .utils import loadDataAndPreparePatchesStatic
 from .stqutils import inferProb, inferProbPreview, showProbImg, get_metrics
 from .utils import findMyJupyterServer, setupClassifierPaths, saveClassifier, loadClassifier, saveGUIClassifier, loadGUIClassifier
