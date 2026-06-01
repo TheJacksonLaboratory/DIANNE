@@ -89,7 +89,7 @@ jupyter notebook
 
 ```bash
 module load singularity
-container="/projects/chuang-lab/USERS/domans/containers/annotator_v2.0.0.sif"
+container="/projects/chuang-lab/USERS/domans/containers/annotator_v3.0.0.sif"
 
 if [ ! -f "$container" ]; then
     echo "Container not found, pulling from registry..."
