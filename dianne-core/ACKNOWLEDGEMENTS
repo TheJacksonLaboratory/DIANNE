@@ -1,0 +1,64 @@
+ACKNOWLEDGEMENTS
+================
+
+This software makes use of the following open-source packages. We gratefully
+acknowledge their authors and contributors.
+
+-------------------------------------------------------------------------------
+
+NumPy
+  Version:  >= 1.24
+  License:  BSD-3-Clause (with portions under 0BSD, MIT, Zlib, CC0-1.0)
+  Website:  https://numpy.org
+  Citation: Harris, C.R. et al. Array programming with NumPy. Nature 585,
+            357–362 (2020). https://doi.org/10.1038/s41586-020-2649-2
+
+pandas
+  Version:  >= 1.5
+  License:  BSD-3-Clause
+  Website:  https://pandas.pydata.org
+
+SciPy
+  Version:  >= 1.10
+  License:  BSD-3-Clause
+  Website:  https://scipy.org
+
+scikit-learn
+  Version:  >= 1.2
+  License:  BSD-3-Clause (New BSD)
+  Website:  https://scikit-learn.org
+
+Numba
+  Version:  >= 0.57
+  License:  BSD-2-Clause
+  Website:  https://numba.pydata.org
+
+tifffile
+  Version:  >= 2023.1.23
+  License:  BSD-3-Clause
+  Website:  https://www.cgohlke.com
+  Author:   Christoph Gohlke
+
+scanpy
+  Version:  >= 1.9
+  License:  BSD-3-Clause
+  Website:  https://scanpy.org
+  Citation: Wolf, F.A., Angerer, P. & Theis, F.J. SCANPY: large-scale
+            single-cell gene expression data analysis. Genome Biol 19, 15
+            (2018). https://doi.org/10.1186/s13059-017-1382-0
+
+joblib
+  Version:  >= 1.2
+  License:  BSD-3-Clause
+  Website:  https://joblib.readthedocs.io
+
+tqdm
+  Version:  >= 4.64
+  License:  MPL-2.0 AND MIT
+  Website:  https://tqdm.github.io
+
+-------------------------------------------------------------------------------
+
+All trademarks and registered trademarks are the property of their respective
+owners. The inclusion of these packages does not imply endorsement by their
+authors or maintainers.

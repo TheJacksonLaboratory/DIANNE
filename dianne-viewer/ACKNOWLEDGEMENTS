@@ -1,0 +1,61 @@
+ACKNOWLEDGEMENTS
+================
+
+This software makes use of the following open-source packages. We gratefully
+acknowledge their authors and contributors.
+
+-------------------------------------------------------------------------------
+
+NumPy
+  Version:  >= 1.24
+  License:  BSD-3-Clause (with portions under 0BSD, MIT, Zlib, CC0-1.0)
+  Website:  https://numpy.org
+  Citation: Harris, C.R. et al. Array programming with NumPy. Nature 585,
+            357–362 (2020). https://doi.org/10.1038/s41586-020-2649-2
+
+pandas
+  Version:  >= 1.5
+  License:  BSD-3-Clause
+  Website:  https://pandas.pydata.org
+
+SciPy
+  Version:  >= 1.10
+  License:  BSD-3-Clause
+  Website:  https://scipy.org
+
+tifffile
+  Version:  >= 2023.1.23
+  License:  BSD-3-Clause
+  Website:  https://www.cgohlke.com
+  Author:   Christoph Gohlke
+
+zarr
+  Version:  >= 2.14
+  License:  MIT
+  Website:  https://github.com/zarr-developers/zarr-python
+
+fsspec
+  Version:  >= 2023.1
+  License:  BSD-3-Clause
+  Website:  https://github.com/fsspec/filesystem_spec
+
+Pillow
+  Version:  >= 9.4
+  License:  HPND (Historical Permission Notice and Disclaimer) / MIT-CMU
+  Website:  https://python-pillow.github.io
+
+ipywidgets
+  Version:  >= 8.0
+  License:  BSD-3-Clause
+  Website:  http://jupyter.org
+
+IPython
+  Version:  >= 8.0
+  License:  BSD-3-Clause
+  Website:  https://ipython.org
+
+-------------------------------------------------------------------------------
+
+All trademarks and registered trademarks are the property of their respective
+owners. The inclusion of these packages does not imply endorsement by their
+authors or maintainers.

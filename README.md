@@ -132,3 +132,5 @@ We are committed to open science and welcome contributions, feedback, and collab
 For questions, support, or to get involved, please contact the JAX Computational Sciences team or open an issue on our repository.
 
 DIANNE is released under the terms of the [LICENSE](LICENSE).
+
+See ACKNOWLEDGEMENTS for third-party licenses.

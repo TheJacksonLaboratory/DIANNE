@@ -81,3 +81,5 @@ If you use DIANNE in your research, please cite:
 This software is released under the **JAX Non-Commercial Software License**.
 See [LICENSE](LICENSE) for full terms.
 Commercial use requires a separate agreement with The Jackson Laboratory.
+
+See ACKNOWLEDGEMENTS for third-party licenses.
