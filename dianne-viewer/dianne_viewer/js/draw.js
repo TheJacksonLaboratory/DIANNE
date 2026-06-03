@@ -157,6 +157,7 @@ function createDraw(container, viewport) {
   function setBrushMode(m)          { brushMode = (m === 'noodle') ? 'noodle' : 'line'; }
   function getBrushMode()           { return brushMode; }
   function setVisible(visible)      { strokesVisible = visible; redraw(); }
+  function getVisible()              { return strokesVisible; }
 
   function _cloneStrokes(strokes) {
     return strokes.map(s => {
@@ -660,6 +661,7 @@ function createDraw(container, viewport) {
     setBrushMode,
     getBrushMode,
     setVisible,
+    getVisible,
     hitTestStroke,
     selectStroke,
     hasSelection,

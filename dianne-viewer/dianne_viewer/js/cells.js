@@ -5,7 +5,7 @@
  * Supports sample switching and per-sample enable/disable at runtime.
  */
 
-function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow, sampleName = null, settings = null, annotationLayers = []) {
+function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, sharedRow, sampleName = null, settings = null, annotationLayers = [], hoverCallbacks = null) {
   const MAX_CACHED = 200;
   const PREFETCH = 1;
   const BOUNDARY_LINE_WIDTH = 1.5;
@@ -184,6 +184,11 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
           for (const k of cache.keys()) {
             if (!lastNeededKeys.has(k)) { cache.delete(k); break; }
           }
+        }
+
+        // Feed newly fetched cells into the spatial index.
+        if (hoverCallbacks && typeof hoverCallbacks.onCellsLoaded === 'function') {
+          hoverCallbacks.onCellsLoaded(cells, currentSample, key);
         }
 
         requestDraw();
@@ -465,6 +470,10 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
   function setContext(sample, imageMetaNext, cellsMetaNext, stateToRestore) {
     currentSample = sample;
     currentImageMeta = imageMetaNext;
+    // Notify hover system that the sample changed (it will clear its own index).
+    if (hoverCallbacks && typeof hoverCallbacks.onSampleChanged === 'function') {
+      hoverCallbacks.onSampleChanged(sample);
+    }
     if (stateToRestore && stateToRestore.activeLayerIdx != null) {
       activeLayerIdx = stateToRestore.activeLayerIdx;
     }

@@ -339,6 +339,21 @@ class ViewerServer:
                     body = srv._annotation_layers_json.encode()
                     self._respond(200, body, 'application/json')
 
+                elif parsed.path == '/cell_profile':
+                    xenium = srv.xenium_by_sample.get(sample_name)
+                    if xenium is None:
+                        self._respond(404, b'no transcripts for this sample')
+                    else:
+                        try:
+                            he_x      = float(qs['x'][0])
+                            he_y      = float(qs['y'][0])
+                            he_radius = float(qs.get('radius', ['40'])[0])
+                            result    = xenium.get_cell_profile(he_x, he_y, he_radius)
+                            body      = json.dumps(result).encode()
+                            self._respond(200, body, 'application/json')
+                        except Exception as e:
+                            self._respond(400, str(e).encode())
+
                 elif parsed.path == '/classifier_names':
                     if srv.list_names_fn is None:
                         body = json.dumps([]).encode()

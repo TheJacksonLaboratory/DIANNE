@@ -25,7 +25,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -775,16 +775,27 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
         draw.onMouseMove(..._toVPArr(e));
       }
     }
+    // Hover tooltip (pan mode only, not while actively panning or drawing)
+    if (hoverInteraction && activeTool === 'pan' && !panning) {
+      const [hvX, hvY] = _toVPArr(e);
+      hoverInteraction.onMouseMove(hvX, hvY);
+    }
   });
 
   container.addEventListener('mouseleave', () => {
     if (typeof draw.onMouseLeave === 'function') draw.onMouseLeave();
+    if (hoverInteraction) hoverInteraction.onMouseLeave();
   });
 
   window.addEventListener('mouseup', e => {
     if (activeTool === 'pan' && panning) {
       panning = false;
       container.style.cursor = 'grab';
+      // Single click in pan mode (not a drag) → hover click panel
+      if (hoverInteraction && mouseDownPos && _dist(e, mouseDownPos) < 4) {
+        const [vpX, vpY] = _toVPArr(e);
+        hoverInteraction.onMouseClick(vpX, vpY);
+      }
     } else if (_isDrawTool(activeTool)) {
       if (cmdPanning) {
         cmdPanning = false;

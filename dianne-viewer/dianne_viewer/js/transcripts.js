@@ -5,7 +5,7 @@
  * Supports sample switching and per-sample enable/disable at runtime.
  */
 
-function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, viewport, log, sharedRow, sampleName = null) {
+function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, viewport, log, sharedRow, sampleName = null, hoverCallbacks = null) {
   const MAX_CACHED = 300;
   const PREFETCH = 1;
   let POINT_RADIUS = 2;
@@ -245,11 +245,13 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
       .then(r => r.json())
       .then(data => {
         inflight.delete(k);
-        cache.set(k, {
-          points: Array.isArray(data.points) ? data.points : [],
-          lastUsed: Date.now(),
-        });
+        const pts = Array.isArray(data.points) ? data.points : [];
+        cache.set(k, { points: pts, lastUsed: Date.now() });
         evict();
+        // Feed grid-0 points into the spatial index (individual transcripts only).
+        if (hoverCallbacks && typeof hoverCallbacks.onTranscriptsLoaded === 'function' && grid === 0) {
+          hoverCallbacks.onTranscriptsLoaded(pts, currentSample, k);
+        }
         draw(viewport.getTransform());
       })
       .catch(() => { inflight.delete(k); });
@@ -366,6 +368,10 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     currentSample = sample;
     currentImageMeta = imageMetaNext;
     currentTranscriptMeta = transcriptMetaNext;
+    // Notify hover system of sample change.
+    if (hoverCallbacks && typeof hoverCallbacks.onSampleChanged === 'function') {
+      hoverCallbacks.onSampleChanged(sample);
+    }
     enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes && currentTranscriptMeta.genes.length);
     rebuildGenePanel();  // clears selectedGenes
     if (stateToRestore) {

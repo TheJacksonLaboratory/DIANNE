@@ -196,3 +196,70 @@ class XeniumTranscripts:
         for i in range(lower[0], upper[0] + 1):
             for j in range(lower[1], upper[1] + 1):
                 yield f'{i},{j}'
+
+    def get_cell_profile(self, he_x: float, he_y: float, he_radius: float,
+                         max_radius: float = 1500.0, top_n: int = 50) -> dict:
+        """
+        Return gene counts for all transcripts within *he_radius* H&E pixels of
+        (he_x, he_y).  Uses grid 0 (finest resolution, individual transcripts).
+
+        Parameters
+        ----------
+        he_x, he_y   : centre in H&E image-pixel space
+        he_radius    : search radius in H&E pixels (clamped to max_radius)
+        max_radius   : safety cap so very large contours don't stall the server
+        top_n        : return at most this many genes (by count, descending)
+
+        Returns
+        -------
+        {'genes': {gene_name: count, …}}  — empty dict when no data available
+        """
+        if self._root is None:
+            return {'genes': {}}
+
+        he_radius = min(float(he_radius), float(max_radius))
+
+        # Transform the four corners of the bounding box to Xenium space.
+        corners = np.array([
+            [he_x - he_radius, he_y - he_radius],
+            [he_x + he_radius, he_y - he_radius],
+            [he_x - he_radius, he_y + he_radius],
+            [he_x + he_radius, he_y + he_radius],
+        ])
+        xe_corners = self._he_to_xe(corners)
+        x0_xe, y0_xe = xe_corners.min(axis=0)
+        x1_xe, y1_xe = xe_corners.max(axis=0)
+
+        # Use grid 0 (individual transcripts, not clustered).
+        grid_idx = 0
+        if grid_idx not in self.grids:
+            return {'genes': {}}
+
+        grid_meta  = self.grids[grid_idx]
+        grid_group = self._root['grids'][grid_meta['key']]
+        gene_counts: dict = {}
+
+        for loc in self._grid_locs_for_box(x0_xe, y0_xe, x1_xe, y1_xe, grid_meta['spacing']):
+            if loc not in grid_group:
+                continue
+            cell = grid_group[loc]
+            coords = np.asarray(cell['location'][:])
+            if coords.size == 0:
+                continue
+            coords   = coords[:, :2]
+            gene_ids = np.asarray(cell['gene_identity'][:]).reshape(-1)
+
+            mask = (
+                (coords[:, 0] >= x0_xe) & (coords[:, 0] < x1_xe) &
+                (coords[:, 1] >= y0_xe) & (coords[:, 1] < y1_xe)
+            )
+            for gid in gene_ids[mask]:
+                gene = self.index_to_gene.get(int(gid))
+                if gene and not any(pat in gene for pat in ('Control', 'Negative', 'Unassigned', 'Deprecated')):
+                    gene_counts[gene] = gene_counts.get(gene, 0) + 1
+
+        # Sort descending, return top_n.
+        sorted_genes = dict(
+            sorted(gene_counts.items(), key=lambda kv: -kv[1])[:top_n]
+        )
+        return {'genes': sorted_genes}

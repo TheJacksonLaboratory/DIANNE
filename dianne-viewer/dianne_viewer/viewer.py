@@ -468,6 +468,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       'patches.js',
       'visium.js',
       'draw.js',
+      'hover.js',
       'settings.js',
       'toolbar.js',
       'demo.js',
@@ -1209,6 +1210,22 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
   ].join(';');
   root.appendChild(rightControlsRow);
 
+  // ── Spatial hover/click interaction (built before cells/transcripts so callbacks exist) ──
+  const hoverInteraction = createHoverInteraction(root, viewport, BASE_URL);
+  hoverInteraction.clearSample(ACTIVE_SAMPLE);
+  hoverInteraction.setHasTranscripts(!!(SAMPLE_XENIUM_META[ACTIVE_SAMPLE] &&
+    SAMPLE_XENIUM_META[ACTIVE_SAMPLE].genes &&
+    SAMPLE_XENIUM_META[ACTIVE_SAMPLE].genes.length));
+
+  const _hoverCellCallbacks = {
+    onCellsLoaded: (cells, sample, tileKey) => hoverInteraction.addCells(cells, sample, tileKey),
+    onSampleChanged: (sample) => { /* handled by explicit clearSample in setActiveSample */ },
+  };
+  const _hoverTxCallbacks = {
+    onTranscriptsLoaded: (pts, sample, tileKey) => hoverInteraction.addTranscripts(pts, sample, tileKey),
+    onSampleChanged: (sample) => { /* handled by explicit clearSample in setActiveSample */ },
+  };
+
   const transcripts = createXeTranscripts(
     root,
     BASE_URL,
@@ -1217,7 +1234,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     viewport,
     log,
     rightControlsRow,
-    ACTIVE_SAMPLE
+    ACTIVE_SAMPLE,
+    _hoverTxCallbacks
   );
   const cells = createXeCells(
     root,
@@ -1229,7 +1247,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     rightControlsRow,
     ACTIVE_SAMPLE,
     settings,
-    ANNOTATION_LAYERS
+    ANNOTATION_LAYERS,
+    _hoverCellCallbacks
   );
   const patches = HAS_TILE_COORDS
     ? createPatchOverlay(root, viewport, settings)
@@ -1240,6 +1259,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     : null;
   if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
   const draw     = createDraw(root, viewport);
+  hoverInteraction.setDrawRef(draw);
   const toolbar  = createToolbar(root, viewport, draw, BASE_URL,
     HAS_RUN_INFERENCE ? { onRun: runInference } : null,
     (HAS_SAVE || HAS_LOAD) ? {
@@ -1299,7 +1319,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     patches,
     visiumOverlay,
     (IS_MONOCHANNEL && mono2d) ? { mono2d, monoMeta: MONO_META, isSampleMono: s => !!(SAMPLE_IS_MONO[s]) } : null,
-    { dropdown: _secChDropdown }
+    { dropdown: _secChDropdown },
+    hoverInteraction
   );
   // Initialise 2D Options button visibility for the starting sample
   toolbar.setMonoActive(!!(IS_MONOCHANNEL && SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
@@ -1583,6 +1604,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       ACTIVE_SAMPLE = sampleName;
       META = SAMPLE_META[sampleName];
       const l0Sample = META.levels[0];
+
+      // Reset spatial hover index for the new sample.
+      hoverInteraction.clearSample(sampleName);
+      hoverInteraction.setHasTranscripts(!!(SAMPLE_XENIUM_META[sampleName] &&
+        SAMPLE_XENIUM_META[sampleName].genes &&
+        SAMPLE_XENIUM_META[sampleName].genes.length));
 
       // Update tiles meta/sample BEFORE resizing viewport so that the
       // onChange listener always sees a level index valid for the new META.
