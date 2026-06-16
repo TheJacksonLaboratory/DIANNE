@@ -1,6 +1,6 @@
 
 import os
-
+import pandas as pd
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -9,7 +9,7 @@ from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, vis
 from .viewer import create_viewer
 
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
-            patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8):
+            patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_'):
 
     """Creates a viewer for the given directory path containing sample subdirectories with image files.
     Args:
@@ -23,7 +23,10 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         classifierPaths (list): Paths to classifier files.
         height (str): The height of the viewer.
         PCMA_alpha (float): The alpha value for PCMA.
-
+        multiplier (int): A multiplier value for scaling.
+        erode (bool): Whether to apply erosion.
+        drop_dots (bool): Whether to drop dots.
+        replacement (str): The string to replace dots with in sample names.
     Returns:
         viewer: A viewer object created with the valid samples and their corresponding images.
     """
@@ -66,11 +69,25 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         ts, mpp, tile_size = loadSTQParams(os.path.join(dpath, valid_samples[0]), F)
         ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N = loadDataAndPreparePatches(valid_samples, dpath if dpath.endswith('/') else dpath + '/',
                                                                                                 fname, L=None, ts=ts, mpp=mpp, N=patch_size)
+    
+        if drop_dots:
+            valid_samples = [s.replace('.', replacement) for s in valid_samples]
+            ads = {s.replace('.', replacement): ads[s] for s in ads.keys()}
+            imgs = {s.replace('.', replacement): imgs[s] for s in imgs.keys()}
+
+            patchCoordinates.index = pd.MultiIndex.from_arrays([patchCoordinates.index.get_level_values('sample').str.replace('.', replacement, regex=False),
+                                                                patchCoordinates.index.get_level_values('barcode')], names=['sample', 'barcode'])
+
+            patchesCDFs.index = pd.MultiIndex.from_arrays([patchesCDFs.index.get_level_values('sample').str.replace('.', replacement, regex=False),
+                                                        patchesCDFs.index.get_level_values('patch')], names=['sample', 'patch'])
+
+        # return valid_samples, ads, imgs, patchCoordinates, patchesCDFs
+
         sizes = {s: ads[s].shape[0] for s in valid_samples}
         print(f'Prepared {patchesCDFs.shape[0]} patches')
 
         runfn = makeRunFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, tile_size=tile_size, 
-                        patch_size=patch_size, PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=2, erode=True)
+                        patch_size=patch_size, PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode)
 
         if classifierPaths is not None:
             savefn = makeSaveFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, 
@@ -83,13 +100,19 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
             loadfn = None
             listfn = None
 
-        imgs = {s: os.path.join(dpath, s, imfname) for s in valid_samples}
+        imgs = {s: imgs[s] for s in valid_samples}
 
         return create_viewer(valid_samples, imgs, height=height, run_inference_fn=runfn, sample_sizes=sizes,
                                         save_func=savefn, load_func=loadfn, list_names_func=listfn)[1]
 
     else:
         imgs = {s: os.path.join(dpath, s, imfname) for s in valid_samples}
+    
+        if drop_dots:
+            valid_samples = [s.replace('.', replacement) for s in valid_samples]
+            imgs = {s.replace('.', replacement): imgs[s] for s in imgs.keys()}
+
+        print(valid_samples, imgs)
 
         return create_viewer(valid_samples, imgs, height=height)[1]
 

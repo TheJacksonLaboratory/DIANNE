@@ -1704,7 +1704,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       if (sampleName !== ACTIVE_SAMPLE) continue;
 
       const m = SAMPLE_META[sampleName];
-      const thumbLevel = Math.max(2, Number(m.n_levels) - 1);
+      const thumbLevel = Math.max(0, Number(m.n_levels) - 1);
       const containerW = canvas.width;   // square container
       const area = _thumbImageArea(m, thumbLevel, containerW);
 
