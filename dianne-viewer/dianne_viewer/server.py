@@ -146,6 +146,12 @@ class ViewerServer:
 
     @property
     def base_url(self):
+        import os
+        service_prefix = os.environ.get('JUPYTERHUB_SERVICE_PREFIX', '')
+        if service_prefix:
+            # Strip trailing slash, add proxy path
+            prefix = service_prefix.rstrip('/')
+            return f"{prefix}/proxy/{self.port}"
         return f"http://{self.host}:{self.port}"
 
     @property
