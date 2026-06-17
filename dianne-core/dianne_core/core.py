@@ -37,34 +37,56 @@ from joblib import Parallel, delayed
 # Data loading
 # ---------------------------------------------------------------------------
 
-def loadImFeatures(dpath):
-    df_temp = pd.read_csv(dpath, index_col=[0, 1], sep=',').xs(1, level='in_tissue')
+def loadImFeatures(dpath, fs=None):
+    if fs is None:
+        df_temp = pd.read_csv(dpath, index_col=[0, 1], sep=',', compression='gzip').xs(1, level='in_tissue')
+    else:
+        with fs.open(dpath, 'rb') as f:
+            df_temp = pd.read_csv(f, index_col=[0, 1], sep=',', compression='gzip').xs(1, level='in_tissue')
     df_temp.insert(0, 'original_barcode', df_temp.index.values)
     ad = sc.AnnData(X=df_temp.loc[:, df_temp.columns.str.contains('feat')],
                     obs=df_temp.loc[:, ~df_temp.columns.str.contains('feat')])
     return ad
 
-def loadAdImage(spath, verbose=False):
-    if os.path.isfile(f'{spath}/thumbnail.tiff'):
-        thumbnail = tifffile.imread(f'{spath}/thumbnail.tiff', is_mmstack=False, is_shaped=False)
-    elif os.path.isfile(f'{spath}/thumbnail.jpeg'):
-        thumbnail = tifffile.imread(f'{spath}/thumbnail.jpeg', is_mmstack=False, is_shaped=False)
+def loadAdImage(spath, verbose=False, fs=None):
+    if fs is None:
+        if os.path.isfile(f'{spath}/thumbnail.tiff'):
+            thumbnail = tifffile.imread(f'{spath}/thumbnail.tiff', is_mmstack=False, is_shaped=False)
+        elif os.path.isfile(f'{spath}/thumbnail.jpeg'):
+            thumbnail = tifffile.imread(f'{spath}/thumbnail.jpeg', is_mmstack=False, is_shaped=False)
+        else:
+            raise FileNotFoundError(f"Thumbnail image not found in {spath}. Please check the path.")
+        if verbose:
+            print(thumbnail.shape)
+        with open(f'{spath}/grid/grid.json', 'r') as f:
+            d = json.load(f)
+        if verbose:
+            print(d)
+        grid = pd.read_csv(f'{spath}/grid/grid.csv', index_col=0, header=None)
     else:
-        raise FileNotFoundError(f"Thumbnail image not found in {spath}. Please check the path.")
-    if verbose:
-        print(thumbnail.shape)
-    with open(f'{spath}/grid/grid.json', 'r') as f:
-        d = json.load(f)
-    if verbose:
-        print(d)
-    grid = pd.read_csv(f'{spath}/grid/grid.csv', index_col=0, header=None)
+        if fs.isfile(f'{spath}/thumbnail.tiff'.replace('//', '/')):
+            with fs.open(f'{spath}/thumbnail.tiff'.replace('//', '/'), 'rb') as f:
+                thumbnail = tifffile.imread(f, is_mmstack=False, is_shaped=False)
+        elif fs.isfile(f'{spath}/thumbnail.jpeg'.replace('//', '/')):
+            with fs.open(f'{spath}/thumbnail.jpeg'.replace('//', '/'), 'rb') as f:
+                thumbnail = tifffile.imread(f, is_mmstack=False, is_shaped=False)
+        else:
+            raise FileNotFoundError(f"Thumbnail image not found in {spath}. Please check the path.")
+        if verbose:
+            print(thumbnail.shape)
+        with fs.open(f'{spath}/grid/grid.json'.replace('//', '/'), 'r') as f:
+            d = json.load(f)
+        if verbose:
+            print(d)
+        with fs.open(f'{spath}/grid/grid.csv'.replace('//', '/'), 'r') as f:
+            grid = pd.read_csv(f, index_col=0, header=None)
     image = {'library_id': {'images': {'lowres': thumbnail},
                             'metadata': {'chemistry_description': None, 'software_version': None},
                             'scalefactors': {'tissue_lowres_scalef': thumbnail.shape[0] / d['y'],
                                              'spot_diameter_fullres': d['spot_diameter_fullres']}}}, grid.index.values, grid[[5, 4]].values
     return image
 
-def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbose=False, useInputImagePath=False):
+def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbose=False, useInputImagePath=False, fs=None):
     '''Load or prepare AnnData object and image from the specified path.
 
     Parameters
@@ -90,31 +112,55 @@ def loadAd(spath, L=None, fname='img.data.ctranspath-1.h5ad', suffix=None, verbo
         The loaded image as a NumPy array (if L is specified), or the path to the image file (if L is None).
     '''
 
-    if useInputImagePath:
-        infoPath = imagePath = os.path.join(spath, 'info.json')
-        with open(infoPath, 'r') as f:
-            imagePath = json.load(f)['image']
-    else:
-        imagePath = os.path.join(spath, 'image.ome.tiff')
-    if L is not None:
-        img = tifffile.imread(imagePath, level=L)
-        img = np.moveaxis(np.moveaxis(img, 0, 1), 1, 2)
-        if verbose:
-            print(img.shape)
-    else:
-        img = imagePath
+    if fs is None:
+        if useInputImagePath:
+            infoPath = imagePath = os.path.join(spath, 'info.json')
+            with open(infoPath, 'r') as f:
+                imagePath = json.load(f)['image']
+        else:
+            imagePath = os.path.join(spath, 'image.ome.tiff')
+        if L is not None:
+            img = tifffile.imread(imagePath, level=L)
+            img = np.moveaxis(np.moveaxis(img, 0, 1), 1, 2)
+            if verbose:
+                print(img.shape)
+        else:
+            img = imagePath
 
-    if fname.endswith('.h5ad'):
-        ad = sc.read_h5ad(spath + fname)
-    elif fname.endswith('.gz'):
-        ad = loadImFeatures(spath + fname)
+        if fname.endswith('.h5ad'):
+            ad = sc.read_h5ad(spath + fname)
+        elif fname.endswith('.gz'):
+            ad = loadImFeatures(spath + fname)
+        else:
+            raise ValueError(f"Unknown file format for {fname}.")
     else:
-        raise ValueError(f"Unknown file format for {fname}.")
+        if useInputImagePath:
+            infoPath = os.path.join(spath, 'info.json')
+            with fs.open(infoPath, 'r') as f:
+                imagePath = json.load(f)['image']
+        else:
+            imagePath = os.path.join(spath, 'image.ome.tiff')
+        if L is not None:
+            with fs.open(imagePath, 'rb') as f:
+                img = tifffile.imread(f, level=L)
+            img = np.moveaxis(np.moveaxis(img, 0, 1), 1, 2)
+            if verbose:
+                print(img.shape)
+        else:
+            img = imagePath
+
+        if fname.endswith('.h5ad'):
+            with fs.open(os.path.join(spath, fname), 'rb') as f:
+                ad = sc.read_h5ad(f)
+        elif fname.endswith('.gz'):
+            ad = loadImFeatures(os.path.join(spath, fname), fs=fs)
+        else:
+            raise ValueError(f"Unknown file format for {fname}.")
 
     if suffix is not None:
         ad.obs.index = ad.obs.index + suffix
 
-    image = loadAdImage(spath, verbose=verbose)
+    image = loadAdImage(spath, verbose=verbose, fs=fs)
     ad.uns['spatial'] = image[0]
     df_temp = pd.DataFrame(index=image[1], data=image[2])
     if 'original_barcode' in ad.obs.columns:
@@ -224,7 +270,7 @@ def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
 
     return df
 
-def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0.25, N=4):
+def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0.25, N=4, fs=None):
     """Load the STQ data for each sample, prepare patch coordinates and get patch SAMPLER representations.
 
     Parameters
@@ -252,7 +298,7 @@ def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0
     ads = {}
     imgs = {}
     for sample in tqdm(samples):
-        ads[sample], imgs[sample] = loadAd(f'{outsSTQpath}{sample}/', fname=fname, L=L)
+        ads[sample], imgs[sample] = loadAd(f'{outsSTQpath}{sample}/', fname=fname, L=L, fs=fs)
 
     patchCoordinates = pd.concat(
         [preparePatchesWSI(ads[sample].obs, N=N, spacing=ts / mpp, sample_id=sample) for sample in tqdm(samples)],

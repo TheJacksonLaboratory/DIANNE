@@ -176,9 +176,13 @@ def get_tile_mask_means3(mfile, ts, mpp, coords, scale=None):
         objects = [0] * len(coords)
     return m_labeled, means, objects
 
-def loadSTQParams(path, F):
-    with open(path + '/grid/grid.json', 'r') as tempFile:
-        info = json.loads(tempFile.read())
+def loadSTQParams(path, F, fs=None):
+    if fs is None:
+        with open(path + '/grid/grid.json', 'r') as tempFile:
+            info = json.loads(tempFile.read())
+    else:
+        with fs.open(path + '/grid/grid.json', 'r') as tempFile:
+            info = json.loads(tempFile.read())
     ts = info['spot_horizontal_spacing'] # tile spacing (center-to-center tile distance) in um
     d = info['spot_diamter'] if 'spot_diamter' in info else info['spot_diameter'] # spot diameter in um
     mpp = d / info['spot_diameter_fullres'] # pixel size in um

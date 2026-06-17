@@ -9,7 +9,7 @@ from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, vis
 from .viewer import create_viewer
 
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
-            patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_'):
+            patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_', fs=None):
 
     """Creates a viewer for the given directory path containing sample subdirectories with image files.
     Args:
@@ -27,11 +27,15 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         erode (bool): Whether to apply erosion.
         drop_dots (bool): Whether to drop dots.
         replacement (str): The string to replace dots with in sample names.
+        fs: A file system object for handling file operations, if needed.
     Returns:
         viewer: A viewer object created with the valid samples and their corresponding images.
     """
 
-    samples_ = sorted([s for s in os.listdir(os.path.join(dpath)) if not s.startswith("pipeline") and os.path.isdir(os.path.join(dpath, s))])
+    if fs is None:
+        samples_ = sorted([s for s in os.listdir(os.path.join(dpath)) if not s.startswith("pipeline") and os.path.isdir(os.path.join(dpath, s))])
+    else:
+        samples_ = sorted([s for s in fs.listdir(os.path.join(dpath)) if not s.startswith("pipeline") and fs.isdir(os.path.join(dpath, s))])
 
     if samples is not None:
         samples_ = [s for s in samples_ if s in samples]
@@ -40,10 +44,16 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
     valid_samples = []
     for s in samples_:
         img_path = os.path.join(dpath, s, imfname)
-        if os.path.isfile(img_path):
-            valid_samples.append(s)
+        if fs is None:
+            if os.path.isfile(img_path):
+                valid_samples.append(s)
+            else:
+                print(f"Warning: Sample '{s}' does not have the expected image file '{imfname}' and will be skipped.")
         else:
-            print(f"Warning: Sample '{s}' does not have the expected image file '{imfname}' and will be skipped.")
+            if fs.isfile(img_path):
+                valid_samples.append(s)
+            else:
+                print(f"Warning: Sample '{s}' does not have the expected image file '{imfname}' and will be skipped.")
 
     if not valid_samples:
         raise ValueError("No valid samples found with the expected image file.")
@@ -55,20 +65,31 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         
         fname = template1.format(model=model, F=F)
         # Verify that the first (arbitrary sample) has the expected feature file
-        if not os.path.isfile(os.path.join(dpath, valid_samples[0], fname)):
-            # Try the second template
-            fname = template2.format(model=model, F=F)
+        if fs is None:
             if not os.path.isfile(os.path.join(dpath, valid_samples[0], fname)):
-                raise ValueError(f"Expected feature file not found for the first sample using either template: "
-                f"'{template1.format(model=model, F=F)}' or '{template2.format(model=model, F=F)}'. Please check the filenames and templates.")
+                # Try the second template
+                fname = template2.format(model=model, F=F)
+                if not os.path.isfile(os.path.join(dpath, valid_samples[0], fname)):
+                    raise ValueError(f"Expected feature file not found for the first sample using either template: "
+                    f"'{template1.format(model=model, F=F)}' or '{template2.format(model=model, F=F)}'. Please check the filenames and templates.")
+        else:
+            if not fs.isfile(os.path.join(dpath, valid_samples[0], fname)):
+                # Try the second template
+                fname = template2.format(model=model, F=F)
+                if not fs.isfile(os.path.join(dpath, valid_samples[0], fname)):
+                    raise ValueError(f"Expected feature file not found for the first sample using either template: "
+                    f"'{template1.format(model=model, F=F)}' or '{template2.format(model=model, F=F)}'. Please check the filenames and templates.")
 
         # Verify that each sample has the expected feature file, otherwise filter out from the list
-        valid_samples = [s for s in valid_samples if os.path.isfile(os.path.join(dpath, s, fname))]
+        if fs is None:
+            valid_samples = [s for s in valid_samples if os.path.isfile(os.path.join(dpath, s, fname))]
+        else:
+            valid_samples = [s for s in valid_samples if fs.isfile(os.path.join(dpath, s, fname))]
         
         # number of tiles, in each dimension, to include in a patch (e.g. 8 means 8x8=64 tiles per patch)
-        ts, mpp, tile_size = loadSTQParams(os.path.join(dpath, valid_samples[0]), F)
+        ts, mpp, tile_size = loadSTQParams(os.path.join(dpath, valid_samples[0]), F, fs=fs)
         ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N = loadDataAndPreparePatches(valid_samples, dpath if dpath.endswith('/') else dpath + '/',
-                                                                                                fname, L=None, ts=ts, mpp=mpp, N=patch_size)
+                                                                                                fname, L=None, ts=ts, mpp=mpp, N=patch_siz, fs=fs)
     
         if drop_dots:
             valid_samples = [s.replace('.', replacement) for s in valid_samples]
