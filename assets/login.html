@@ -24,24 +24,26 @@
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+    font-size: 18px;
   }
 
   /* ── top bar ── */
   .top-bar {
     background: var(--white);
     border-bottom: 1px solid var(--divider);
-    padding: 12px 40px;
+    padding: 18px 56px;
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
-  .top-bar-logos { display: flex; align-items: center; gap: 28px; }
-  .top-bar-logos img { height: 32px; object-fit: contain; }
+  .top-bar-logos { display: flex; align-items: center; gap: 36px; }
+  .top-bar-logos img.logo-dianne { height: 72px; object-fit: contain; }
+  .top-bar-logos img.logo-pdxnet { height: 48px; object-fit: contain; }
   .top-bar-logos .divider-v {
-    width: 1px; height: 28px; background: var(--divider);
+    width: 1px; height: 40px; background: var(--divider);
   }
   .top-bar-tag {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 500;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -54,14 +56,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 48px 24px;
+    padding: 64px 32px;
   }
 
   .login-card {
     background: var(--white);
-    border-radius: 16px;
-    box-shadow: 0 4px 24px rgba(44,62,80,0.08);
-    max-width: 880px;
+    border-radius: 20px;
+    box-shadow: 0 4px 32px rgba(44,62,80,0.08);
+    max-width: 1100px;
     width: 100%;
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -70,7 +72,7 @@
 
   /* ── left panel ── */
   .panel-left {
-    padding: 52px 44px;
+    padding: 64px 56px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -78,18 +80,18 @@
   }
 
   .dianne-logo {
-    height: 52px;
+    height: 120px;
     object-fit: contain;
     align-self: flex-start;
-    margin-bottom: 28px;
+    margin-bottom: 36px;
   }
 
   .panel-left h1 {
     font-family: 'DM Serif Display', serif;
-    font-size: 22px;
+    font-size: 28px;
     line-height: 1.3;
     color: var(--slate);
-    margin-bottom: 16px;
+    margin-bottom: 20px;
   }
 
   .panel-left h1 em {
@@ -98,32 +100,32 @@
   }
 
   .panel-left p {
-    font-size: 14px;
-    line-height: 1.7;
+    font-size: 16px;
+    line-height: 1.75;
     color: var(--slate-mid);
-    margin-bottom: 12px;
+    margin-bottom: 16px;
   }
 
   .discover-badge {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     background: var(--coral-pale);
     border: 1px solid var(--coral-light);
-    border-radius: 8px;
-    padding: 10px 14px;
-    margin-top: 8px;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-top: 12px;
   }
   .discover-badge .dot {
-    width: 8px; height: 8px;
+    width: 10px; height: 10px;
     border-radius: 50%;
     background: var(--coral);
     flex-shrink: 0;
   }
   .discover-badge span {
-    font-size: 12.5px;
+    font-size: 14px;
     color: var(--slate-mid);
-    line-height: 1.4;
+    line-height: 1.5;
   }
   .discover-badge strong { color: var(--slate); }
 
@@ -131,40 +133,40 @@
   .panel-right {
     background: var(--coral-pale);
     border-left: 1px solid var(--coral-light);
-    padding: 52px 44px;
+    padding: 64px 56px;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    gap: 24px;
+    gap: 28px;
   }
 
   .panel-right h2 {
     font-family: 'DM Serif Display', serif;
-    font-size: 20px;
+    font-size: 26px;
     color: var(--slate);
     text-align: center;
   }
 
   .panel-right p {
-    font-size: 13px;
+    font-size: 15px;
     color: var(--slate-light);
     text-align: center;
-    line-height: 1.6;
-    max-width: 240px;
+    line-height: 1.7;
+    max-width: 280px;
   }
 
   .btn-signin {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     background: var(--coral);
     color: var(--white);
     border: none;
-    border-radius: 10px;
-    padding: 14px 28px;
+    border-radius: 12px;
+    padding: 18px 36px;
     font-family: 'DM Sans', sans-serif;
-    font-size: 15px;
+    font-size: 18px;
     font-weight: 500;
     cursor: pointer;
     text-decoration: none;
@@ -179,7 +181,7 @@
   .btn-signin svg { flex-shrink: 0; }
 
   .signin-note {
-    font-size: 11.5px;
+    font-size: 13px;
     color: var(--slate-light);
     text-align: center;
   }
@@ -187,8 +189,8 @@
   /* ── footer ── */
   footer {
     text-align: center;
-    padding: 20px;
-    font-size: 12px;
+    padding: 24px;
+    font-size: 13px;
     color: var(--slate-light);
     border-top: 1px solid var(--divider);
     background: var(--white);
@@ -199,15 +201,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 20px;
-    margin-bottom: 10px;
+    gap: 28px;
+    margin-bottom: 12px;
   }
-  footer .footer-logos img { height: 22px; opacity: 0.75; }
+  footer .footer-logos img.logo-access { height: 32px; opacity: 0.85; }
+  footer .footer-logos img.logo-pdxnet { height: 28px; opacity: 0.75; }
 
-  @media (max-width: 680px) {
+  @media (max-width: 780px) {
     .login-card { grid-template-columns: 1fr; }
     .panel-right { border-left: none; border-top: 1px solid var(--coral-light); }
-    .top-bar { padding: 12px 20px; }
+    .top-bar { padding: 14px 24px; }
     .top-bar-tag { display: none; }
   }
 </style>
@@ -217,9 +220,13 @@
 <!-- Top bar -->
 <div class="top-bar">
   <div class="top-bar-logos">
-    <img src="https://github.com/TheJacksonLaboratory/DIANNE/raw/main/docs/logo.svg" alt="DIANNE">
+    <img class="logo-dianne"
+         src="https://github.com/TheJacksonLaboratory/DIANNE/raw/main/docs/logo.svg"
+         alt="DIANNE">
     <div class="divider-v"></div>
-    <img src="http://static1.squarespace.com/static/5a0afba4f43b5598bcde8159/t/5a1410cb71c10bfdba6cc522/1732633407109/pdxnet-logo.png" alt="PDXNet">
+    <img class="logo-pdxnet"
+         src="http://static1.squarespace.com/static/5a0afba4f43b5598bcde8159/t/5a1410cb71c10bfdba6cc522/1732633407109/pdxnet-logo.png"
+         alt="PDXNet">
   </div>
   <span class="top-bar-tag">Jackson Laboratory · Computational Sciences</span>
 </div>
@@ -266,8 +273,7 @@
       <p>Use your Google account to access the platform. Contact your administrator to request access.</p>
 
       <a href="/hub/oauth_login" class="btn-signin">
-        <!-- Google "G" icon -->
-        <svg width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+        <svg width="20" height="20" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
           <path fill="#fff" d="M44.5 20H24v8.5h11.8C34.7 33.9 30.1 37 24 37c-7.2 0-13-5.8-13-13s5.8-13 13-13c3.1 0 5.9 1.1 8.1 2.9l6.4-6.4C34.6 4.1 29.6 2 24 2 11.8 2 2 11.8 2 24s9.8 22 22 22c11 0 21-8 21-22 0-1.3-.2-2.7-.5-4z"/>
         </svg>
         Continue with Google
@@ -282,8 +288,12 @@
 <!-- Footer -->
 <footer>
   <div class="footer-logos">
-    <img src="https://access-ci.org/wp-content/uploads/2022/08/access-ci-color.png" alt="ACCESS-CI">
-    <img src="http://static1.squarespace.com/static/5a0afba4f43b5598bcde8159/t/5a1410cb71c10bfdba6cc522/1732633407109/pdxnet-logo.png" alt="PDXNet">
+    <img class="logo-access"
+         src="https://access-ci.org/wp-content/uploads/2024/02/ACCESS-logo-1200x675-1.png"
+         alt="ACCESS-CI">
+    <img class="logo-pdxnet"
+         src="http://static1.squarespace.com/static/5a0afba4f43b5598bcde8159/t/5a1410cb71c10bfdba6cc522/1732633407109/pdxnet-logo.png"
+         alt="PDXNet">
   </div>
   Developed by <a href="https://www.jax.org" target="_blank">The Jackson Laboratory</a> Computational Sciences ·
   <a href="https://github.com/TheJacksonLaboratory/DIANNE" target="_blank">GitHub</a> ·
