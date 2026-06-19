@@ -37,8 +37,8 @@
     justify-content: space-between;
   }
   .top-bar-logos { display: flex; align-items: center; gap: 36px; }
-  .top-bar-logos img.logo-dianne { height: 72px; object-fit: contain; }
-  .top-bar-logos img.logo-pdxnet { height: 48px; object-fit: contain; }
+  .top-bar-logos img.logo-dianne { height: 32px; object-fit: contain; }
+  .top-bar-logos img.logo-pdxnet { height: 32px; object-fit: contain; }
   .top-bar-logos .divider-v {
     width: 1px; height: 40px; background: var(--divider);
   }
@@ -80,7 +80,7 @@
   }
 
   .dianne-logo {
-    height: 120px;
+    height: 160px;
     object-fit: contain;
     align-self: flex-start;
     margin-bottom: 36px;
@@ -115,7 +115,7 @@
     border-radius: 10px;
     padding: 14px 18px;
     margin-top: 12px;
-  }
+  } 
   .discover-badge .dot {
     width: 10px; height: 10px;
     border-radius: 50%;
@@ -204,9 +204,9 @@
     gap: 28px;
     margin-bottom: 12px;
   }
-  footer .footer-logos img.logo-access { height: 32px; opacity: 0.85; }
-  footer .footer-logos img.logo-pdxnet { height: 28px; opacity: 0.75; }
-
+  .panel-left .footer-logos { margin-top: 28px; display: flex; align-items: center; gap: 20px; }
+  .panel-left .footer-logos img.logo-access { height: 150px; opacity: 0.85; }
+  .panel-left .footer-logos img.logo-pdxnet { height: 28px; opacity: 0.75; }
   @media (max-width: 780px) {
     .login-card { grid-template-columns: 1fr; }
     .panel-right { border-left: none; border-top: 1px solid var(--coral-light); }
@@ -217,19 +217,6 @@
 {% endblock %}
 
 {% block main %}
-<!-- Top bar -->
-<div class="top-bar">
-  <div class="top-bar-logos">
-    <img class="logo-dianne"
-         src="https://github.com/TheJacksonLaboratory/DIANNE/raw/main/docs/logo.svg"
-         alt="DIANNE">
-    <div class="divider-v"></div>
-    <img class="logo-pdxnet"
-         src="http://static1.squarespace.com/static/5a0afba4f43b5598bcde8159/t/5a1410cb71c10bfdba6cc522/1732633407109/pdxnet-logo.png"
-         alt="PDXNet">
-  </div>
-  <span class="top-bar-tag">Jackson Laboratory · Computational Sciences</span>
-</div>
 
 <!-- Main -->
 <div class="login-wrapper">
@@ -242,13 +229,13 @@
              src="https://github.com/TheJacksonLaboratory/DIANNE/raw/main/docs/logo.svg"
              alt="DIANNE logo">
 
-        <h1>Segmentation-free localization of<br><em>histology differential attributes</em></h1>
+        <h1><em>A Collaborative Platform for Histology and Spatial Data Analysis</em></h1>
 
         <p>
-          DIANNE provides interactive and static workflows for weakly-supervised spatial
+          This app provides interactive workflows for weakly-supervised spatial
           classification on whole slide images (H&amp;E, IHC, mIF) and spatial transcriptomics
           data (Visium, Xenium). Real-time human-in-the-loop labeling enables rapid model
-          training, with inference across whole slide images in under 30 seconds per slide.
+          training, with inference across whole slide images.
         </p>
 
         <p>
@@ -260,9 +247,18 @@
         <div class="discover-badge">
           <div class="dot"></div>
           <span>
-            Supported by the <strong>ACCESS-CI Discover</strong> allocation —
+            Supported by the <strong>ACCESS-CI Discover MED260045</strong> allocation —
             cloud resources provided via Jetstream2.
           </span>
+        </div>
+
+        <div class="footer-logos">
+            <img class="logo-access"
+                src="https://access-ci.org/wp-content/uploads/2024/02/ACCESS-logo-1200x675-1.png"
+                alt="ACCESS-CI">
+            <img class="logo-pdxnet"
+                src="http://static1.squarespace.com/static/5a0afba4f43b5598bcde8159/t/5a1410cb71c10bfdba6cc522/1732633407109/pdxnet-logo.png"
+                alt="PDXNet">
         </div>
       </div>
     </div>
@@ -270,7 +266,7 @@
     <!-- Right: sign in -->
     <div class="panel-right">
       <h2>Sign in to DIANNE</h2>
-      <p>Use your Google account to access the platform. Contact your administrator to request access.</p>
+      <p>Use your Google account to access the platform. Contact <a href="mailto:Sergii.Domanskyi@jax.org">Sergii.Domanskyi@jax.org</a> to request access.</p>
 
       <a href="/hub/oauth_login" class="btn-signin">
         <svg width="20" height="20" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
@@ -287,14 +283,6 @@
 
 <!-- Footer -->
 <footer>
-  <div class="footer-logos">
-    <img class="logo-access"
-         src="https://access-ci.org/wp-content/uploads/2024/02/ACCESS-logo-1200x675-1.png"
-         alt="ACCESS-CI">
-    <img class="logo-pdxnet"
-         src="http://static1.squarespace.com/static/5a0afba4f43b5598bcde8159/t/5a1410cb71c10bfdba6cc522/1732633407109/pdxnet-logo.png"
-         alt="PDXNet">
-  </div>
   Developed by <a href="https://www.jax.org" target="_blank">The Jackson Laboratory</a> Computational Sciences ·
   <a href="https://github.com/TheJacksonLaboratory/DIANNE" target="_blank">GitHub</a> ·
   Powered by <a href="https://access-ci.org" target="_blank">ACCESS-CI</a> Jetstream2
