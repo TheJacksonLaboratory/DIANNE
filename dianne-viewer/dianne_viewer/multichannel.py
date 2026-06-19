@@ -114,7 +114,7 @@ class MultichannelImage:
             data    = arr[c][()].astype(np.float32)
             nonzero = data[data > 0]
             if nonzero.size > 0:
-                p1, p99   = float(np.percentile(nonzero, 1)), float(np.percentile(nonzero, 99))
+                p1, p99   = float(np.percentile(nonzero, 1)), float(np.percentile(nonzero, 99.99))
                 raw_min   = float(data.min())
                 raw_max   = float(data.max())
             else:
