@@ -89,7 +89,7 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         # number of tiles, in each dimension, to include in a patch (e.g. 8 means 8x8=64 tiles per patch)
         ts, mpp, tile_size = loadSTQParams(os.path.join(dpath, valid_samples[0]), F, fs=fs)
         ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N = loadDataAndPreparePatches(valid_samples, dpath if dpath.endswith('/') else dpath + '/',
-                                                                                                fname, L=None, ts=ts, mpp=mpp, N=patch_siz, fs=fs)
+                                                                                                fname, L=None, ts=ts, mpp=mpp, N=patch_size, fs=fs)
     
         if drop_dots:
             valid_samples = [s.replace('.', replacement) for s in valid_samples]
