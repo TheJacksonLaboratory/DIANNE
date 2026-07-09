@@ -342,6 +342,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       if bundle_path is None:
         continue
 
+      # Proceed only if at least one of files cells.zarr.zip, cells_fast.zarr.zip, or transcripts.zarr.zip exists
+      if not any((Path(bundle_path) / fname).exists() for fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']):
+        continue
+
       matrix_path = matrices.get(sample)
       sample_annotations = _layer0['data'].get(sample)
       sample_colors = _layer0['colors']
