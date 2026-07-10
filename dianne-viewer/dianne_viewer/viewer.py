@@ -1809,7 +1809,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       const m = SAMPLE_META[sampleName];
       // Print number of levels for debugging; in practice we expect 4-6 levels for a typical pyramidal OME-TIFF
       console.log(`Sample ${sampleName} has ${m.n_levels} levels`);
-      const thumbLevel = Math.max(2, Number(m.n_levels) - 1);
+      const thumbLevel = Math.max(0, Number(m.n_levels) - 1);
       console.log(`Using thumbnail level ${thumbLevel} for sample ${sampleName}`);
       const img = document.createElement('img');
       img.alt = sampleName;
