@@ -149,7 +149,8 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         return create_viewer(valid_samples, imgs, height=height)[1]
 
 def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_size=8, PCMA_alpha=0.8, multiplier=2,
-                body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv', classifierPaths=None, load_features=False):
+                body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv', classifierPaths=None, load_features=False,
+                sample_metadata=None):
 
     """Views KOMP STQ data using the DIANNE viewer.
     Similar to viewSTQ, but specifically for KOMP data. It loads the necessary parameters and prepares the patches for viewing.
@@ -192,7 +193,8 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
     drawings = create_viewer(samples, imgs, height="800px", run_inference_fn=runfn, sample_sizes=sizes,
                                     xenium_mpp=mpp, max_cells=max_cells, matrices=matrices, xenium_bundle_paths=bundle_paths,
                                     annotations=all_annotations, category_colors=annotationsPalette,
-                                    save_func=savefn, load_func=loadfn, list_names_func=listfn)[1]
+                                    save_func=savefn, load_func=loadfn, list_names_func=listfn,
+                                    sample_metadata=sample_metadata)[1]
     return drawings
 
 

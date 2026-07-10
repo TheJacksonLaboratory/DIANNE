@@ -1,0 +1,61 @@
+<div id="iv-shell" style="
+  width: __WIDTH__;
+  height: __HEIGHT__;
+  display: flex;
+  align-items: stretch;
+  gap: 0px;
+  position: relative; /* anchor absolute footer controls */
+">
+  <div id="iv-samples" style="
+    width: 10%;
+    min-width: 170px;
+    max-width: 260px;
+    height: calc(100% - 58px);
+    overflow-y: auto;
+    background: #161616;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    box-sizing: border-box;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative; /* allow absolute footer controls */
+  "></div>
+  <div id="iv-main" style="
+    width: 90%;
+    min-width: 0;
+    position: relative; /* allow absolute footer controls */
+    display: flex; flex-direction: column; /* keep status bar at bottom */
+  ">
+<div id="iv-root" style="
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  height: auto;
+  overflow: hidden;
+  background: #111;
+  border: 1px solid #444;
+  border-radius: 6px 6px 0 0;
+"></div>
+<div id="iv-status" style="
+  font: 12px monospace;
+  padding: 3px 8px;
+  background: #1e1e1e;
+  color: #4fc;
+  border: 1px solid #444;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  margin-bottom: 2px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+"><span id="iv-status-left">initializing…</span><span id="iv-status-coord" style="color:#8cf;margin-left:12px;white-space:nowrap;"></span><span id="iv-status-net" style="display:inline-flex;align-items:center;gap:5px;font-size:10px;white-space:nowrap;margin-left:12px;" title="↑ pending tile requests  ↓ data received last 60 s"><span style="color:#fa6;">↑</span><span style="display:inline-block;width:32px;height:5px;background:#2a2a2a;border-radius:3px;overflow:hidden;vertical-align:middle;"><span id="iv-gauge-pend-fill" style="display:block;height:100%;width:0%;background:#fa6;border-radius:3px;transition:width 0.4s;"></span></span><span id="iv-gauge-pend-txt" style="color:#888;min-width:14px;">0</span><span style="color:#4fa;margin-left:3px;">↓</span><span style="display:inline-block;width:32px;height:5px;background:#2a2a2a;border-radius:3px;overflow:hidden;vertical-align:middle;"><span id="iv-gauge-rx-fill" style="display:block;height:100%;width:0%;background:#4fa;border-radius:3px;transition:width 0.4s;"></span></span><span id="iv-gauge-rx-txt" style="color:#888;min-width:32px;">–</span></span><span id="iv-status-perf" style="color:#666;font-size:11px;white-space:nowrap;"></span></div>
+  </div>
+</div>
+
+<script>
+(function () {
+__JS__
+})();
+</script>
