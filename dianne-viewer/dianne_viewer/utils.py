@@ -7,6 +7,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dianne_utils.utils import loadDataAndPreparePatches, loadSTQParams
 from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
 from .viewer import create_viewer
+import matplotlib.colors as mcolors
+import pickle
 
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
             patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_', fs=None):
@@ -136,6 +138,52 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         print(valid_samples, imgs)
 
         return create_viewer(valid_samples, imgs, height=height)[1]
+
+def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_size=8, PCMA_alpha=0.8, multiplier=2,
+                body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv', classifierPaths=None, load_features=False):
+
+    """Views KOMP STQ data using the DIANNE viewer.
+    Similar to viewSTQ, but specifically for KOMP data. It loads the necessary parameters and prepares the patches for viewing.
+    See viewSTQ for more details on the parameters.
+    """
+    
+    ts, mpp, tile_size = loadSTQParams(dataPath + samples[0], F)
+    if load_features:
+        fname = f'features/false-{F}-{model}_features.tsv.gz'
+        ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N = loadDataAndPreparePatches(samples, 
+                                                                dataPath, fname, L=None, ts=ts, mpp=mpp, N=patch_size)
+        print(f'Prepared {patchesCDFs.shape[0]} patches')
+        sizes = {s: ads[s].shape[0] for s in samples}
+        runfn = makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, tile_size=tile_size, patch_size=patch_size,
+                                 PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier)
+        savefn = makeSaveFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, tile_size=tile_size,
+                                   patch_size=patch_size, body_overlap=body_overlap, classifierPaths=classifierPaths)
+        loadfn = makeLoadFn(classifierPaths)
+        listfn = makeListFn(classifierPaths)
+    else:
+        imgs = {s: iname for s in samples if os.path.isfile((iname:=f'{dataPath}/{s}/image.ome.tiff'))}
+        samples = [s for s in samples if s in imgs.keys()]
+        runfn, savefn, loadfn, listfn, sizes = None, None, None, None, None
+    
+    matrices = {s: idm for s in samples}
+    bundle_paths = {s:f'{dataPath}{s}' for s  in samples}
+    all_annotations = {}
+    for sample in samples:
+        try:
+            with open(f'{dataPath}{sample}/cells-index.pkl', 'rb') as f:
+                index = pickle.load(f)
+            all_annotations[sample] = pd.Categorical(['Cell expanded from nucleus']*len(index))
+        except:
+            pass
+    
+    uannotations = sorted(set(a for sample in all_annotations.keys() for a in all_annotations[sample].unique())) 
+    annotationsPalette = {a: mcolors.to_hex(color) for i, a in enumerate(uannotations)}
+    
+    drawings = create_viewer(samples, imgs, height="800px", run_inference_fn=runfn, sample_sizes=sizes,
+                                    xenium_mpp=mpp, max_cells=max_cells, matrices=matrices, xenium_bundle_paths=bundle_paths,
+                                    annotations=all_annotations, category_colors=annotationsPalette,
+                                    save_func=savefn, load_func=loadfn, list_names_func=listfn)[1]
+    return drawings
 
 
 def viewMIQ(dpath, imfname='adjusted-all-channels.ome.tif', samples=None, height="800px",
