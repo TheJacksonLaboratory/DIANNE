@@ -10,6 +10,15 @@ from .viewer import create_viewer
 import matplotlib.colors as mcolors
 import pickle
 
+import tifffile
+import zarr
+
+def is_pyramidal(path):
+    store = tifffile.imread(path, aszarr=True)
+    z = zarr.open(store, mode='r')
+    store.close()
+    return isinstance(z, zarr.hierarchy.Group)
+
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
             patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_', fs=None):
 
@@ -146,7 +155,10 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
     Similar to viewSTQ, but specifically for KOMP data. It loads the necessary parameters and prepares the patches for viewing.
     See viewSTQ for more details on the parameters.
     """
-    
+
+    imgs = {s: iname for s in samples if os.path.isfile((iname:=f'{dataPath}/{s}/image.ome.tiff')) and is_pyramidal(iname)}
+    samples = [s for s in samples if s in imgs.keys()]
+
     ts, mpp, tile_size = loadSTQParams(dataPath + samples[0], F)
     if load_features:
         fname = f'features/false-{F}-{model}_features.tsv.gz'
@@ -161,8 +173,6 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
         loadfn = makeLoadFn(classifierPaths)
         listfn = makeListFn(classifierPaths)
     else:
-        imgs = {s: iname for s in samples if os.path.isfile((iname:=f'{dataPath}/{s}/image.ome.tiff'))}
-        samples = [s for s in samples if s in imgs.keys()]
         runfn, savefn, loadfn, listfn, sizes = None, None, None, None, None
     
     matrices = {s: idm for s in samples}
