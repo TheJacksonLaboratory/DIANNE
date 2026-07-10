@@ -29,6 +29,8 @@ function createMetadataPanel({
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
   const COL_MAX_WIDTH  = 280;   // px — maximum width of each metadata column
   const FILTER_BAR_MAX_HEIGHT = 80;  // px — max height of the collapsed filter grid
+  const PIE_MAX_LABELS = 10;   // max slices shown in the value-count pie chart tooltip
+  const PIE_SIZE      = 140;   // px — diameter of the pie chart canvas
   // ── Determine if any sample has metadata ─────────────────────────────────
   const _hasAnyMeta = SAMPLES.some(s => {
     const m = SAMPLE_METADATA[s];
@@ -167,6 +169,140 @@ function createMetadataPanel({
   const _colMeta = {};
   for (const k of _allKeys) _colMeta[k] = _colAnalysis(k);
 
+  // ── Value-count cache for pie chart ───────────────────────────────────
+  // _colValueCounts[key] = [ {label, count}, … ] sorted desc, top PIE_MAX_LABELS
+  const _colValueCounts = {};
+  for (const k of _allKeys) {
+    const counts = {};
+    for (const s of SAMPLES) {
+      const m = SAMPLE_METADATA[s] || {};
+      if (!Object.prototype.hasOwnProperty.call(m, k)) continue;
+      const v = m[k] === null || m[k] === undefined ? '(blank)' : String(m[k]);
+      counts[v] = (counts[v] || 0) + 1;
+    }
+    const sorted = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, PIE_MAX_LABELS);
+    _colValueCounts[k] = sorted.map(([label, count]) => ({ label, count }));
+  }
+
+  // ── Shared pie-chart tooltip ───────────────────────────────────────────
+  // Palette of 10 distinct muted colours
+  const _PIE_PALETTE = [
+    '#4fa3e0','#e07b4f','#6dbf67','#b06dbf','#e0c14f',
+    '#4fbfbf','#e06b8a','#9dbf4f','#bf8f4f','#7b7bbf',
+  ];
+
+  const _pieTooltip = document.createElement('div');
+  _pieTooltip.style.cssText = [
+    'position:fixed','pointer-events:none','display:none','z-index:2147483647',
+    'background:rgba(18,18,18,0.97)','border:1px solid #444','border-radius:8px',
+    'padding:10px 12px','box-shadow:0 4px 18px rgba(0,0,0,0.75)',
+    'font:11px monospace','color:#ddd','min-width:200px',
+  ].join(';');
+  document.body.appendChild(_pieTooltip);
+
+  const _pieCanvas = document.createElement('canvas');
+  _pieCanvas.width  = PIE_SIZE;
+  _pieCanvas.height = PIE_SIZE;
+  _pieCanvas.style.cssText = 'display:block;margin:0 auto 8px auto;';
+  _pieTooltip.appendChild(_pieCanvas);
+
+  const _pieLegend = document.createElement('div');
+  _pieLegend.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+  _pieTooltip.appendChild(_pieLegend);
+
+  function _drawPie(key) {
+    const entries = _colValueCounts[key] || [];
+    const ctx = _pieCanvas.getContext('2d');
+    const total = entries.reduce((s, e) => s + e.count, 0);
+    const cx = PIE_SIZE / 2, cy = PIE_SIZE / 2, r = PIE_SIZE / 2 - 4;
+    ctx.clearRect(0, 0, PIE_SIZE, PIE_SIZE);
+    let angle = -Math.PI / 2;
+    for (let i = 0; i < entries.length; i++) {
+      const slice = (entries[i].count / total) * 2 * Math.PI;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, angle, angle + slice);
+      ctx.closePath();
+      ctx.fillStyle = _PIE_PALETTE[i % _PIE_PALETTE.length];
+      ctx.fill();
+      angle += slice;
+    }
+    // Remaining samples not in top-N get a grey slice
+    const shown = entries.reduce((s, e) => s + e.count, 0);
+    const rest  = SAMPLES.length - shown;
+    if (rest > 0) {
+      const slice = (rest / SAMPLES.length) * 2 * Math.PI;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, angle, angle + slice);
+      ctx.closePath();
+      ctx.fillStyle = '#444';
+      ctx.fill();
+    }
+    // Legend
+    _pieLegend.innerHTML = '';
+    const pct = (n) => ((n / SAMPLES.length) * 100).toFixed(1) + '%';
+    for (let i = 0; i < entries.length; i++) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:5px;';
+      const swatch = document.createElement('span');
+      swatch.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:2px;flex-shrink:0;background:' + _PIE_PALETTE[i % _PIE_PALETTE.length] + ';';
+      const txt = document.createElement('span');
+      txt.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ccc;';
+      txt.textContent = entries[i].label + '  (' + entries[i].count + ', ' + pct(entries[i].count) + ')';
+      row.appendChild(swatch);
+      row.appendChild(txt);
+      _pieLegend.appendChild(row);
+    }
+    if (rest > 0) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:5px;';
+      const swatch = document.createElement('span');
+      swatch.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:2px;flex-shrink:0;background:#444;';
+      const txt = document.createElement('span');
+      txt.style.cssText = 'color:#666;';
+      txt.textContent = 'other  (' + rest + ', ' + pct(rest) + ')';
+      row.appendChild(swatch);
+      row.appendChild(txt);
+      _pieLegend.appendChild(row);
+    }
+  }
+
+  let _pieHideTimer = null;
+  function _showPieTooltip(key, targetEl) {
+    clearTimeout(_pieHideTimer);
+    const title = _pieTooltip.querySelector('._pie-title') || (() => {
+      const t = document.createElement('div');
+      t.className = '_pie-title';
+      t.style.cssText = 'font:bold 11px monospace;color:#53d9ff;margin-bottom:6px;text-align:center;';
+      _pieTooltip.insertBefore(t, _pieCanvas);
+      return t;
+    })();
+    title.textContent = key;
+    _drawPie(key);
+    _pieTooltip.style.display = 'block';
+    // Position near the element
+    const r = targetEl.getBoundingClientRect();
+    const tw = _pieTooltip.offsetWidth  || 220;
+    const th = _pieTooltip.offsetHeight || 220;
+    let tx = r.right + 8;
+    let ty = r.top;
+    if (tx + tw > window.innerWidth)  tx = r.left - tw - 8;
+    if (ty + th > window.innerHeight) ty = window.innerHeight - th - 8;
+    if (ty < 4) ty = 4;
+    _pieTooltip.style.left = tx + 'px';
+    _pieTooltip.style.top  = ty + 'px';
+  }
+  function _hidePieTooltip() {
+    _pieHideTimer = setTimeout(() => { _pieTooltip.style.display = 'none'; }, 120);
+  }
+  function _attachPieHover(el, key) {
+    el.addEventListener('mouseenter', () => _showPieTooltip(key, el));
+    el.addEventListener('mouseleave', _hidePieTooltip);
+  }
+
   // Active filters: key → { type, value }
   const _filters = {};
 
@@ -187,7 +323,8 @@ function createMetadataPanel({
 
     const lbl = document.createElement('span');
     lbl.textContent = k + ':';
-    lbl.style.cssText = 'font:10px monospace;color:#888;white-space:nowrap;min-width:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;';
+    lbl.style.cssText = 'font:10px monospace;color:#888;white-space:nowrap;min-width:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;cursor:help;';
+    _attachPieHover(lbl, k);
     row.appendChild(lbl);
 
     if (cm.type === 'numeric') {
@@ -273,6 +410,8 @@ function createMetadataPanel({
       }
       _renderRows(_filteredSamples);
     });
+    // Pie chart on hover (only for real metadata columns, not the sample name column)
+    if (key !== '__sample__') _attachPieHover(th, key);
     return th;
   }
 
