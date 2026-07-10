@@ -25,6 +25,10 @@ function createMetadataPanel({
   setActiveSampleFn,
   onFilterChange,   // optional: called with filtered sample array on every filter change
 }) {
+  // ── Layout constants (adjust here) ──────────────────────────────────────
+  const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
+  const COL_MAX_WIDTH  = 280;   // px — maximum width of each metadata column
+  const FILTER_BAR_MAX_HEIGHT = 80;  // px — max height of the collapsed filter grid
   // ── Determine if any sample has metadata ─────────────────────────────────
   const _hasAnyMeta = SAMPLES.some(s => {
     const m = SAMPLE_METADATA[s];
@@ -125,9 +129,9 @@ function createMetadataPanel({
       tabMeta.style.background = 'transparent';
     } else {
       // Widen ribbon for the table view (~double width)
-      samplesRibbon.style.width = '520px';
+      samplesRibbon.style.width = '1500px';
       samplesRibbon.style.minWidth = '380px';
-      samplesRibbon.style.maxWidth = '640px';
+      samplesRibbon.style.maxWidth = '1500px';
       ribbonWrap.style.display = 'none';
       metaPanel.style.display = 'flex';
       tabMeta.style.borderBottomColor = '#53d9ff';
@@ -154,7 +158,7 @@ function createMetadataPanel({
       return { type: 'numeric', min: Math.min(...nums), max: Math.max(...nums) };
     }
     const distinct = Array.from(new Set(values.map(String)));
-    if (distinct.length <= 15) {
+    if (distinct.length <=100) {
       return { type: 'select', distinct };
     }
     return { type: 'text' };
@@ -169,29 +173,31 @@ function createMetadataPanel({
   // ── Filter bar ────────────────────────────────────────────────────────
   const filterBar = document.createElement('div');
   filterBar.style.cssText = [
-    'display:flex','flex-direction:column','gap:4px',
+    'display:grid',
+    'grid-template-columns:repeat(auto-fill,minmax(180px,1fr))',
+    'gap:4px 8px',
     'padding:6px 4px','border-bottom:1px solid #2a2a2a','flex-shrink:0',
-    'max-height:140px','overflow-y:auto',
+    'max-height:' + FILTER_BAR_MAX_HEIGHT + 'px','overflow-y:auto',
   ].join(';');
 
   for (const k of _allKeys) {
     const cm = _colMeta[k];
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:4px;';
+    row.style.cssText = 'display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;';
 
     const lbl = document.createElement('span');
     lbl.textContent = k + ':';
-    lbl.style.cssText = 'font:10px monospace;color:#888;white-space:nowrap;min-width:60px;overflow:hidden;text-overflow:ellipsis;';
+    lbl.style.cssText = 'font:10px monospace;color:#888;white-space:nowrap;min-width:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;';
     row.appendChild(lbl);
 
     if (cm.type === 'numeric') {
       _filters[k] = { type: 'numeric', min: null, max: null };
       const minIn = document.createElement('input');
       minIn.type = 'number'; minIn.placeholder = 'min';
-      minIn.style.cssText = 'width:52px;font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px 4px;';
+      minIn.style.cssText = 'width:48px;min-width:0;font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px 3px;';
       const maxIn = document.createElement('input');
       maxIn.type = 'number'; maxIn.placeholder = 'max';
-      maxIn.style.cssText = 'width:52px;font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px 4px;';
+      maxIn.style.cssText = 'width:48px;min-width:0;font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px 3px;';
       const _upd = () => {
         _filters[k].min = minIn.value !== '' ? Number(minIn.value) : null;
         _filters[k].max = maxIn.value !== '' ? Number(maxIn.value) : null;
@@ -208,7 +214,7 @@ function createMetadataPanel({
       _filters[k] = { type: 'select', selected: new Set() };
       const sel = document.createElement('select');
       sel.multiple = false;
-      sel.style.cssText = 'font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px;max-width:100px;';
+      sel.style.cssText = 'font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px;min-width:0;flex:1 1 auto;max-width:140px;';
       const optAll = document.createElement('option');
       optAll.value = ''; optAll.textContent = '(all)';
       sel.appendChild(optAll);
@@ -226,7 +232,7 @@ function createMetadataPanel({
       _filters[k] = { type: 'text', value: '' };
       const inp = document.createElement('input');
       inp.type = 'text'; inp.placeholder = 'search…';
-      inp.style.cssText = 'font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px 4px;width:100px;';
+      inp.style.cssText = 'font:10px monospace;background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:3px;padding:2px 3px;min-width:0;flex:1 1 auto;max-width:140px;';
       inp.addEventListener('input', () => {
         _filters[k].value = inp.value.toLowerCase();
         _applyFilters();
@@ -242,7 +248,7 @@ function createMetadataPanel({
   tableWrap.style.cssText = 'flex:1 1 auto;overflow:auto;min-height:0;';
 
   const table = document.createElement('table');
-  table.style.cssText = 'border-collapse:collapse;width:100%;font:11px monospace;';
+  table.style.cssText = 'border-collapse:collapse;width:max-content;min-width:100%;font:11px monospace;';
 
   // Header
   const thead = document.createElement('thead');
@@ -253,9 +259,10 @@ function createMetadataPanel({
     const th = document.createElement('th');
     th.textContent = label;
     th.style.cssText = [
-      'padding:4px 6px','text-align:left','white-space:nowrap',
+      'padding:3px 8px','text-align:left','white-space:nowrap',
       'background:#1a1a1a','color:#888','border-bottom:1px solid #333',
       'cursor:pointer','user-select:none','position:sticky','top:0',
+      'min-width:' + COL_MIN_WIDTH + 'px','max-width:' + COL_MAX_WIDTH + 'px',
     ].join(';');
     th.addEventListener('click', () => {
       if (_sortState.key === key) {
@@ -384,8 +391,9 @@ function createMetadataPanel({
       const tdSample = document.createElement('td');
       tdSample.textContent = sampleName;
       tdSample.style.cssText = [
-        'padding:4px 6px','white-space:nowrap','color:' + (isActive ? '#53d9ff' : '#ddd'),
+        'padding:3px 8px','white-space:nowrap','color:' + (isActive ? '#53d9ff' : '#ddd'),
         'border-bottom:1px solid #222',
+        'min-width:' + COL_MIN_WIDTH + 'px','max-width:' + COL_MAX_WIDTH + 'px',
       ].join(';');
       tr.appendChild(tdSample);
 
@@ -394,7 +402,7 @@ function createMetadataPanel({
         const td = document.createElement('td');
         const val = Object.prototype.hasOwnProperty.call(m, k) ? m[k] : '';
         td.textContent = val === null || val === undefined ? '' : String(val);
-        td.style.cssText = 'padding:4px 6px;color:#aaa;border-bottom:1px solid #222;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;';
+        td.style.cssText = 'padding:3px 8px;color:#aaa;border-bottom:1px solid #222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
         tr.appendChild(td);
       }
 
