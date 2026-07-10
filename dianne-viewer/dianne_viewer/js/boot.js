@@ -438,6 +438,8 @@ _metadataPanel = createMetadataPanel({
   ACTIVE_SAMPLE_REF: () => ACTIVE_SAMPLE,
   setActiveSampleFn: setActiveSample,
   onFilterChange: (samples) => sampleRibbonApi.setVisibleSamples(samples),
+  onSampleSelect: (name) => sampleRibbonApi.scrollToSample(name),
+  scrollRibbonToSample: (name) => sampleRibbonApi.scrollToSample(name),
 });
 
 // ── Modals ────────────────────────────────────────────────────────────────

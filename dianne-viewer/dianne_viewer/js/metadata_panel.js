@@ -24,6 +24,8 @@ function createMetadataPanel({
   ACTIVE_SAMPLE_REF,
   setActiveSampleFn,
   onFilterChange,   // optional: called with filtered sample array on every filter change
+  onSampleSelect,   // optional: called with sampleName after table row click (e.g. to scroll ribbon)
+  scrollRibbonToSample, // optional: called when switching to Samples tab to autoscroll ribbon
 }) {
   // ── Layout constants (adjust here) ──────────────────────────────────────
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
@@ -129,6 +131,8 @@ function createMetadataPanel({
       tabMeta.style.borderBottomColor = 'transparent';
       tabMeta.style.color = '#888';
       tabMeta.style.background = 'transparent';
+      // Autoscroll ribbon to the active sample
+      if (scrollRibbonToSample) setTimeout(() => scrollRibbonToSample(ACTIVE_SAMPLE_REF()), 0);
     } else {
       // Widen ribbon for the table view (~double width)
       samplesRibbon.style.width = '1500px';
@@ -142,6 +146,8 @@ function createMetadataPanel({
       tabSamples.style.borderBottomColor = 'transparent';
       tabSamples.style.color = '#888';
       tabSamples.style.background = 'transparent';
+      // Scroll active row into view
+      setTimeout(() => syncActiveSample(), 0);
     }
   }
   tabSamples.addEventListener('click', () => _switchTab('samples'));
@@ -479,6 +485,17 @@ function createMetadataPanel({
   // ── Filtered sample list + render ─────────────────────────────────────
   let _filteredSamples = SAMPLES.slice();
 
+  function _rowBg(isActive) { return isActive ? '#1e2e38' : '#1a1a1a'; }
+
+  function _applyRowStyle(tr, isActive) {
+    tr.style.background = isActive ? '#1e2e38' : '#1a1a1a';
+    tr.style.borderLeft  = isActive ? '3px solid #53d9ff' : '3px solid transparent';
+    const tds = tr.querySelectorAll('td');
+    tds.forEach((td, i) => {
+      td.style.color = i === 0 ? (isActive ? '#53d9ff' : '#ddd') : (isActive ? '#c8eaff' : '#aaa');
+    });
+  }
+
   function _applyFilters() {
     _filteredSamples = SAMPLES.filter(s => {
       const m = SAMPLE_METADATA[s] || {};
@@ -524,8 +541,8 @@ function createMetadataPanel({
     for (const sampleName of sorted) {
       const tr = document.createElement('tr');
       const isActive = sampleName === activeSample;
-      tr.style.cssText = 'cursor:pointer;background:' + (isActive ? '#272727' : '#1a1a1a') + ';';
       tr.dataset.sampleName = sampleName;
+      tr.style.cssText = 'cursor:pointer;border-left:3px solid ' + (isActive ? '#53d9ff' : 'transparent') + ';background:' + (isActive ? '#1e2e38' : '#1a1a1a') + ';';
 
       const tdSample = document.createElement('td');
       tdSample.textContent = sampleName;
@@ -541,24 +558,25 @@ function createMetadataPanel({
         const td = document.createElement('td');
         const val = Object.prototype.hasOwnProperty.call(m, k) ? m[k] : '';
         td.textContent = val === null || val === undefined ? '' : String(val);
-        td.style.cssText = 'padding:3px 8px;color:#aaa;border-bottom:1px solid #222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
+        td.style.cssText = 'padding:3px 8px;color:' + (isActive ? '#c8eaff' : '#aaa') + ';border-bottom:1px solid #222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
         tr.appendChild(td);
       }
 
       // Hover: thumbnail preview
       tr.addEventListener('mouseenter', e => {
-        tr.style.background = '#2a2a2a';
+        if (sampleName !== ACTIVE_SAMPLE_REF()) tr.style.background = '#252525';
         _showThumbPreview(sampleName, e);
       });
       tr.addEventListener('mousemove', e => _positionPreview(e));
       tr.addEventListener('mouseleave', () => {
-        tr.style.background = sampleName === ACTIVE_SAMPLE_REF() ? '#272727' : '#1a1a1a';
+        _applyRowStyle(tr, sampleName === ACTIVE_SAMPLE_REF());
         _hideThumbPreview();
       });
 
       // Click: select sample
       tr.addEventListener('click', () => {
         setActiveSampleFn(sampleName);
+        if (onSampleSelect) onSampleSelect(sampleName);
         _renderRows(_filteredSamples);  // refresh row highlights
       });
 
@@ -569,10 +587,15 @@ function createMetadataPanel({
   // ── Sync active sample highlight in table ─────────────────────────────
   function syncActiveSample() {
     const activeSample = ACTIVE_SAMPLE_REF();
+    let activeRow = null;
     for (const tr of tbody.querySelectorAll('tr[data-sample-name]')) {
       const isActive = tr.dataset.sampleName === activeSample;
-      tr.style.background = isActive ? '#272727' : '#1a1a1a';
-      tr.querySelector('td').style.color = isActive ? '#53d9ff' : '#ddd';
+      _applyRowStyle(tr, isActive);
+      if (isActive) activeRow = tr;
+    }
+    // Scroll the active row into view when the metadata tab is open
+    if (activeRow && metaPanel.style.display !== 'none') {
+      activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
 

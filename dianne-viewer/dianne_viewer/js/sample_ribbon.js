@@ -330,5 +330,13 @@ function createSampleRibbon({
     }
   }
 
-  return { buildSampleRibbon, updateThumbOverlays, setVisibleSamples };
+  /**
+   * Scroll the ribbon so the card for the given sample is visible.
+   */
+  function scrollToSample(sampleName) {
+    const card = samplesRibbon.querySelector('[data-sample-card][data-sample-name="' + CSS.escape(sampleName) + '"]');
+    if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  return { buildSampleRibbon, updateThumbOverlays, setVisibleSamples, scrollToSample };
 }
