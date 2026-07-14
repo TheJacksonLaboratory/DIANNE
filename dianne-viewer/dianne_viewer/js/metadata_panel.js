@@ -33,6 +33,7 @@ function createMetadataPanel({
   const FILTER_BAR_MAX_HEIGHT = 80;  // px — max height of the collapsed filter grid
   const PIE_MAX_LABELS = 10;   // max slices shown in the value-count pie chart tooltip
   const PIE_SIZE      = 140;   // px — diameter of the pie chart canvas
+  const TOOLTIP_MAX_LABEL_CHARS = 25;  // max chars for key/value in sample hover tooltip
   // ── Determine if any sample has metadata ─────────────────────────────────
   const _hasAnyMeta = SAMPLES.some(s => {
     const m = SAMPLE_METADATA[s];
@@ -448,12 +449,16 @@ function createMetadataPanel({
     const thumbUrl = BASE_URL + '/thumb?sample=' + encodeURIComponent(sampleName)
       + '&level=' + thumbLevel + '&size=128';
 
+    function _truncate(str, max) {
+      const s = String(str);
+      return s.length > max ? s.slice(0, max) + '\u2026' : s;
+    }
     const metaEntries = Object.entries(SAMPLE_METADATA[sampleName] || {});
     const metaHtml = metaEntries.length
       ? '<table style="border-collapse:collapse;margin-top:6px;">'
         + metaEntries.map(([k, v]) =>
-            `<tr><td style="color:#888;padding:1px 8px 1px 0;font-weight:bold;white-space:nowrap;">${k}</td>`
-            + `<td style="color:#eee;word-break:break-all;">${v}</td></tr>`
+            `<tr><td style="color:#888;padding:1px 8px 1px 0;font-weight:bold;white-space:nowrap;" title="${k}">${_truncate(k, TOOLTIP_MAX_LABEL_CHARS)}</td>`
+            + `<td style="color:#eee;word-break:break-all;" title="${v}">${_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS)}</td></tr>`
           ).join('')
         + '</table>'
       : '';

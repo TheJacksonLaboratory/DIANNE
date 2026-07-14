@@ -29,6 +29,9 @@ function createSampleRibbon({
   // per-sample thumbnail overlay canvases (keyed by sample name)
   const thumbCanvases = {};
 
+  // ── Layout / display constants ────────────────────────────────────────────
+  const TOOLTIP_MAX_LABEL_CHARS = 25;  // max chars for key/value in sample hover tooltip
+
   // ── Tooltip for sample metadata ────────────────────────────────────────────
   const _hasAnyMeta = SAMPLES.some(s => {
     const m = SAMPLE_METADATA[s];
@@ -42,10 +45,14 @@ function createSampleRibbon({
       'position:fixed', 'pointer-events:none', 'display:none', 'z-index:2147483648',
       'background:rgba(0,0,0,0.85)', 'color:#ddd', 'font:11px monospace',
       'border:1px solid #444', 'border-radius:6px', 'padding:6px 8px',
-      'max-height:260px', 'overflow-y:auto',
       'box-shadow:0 4px 12px rgba(0,0,0,0.7)',
     ].join(';');
     document.body.appendChild(_tooltip);
+  }
+
+  function _truncate(str, max) {
+    const s = String(str);
+    return s.length > max ? s.slice(0, max) + '\u2026' : s;
   }
 
   function _buildTooltipContent(sampleName) {
@@ -53,8 +60,8 @@ function createSampleRibbon({
     if (!meta || !Object.keys(meta).length) return '';
     const rows = Object.entries(meta).map(([k, v]) =>
       `<tr>
-        <td style="color:#888;padding:1px 8px 1px 0;white-space:nowrap;font-weight:bold;">${k}</td>
-        <td style="color:#eee;padding:1px 0;word-break:break-all;">${v}</td>
+        <td style="color:#888;padding:1px 8px 1px 0;white-space:nowrap;font-weight:bold;" title="${k}">${_truncate(k, TOOLTIP_MAX_LABEL_CHARS)}</td>
+        <td style="color:#eee;padding:1px 0;word-break:break-all;" title="${v}">${_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS)}</td>
       </tr>`
     ).join('');
     return `<table style="border-collapse:collapse;min-width:160px;">${rows}</table>`;

@@ -20,7 +20,8 @@ def is_pyramidal(path):
     return isinstance(z, zarr.hierarchy.Group)
 
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
-            patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_', fs=None):
+            patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_', fs=None,
+            sample_metadata=None):
 
     """Creates a viewer for the given directory path containing sample subdirectories with image files.
     Args:
@@ -39,6 +40,7 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         drop_dots (bool): Whether to drop dots.
         replacement (str): The string to replace dots with in sample names.
         fs: A file system object for handling file operations, if needed.
+        sample_metadata: Optional metadata for the samples, dict with sample names as keys and metadata as values.
     Returns:
         viewer: A viewer object created with the valid samples and their corresponding images.
     """
@@ -134,19 +136,26 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
 
         imgs = {s: imgs[s] for s in valid_samples}
 
+        used_slides = set([s for s in valid_samples])
+        dict_sel_slide_metadata = {k: v for k, v in sample_metadata.reindex(used_slides).fillna('NA').T.to_dict().items()}
+        sample_metadata_ = {s: dict_sel_slide_metadata[s] for s in valid_samples if s in dict_sel_slide_metadata.keys()}
+
         return create_viewer(valid_samples, imgs, height=height, run_inference_fn=runfn, sample_sizes=sizes,
-                                        save_func=savefn, load_func=loadfn, list_names_func=listfn)[1]
+                                        save_func=savefn, load_func=loadfn, list_names_func=listfn,
+                                        sample_metadata=sample_metadata_)[1]
 
     else:
         imgs = {s: os.path.join(dpath, s, imfname) for s in valid_samples}
-    
+
         if drop_dots:
             valid_samples = [s.replace('.', replacement) for s in valid_samples]
             imgs = {s.replace('.', replacement): imgs[s] for s in imgs.keys()}
+    
+        used_slides = set([s for s in valid_samples])
+        dict_sel_slide_metadata = {k: v for k, v in sample_metadata.reindex(used_slides).fillna('NA').T.to_dict().items()}
+        sample_metadata_ = {s: dict_sel_slide_metadata[s] for s in valid_samples if s in dict_sel_slide_metadata.keys()}
 
-        print(valid_samples, imgs)
-
-        return create_viewer(valid_samples, imgs, height=height)[1]
+        return create_viewer(valid_samples, imgs, height=height, sample_metadata=sample_metadata_)[1]
 
 def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_size=8, PCMA_alpha=0.8, multiplier=2,
                 body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv', classifierPaths=None, load_features=False,

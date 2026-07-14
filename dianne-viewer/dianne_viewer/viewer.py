@@ -240,7 +240,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
     def _open_sample(s):
       img = _open_image(images[s])
-      print(f' {s}', end='; ', flush=True)
+      if n_samples<=50:
+        print(f' {s}', end='; ', flush=True)
       return s, img
 
     with ThreadPoolExecutor(max_workers=min(n_samples, 16)) as _pool:
