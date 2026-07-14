@@ -31,10 +31,11 @@ function createMetadataPanel({
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
   const COL_MAX_WIDTH  = 280;   // px — maximum width of each metadata column
   const FILTER_ROW_HEIGHT      = 28;   // px — fixed height of each filter row (keeps rows from squishing with many keys)
-  const FILTER_BAR_VISIBLE_ROWS = 3;   // number of filter rows visible before the bar scrolls
+  const FILTER_BAR_VISIBLE_ROWS = 10;   // number of filter rows visible before the bar scrolls
   const PIE_MAX_LABELS = 10;   // max slices shown in the value-count pie chart tooltip
   const PIE_SIZE      = 140;   // px — diameter of the pie chart canvas
   const TOOLTIP_MAX_LABEL_CHARS = 25;  // max chars for key/value in sample hover tooltip
+  const TOOLTIP_MAX_ROWS        = 20;   // max metadata rows shown in the hover tooltip before truncating
   // ── Determine if any sample has metadata ─────────────────────────────────
   const _hasAnyMeta = SAMPLES.some(s => {
     const m = SAMPLE_METADATA[s];
@@ -454,13 +455,16 @@ function createMetadataPanel({
       const s = String(str);
       return s.length > max ? s.slice(0, max) + '\u2026' : s;
     }
-    const metaEntries = Object.entries(SAMPLE_METADATA[sampleName] || {});
+    const _allMetaEntries = Object.entries(SAMPLE_METADATA[sampleName] || {});
+    const _capped = _allMetaEntries.length > TOOLTIP_MAX_ROWS;
+    const metaEntries = _capped ? _allMetaEntries.slice(0, TOOLTIP_MAX_ROWS) : _allMetaEntries;
     const metaHtml = metaEntries.length
       ? '<table style="border-collapse:collapse;margin-top:6px;">'
         + metaEntries.map(([k, v]) =>
             `<tr><td style="color:#888;padding:1px 8px 1px 0;font-weight:bold;white-space:nowrap;" title="${k}">${_truncate(k, TOOLTIP_MAX_LABEL_CHARS)}</td>`
             + `<td style="color:#eee;word-break:break-all;" title="${v}">${_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS)}</td></tr>`
           ).join('')
+        + (_capped ? `<tr><td colspan="2" style="color:#666;padding:2px 8px 0;font-style:italic;">… ${_allMetaEntries.length - TOOLTIP_MAX_ROWS} more</td></tr>` : '')
         + '</table>'
       : '';
 

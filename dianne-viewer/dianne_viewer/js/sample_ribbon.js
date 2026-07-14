@@ -31,6 +31,7 @@ function createSampleRibbon({
 
   // ── Layout / display constants ────────────────────────────────────────────
   const TOOLTIP_MAX_LABEL_CHARS = 25;  // max chars for key/value in sample hover tooltip
+  const TOOLTIP_MAX_ROWS        = 20;   // max metadata rows shown in the hover tooltip before truncating
 
   // ── Tooltip for sample metadata ────────────────────────────────────────────
   const _hasAnyMeta = SAMPLES.some(s => {
@@ -58,13 +59,19 @@ function createSampleRibbon({
   function _buildTooltipContent(sampleName) {
     const meta = SAMPLE_METADATA[sampleName];
     if (!meta || !Object.keys(meta).length) return '';
-    const rows = Object.entries(meta).map(([k, v]) =>
+    const _allEntries = Object.entries(meta);
+    const _capped = _allEntries.length > TOOLTIP_MAX_ROWS;
+    const entries = _capped ? _allEntries.slice(0, TOOLTIP_MAX_ROWS) : _allEntries;
+    const rows = entries.map(([k, v]) =>
       `<tr>
         <td style="color:#888;padding:1px 8px 1px 0;white-space:nowrap;font-weight:bold;" title="${k}">${_truncate(k, TOOLTIP_MAX_LABEL_CHARS)}</td>
         <td style="color:#eee;padding:1px 0;word-break:break-all;" title="${v}">${_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS)}</td>
       </tr>`
     ).join('');
-    return `<table style="border-collapse:collapse;min-width:160px;">${rows}</table>`;
+    const moreRow = _capped
+      ? `<tr><td colspan="2" style="color:#666;padding:2px 0 0;font-style:italic;">… ${_allEntries.length - TOOLTIP_MAX_ROWS} more</td></tr>`
+      : '';
+    return `<table style="border-collapse:collapse;min-width:160px;">${rows}${moreRow}</table>`;
   }
 
   // ── Coord helpers for thumbnail viewport rect ──────────────────────────────
