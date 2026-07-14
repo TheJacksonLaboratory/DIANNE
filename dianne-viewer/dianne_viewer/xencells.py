@@ -17,8 +17,9 @@ class XeniumCells:
     """
 
     def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125,
-                 cell_id_to_category=None, category_colors=None, max_cells=10000):
-        self.bundle_path = Path(bundle_path)
+                 cell_id_to_category=None, category_colors=None, max_cells=10000, fs=None):
+        self.bundle_path = Path(bundle_path) if fs is None else bundle_path
+        self._fs = fs
         self.image_metadata = image_metadata
         self.tile_size = int(image_metadata['tile_size'])
         self.max_cells = int(max_cells)
@@ -54,7 +55,14 @@ class XeniumCells:
         else:
             self.category_colors = dict(category_colors)
 
-        zip_fs = fsspec.filesystem('zip', fo=str(self.bundle_path / 'cells.zarr.zip'))
+        _cells_path = (str(self.bundle_path).rstrip('/') + '/cells.zarr.zip'
+                       if self._fs is not None
+                       else str(self.bundle_path / 'cells.zarr.zip'))
+        if self._fs is not None:
+            _fo = self._fs.open(_cells_path, 'rb')
+            zip_fs = fsspec.filesystem('zip', fo=_fo)
+        else:
+            zip_fs = fsspec.filesystem('zip', fo=_cells_path)
         store = zip_fs.get_mapper('')
         self._root = zarr.open(store, mode='r')
         self._coords_xe = np.asarray(self._root['cell_summary'][:, :2], dtype=float)
@@ -219,10 +227,12 @@ class XeniumCellsFast:
         cell_id_to_category=None,
         category_colors=None,
         max_cells: int = 2000,
+        fs=None,
     ):
         from collections import OrderedDict
 
-        self.fast_path = Path(fast_path)
+        self._fs = fs
+        self.fast_path = Path(fast_path) if fs is None else str(fast_path)
         self.image_metadata = image_metadata
         self.tile_size = int(image_metadata["tile_size"])
         self.max_cells = int(max_cells)
@@ -249,7 +259,11 @@ class XeniumCellsFast:
         self.category_colors      = _to_dict(category_colors)
 
         # Open fast store
-        zip_fs   = fsspec.filesystem("zip", fo=str(self.fast_path))
+        if self._fs is not None:
+            _fo  = self._fs.open(str(self.fast_path), 'rb')
+            zip_fs = fsspec.filesystem("zip", fo=_fo)
+        else:
+            zip_fs = fsspec.filesystem("zip", fo=str(self.fast_path))
         store    = zip_fs.get_mapper("")
         self._root = zarr.open(store, mode="r")
 

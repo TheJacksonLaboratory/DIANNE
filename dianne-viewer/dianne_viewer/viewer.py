@@ -115,7 +115,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   secondary_images=None, secondary_matrices=None,
                   draw_on_secondary=False, visium_ads=None,
                   sample_mapping=None, fullscreen_on_load=True,
-                  sample_metadata=None):
+                  sample_metadata=None, fs=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -390,7 +390,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         continue
 
       # Proceed only if at least one of files cells.zarr.zip, cells_fast.zarr.zip, or transcripts.zarr.zip exists
-      if not any((Path(bundle_path) / fname).exists() for fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']):
+      def _xe_exists(fname, _bp=bundle_path, _fs=fs):
+        p = str(_bp).rstrip('/') + '/' + fname
+        return _fs.exists(p) if _fs is not None else (Path(_bp) / fname).exists()
+      if not any(_xe_exists(fname) for fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']):
         continue
 
       matrix_path = matrices.get(sample)
@@ -399,22 +402,23 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
       sample_xenium = XeniumTranscripts(bundle_path, sample_images[sample].metadata,
                         matrix_path=matrix_path,
-                        xenium_mpp=xenium_mpp)
-      _fast_zip = Path(bundle_path) / 'cells_fast.zarr.zip'
-      if _fast_zip.exists():
-        sample_cells = XeniumCellsFast(_fast_zip, sample_images[sample].metadata,
+                        xenium_mpp=xenium_mpp, fs=fs)
+      _fast_zip_path = str(bundle_path).rstrip('/') + '/cells_fast.zarr.zip'
+      _fast_zip_exists = fs.exists(_fast_zip_path) if fs is not None else (Path(bundle_path) / 'cells_fast.zarr.zip').exists()
+      if _fast_zip_exists:
+        sample_cells = XeniumCellsFast(_fast_zip_path, sample_images[sample].metadata,
                        matrix_path=matrix_path,
                        xenium_mpp=xenium_mpp,
                        cell_id_to_category=sample_annotations,
                        category_colors=sample_colors,
-                       max_cells=max_cells)
+                       max_cells=max_cells, fs=fs)
       else:
         sample_cells = XeniumCells(bundle_path, sample_images[sample].metadata,
                        matrix_path=matrix_path,
                        xenium_mpp=xenium_mpp,
                        cell_id_to_category=sample_annotations,
                        category_colors=sample_colors,
-                       max_cells=max_cells)
+                       max_cells=max_cells, fs=fs)
       xenium_by_sample[sample] = sample_xenium
       xenium_cells_by_sample[sample] = sample_cells
       sample_xenium_meta[sample] = sample_xenium.metadata

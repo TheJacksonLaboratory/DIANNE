@@ -19,8 +19,9 @@ class XeniumTranscripts:
         Inverse (Xenium µm → H&E px):  he = (xe / xenium_mpp - Tr) @ inv(M).T
     """
 
-    def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125):
-        self.bundle_path = Path(bundle_path)
+    def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125, fs=None):
+        self.bundle_path = Path(bundle_path) if fs is None else bundle_path
+        self._fs = fs
         self.image_metadata = image_metadata
         self.tile_size = int(image_metadata['tile_size'])
 
@@ -43,10 +44,17 @@ class XeniumTranscripts:
         self.grid_keys = []
         self.grids = {}
 
-        transcript_path = self.bundle_path / 'transcripts.zarr.zip'
-        if transcript_path.exists():
+        _bp = str(self.bundle_path).rstrip('/')
+        transcript_path = _bp + '/transcripts.zarr.zip'
+        _exists = (self._fs.exists(transcript_path) if self._fs is not None
+                   else Path(transcript_path).exists())
+        if _exists:
             try:
-                zip_fs = fsspec.filesystem('zip', fo=str(transcript_path))
+                if self._fs is not None:
+                    _fo = self._fs.open(transcript_path, 'rb')
+                    zip_fs = fsspec.filesystem('zip', fo=_fo)
+                else:
+                    zip_fs = fsspec.filesystem('zip', fo=transcript_path)
                 store = zip_fs.get_mapper('')
                 self._root = zarr.open(store, mode='r')
 
