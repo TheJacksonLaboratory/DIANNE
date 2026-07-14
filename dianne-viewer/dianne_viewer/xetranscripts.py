@@ -51,8 +51,11 @@ class XeniumTranscripts:
         if _exists:
             try:
                 if self._fs is not None:
-                    _fo = self._fs.open(transcript_path, 'rb')
-                    zip_fs = fsspec.filesystem('zip', fo=_fo)
+                    import io
+                    import warnings
+                    with self._fs.open(transcript_path, 'rb') as _remote:
+                        _buf = io.BytesIO(_remote.read())
+                    zip_fs = fsspec.filesystem('zip', fo=_buf)
                 else:
                     zip_fs = fsspec.filesystem('zip', fo=transcript_path)
                 store = zip_fs.get_mapper('')
@@ -77,7 +80,9 @@ class XeniumTranscripts:
                         'spacing': spacing,
                         'downsample': spacing / base_spacing,
                     }
-            except Exception:
+            except Exception as _e:
+                import warnings
+                warnings.warn(f'[DIANNE] Failed to open transcripts.zarr.zip at {transcript_path}: {_e}')
                 self._root = None
                 self.gene_to_index = {}
                 self.index_to_gene = {}

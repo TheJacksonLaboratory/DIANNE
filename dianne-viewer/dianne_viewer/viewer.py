@@ -392,8 +392,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       # Proceed only if at least one of files cells.zarr.zip, cells_fast.zarr.zip, or transcripts.zarr.zip exists
       def _xe_exists(fname, _bp=bundle_path, _fs=fs):
         p = str(_bp).rstrip('/') + '/' + fname
-        return _fs.exists(p) if _fs is not None else (Path(_bp) / fname).exists()
+        result = _fs.exists(p) if _fs is not None else (Path(_bp) / fname).exists()
+        print(f'[DIANNE] checking {p}: {result}', flush=True)
+        return result
       if not any(_xe_exists(fname) for fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']):
+        print(f'[DIANNE] no xenium files found for {sample}, skipping', flush=True)
         continue
 
       matrix_path = matrices.get(sample)

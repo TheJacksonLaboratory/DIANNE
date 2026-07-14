@@ -59,8 +59,10 @@ class XeniumCells:
                        if self._fs is not None
                        else str(self.bundle_path / 'cells.zarr.zip'))
         if self._fs is not None:
-            _fo = self._fs.open(_cells_path, 'rb')
-            zip_fs = fsspec.filesystem('zip', fo=_fo)
+            import io
+            with self._fs.open(_cells_path, 'rb') as _remote:
+                _buf = io.BytesIO(_remote.read())
+            zip_fs = fsspec.filesystem('zip', fo=_buf)
         else:
             zip_fs = fsspec.filesystem('zip', fo=_cells_path)
         store = zip_fs.get_mapper('')
@@ -260,8 +262,10 @@ class XeniumCellsFast:
 
         # Open fast store
         if self._fs is not None:
-            _fo  = self._fs.open(str(self.fast_path), 'rb')
-            zip_fs = fsspec.filesystem("zip", fo=_fo)
+            import io
+            with self._fs.open(str(self.fast_path), 'rb') as _remote:
+                _buf = io.BytesIO(_remote.read())
+            zip_fs = fsspec.filesystem("zip", fo=_buf)
         else:
             zip_fs = fsspec.filesystem("zip", fo=str(self.fast_path))
         store    = zip_fs.get_mapper("")
