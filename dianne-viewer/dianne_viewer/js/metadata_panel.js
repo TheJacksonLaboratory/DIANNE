@@ -30,7 +30,8 @@ function createMetadataPanel({
   // ── Layout constants (adjust here) ──────────────────────────────────────
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
   const COL_MAX_WIDTH  = 280;   // px — maximum width of each metadata column
-  const FILTER_BAR_MAX_HEIGHT = 80;  // px — max height of the collapsed filter grid
+  const FILTER_ROW_HEIGHT      = 28;   // px — fixed height of each filter row (keeps rows from squishing with many keys)
+  const FILTER_BAR_VISIBLE_ROWS = 3;   // number of filter rows visible before the bar scrolls
   const PIE_MAX_LABELS = 10;   // max slices shown in the value-count pie chart tooltip
   const PIE_SIZE      = 140;   // px — diameter of the pie chart canvas
   const TOOLTIP_MAX_LABEL_CHARS = 25;  // max chars for key/value in sample hover tooltip
@@ -320,13 +321,13 @@ function createMetadataPanel({
     'grid-template-columns:repeat(auto-fill,minmax(180px,1fr))',
     'gap:4px 8px',
     'padding:6px 4px','border-bottom:1px solid #2a2a2a','flex-shrink:0',
-    'max-height:' + FILTER_BAR_MAX_HEIGHT + 'px','overflow-y:auto',
+    'max-height:' + (FILTER_ROW_HEIGHT * FILTER_BAR_VISIBLE_ROWS + 16) + 'px','overflow-y:auto',
   ].join(';');
 
   for (const k of _allKeys) {
     const cm = _colMeta[k];
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;';
+    row.style.cssText = 'display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;height:' + FILTER_ROW_HEIGHT + 'px;box-sizing:border-box;';
 
     const lbl = document.createElement('span');
     lbl.textContent = k + ':';
