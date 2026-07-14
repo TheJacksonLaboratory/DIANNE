@@ -153,6 +153,9 @@ const settings = createSettings(overlayControls, root, {
 });
 
 // ── Secondary image layer (created after viewport+settings; inserted before tileLayer) ─
+// _overlayCtrlApi must be declared before createSecondaryLayer because its constructor
+// immediately calls _resizeSecCanvas → getSecondaryFetchEnabled, which closes over this var.
+let _overlayCtrlApi = null;
 const secLayer = createSecondaryLayer({
   root, viewport, settings,
   ACTIVE_SAMPLE_REF: () => ACTIVE_SAMPLE,
@@ -314,7 +317,6 @@ toolbar.setMonoActive(!!(IS_MONOCHANNEL && SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
 toolbar.draw = draw;
 
 // ── Overlay controls (pred layer + opacity sliders + inference) ────────────
-let _overlayCtrlApi = null;
 secLayer.initSecChState();
 secLayer.buildSecChPanel();
 _overlayCtrlApi = createOverlayControls({
