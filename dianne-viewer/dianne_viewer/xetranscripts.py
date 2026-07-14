@@ -19,7 +19,8 @@ class XeniumTranscripts:
         Inverse (Xenium µm → H&E px):  he = (xe / xenium_mpp - Tr) @ inv(M).T
     """
 
-    def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125, fs=None):
+    def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125, fs=None,
+                 _zip_content=None):
         self.bundle_path = Path(bundle_path) if fs is None else bundle_path
         self._fs = fs
         self.image_metadata = image_metadata
@@ -46,11 +47,19 @@ class XeniumTranscripts:
 
         _bp = str(self.bundle_path).rstrip('/')
         transcript_path = _bp + '/transcripts.zarr.zip'
-        _exists = (self._fs.exists(transcript_path) if self._fs is not None
-                   else Path(transcript_path).exists())
+        # _zip_content takes priority (pre-fetched BytesIO or local Path)
+        if _zip_content is not None:
+            _exists = True
+        else:
+            _exists = (self._fs.exists(transcript_path) if self._fs is not None
+                       else Path(transcript_path).exists())
         if _exists:
             try:
-                if self._fs is not None:
+                if _zip_content is not None:
+                    import io
+                    _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
+                    zip_fs = fsspec.filesystem('zip', fo=_fo)
+                elif self._fs is not None:
                     import io
                     import warnings
                     with self._fs.open(transcript_path, 'rb') as _remote:

@@ -17,7 +17,8 @@ class XeniumCells:
     """
 
     def __init__(self, bundle_path, image_metadata, matrix_path=None, xenium_mpp=0.2125,
-                 cell_id_to_category=None, category_colors=None, max_cells=10000, fs=None):
+                 cell_id_to_category=None, category_colors=None, max_cells=10000, fs=None,
+                 _zip_content=None):
         self.bundle_path = Path(bundle_path) if fs is None else bundle_path
         self._fs = fs
         self.image_metadata = image_metadata
@@ -55,16 +56,17 @@ class XeniumCells:
         else:
             self.category_colors = dict(category_colors)
 
-        _cells_path = (str(self.bundle_path).rstrip('/') + '/cells.zarr.zip'
-                       if self._fs is not None
-                       else str(self.bundle_path / 'cells.zarr.zip'))
-        if self._fs is not None:
+        if _zip_content is not None:
+            _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
+            zip_fs = fsspec.filesystem('zip', fo=_fo)
+        elif self._fs is not None:
             import io
+            _cells_path = str(self.bundle_path).rstrip('/') + '/cells.zarr.zip'
             with self._fs.open(_cells_path, 'rb') as _remote:
                 _buf = io.BytesIO(_remote.read())
             zip_fs = fsspec.filesystem('zip', fo=_buf)
         else:
-            zip_fs = fsspec.filesystem('zip', fo=_cells_path)
+            zip_fs = fsspec.filesystem('zip', fo=str(self.bundle_path / 'cells.zarr.zip'))
         store = zip_fs.get_mapper('')
         self._root = zarr.open(store, mode='r')
         self._coords_xe = np.asarray(self._root['cell_summary'][:, :2], dtype=float)
@@ -230,6 +232,7 @@ class XeniumCellsFast:
         category_colors=None,
         max_cells: int = 2000,
         fs=None,
+        _zip_content=None,
     ):
         from collections import OrderedDict
 
@@ -261,7 +264,10 @@ class XeniumCellsFast:
         self.category_colors      = _to_dict(category_colors)
 
         # Open fast store
-        if self._fs is not None:
+        if _zip_content is not None:
+            _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
+            zip_fs = fsspec.filesystem("zip", fo=_fo)
+        elif self._fs is not None:
             import io
             with self._fs.open(str(self.fast_path), 'rb') as _remote:
                 _buf = io.BytesIO(_remote.read())

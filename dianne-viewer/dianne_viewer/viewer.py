@@ -107,6 +107,35 @@ def _open_image(path):
     return MultichannelImage(path, _zarr_store=store)
 
 
+def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
+    """Return a BytesIO of *fname* inside *bundle_path*, or None if not found.
+
+    Priority: s3 (presigned URL) > fs (s3fs / any fsspec) > local Path.
+    """
+    import io
+    full = str(bundle_path).rstrip('/') + '/' + fname
+    if s3 is not None and s3_bucket is not None:
+        key = full.lstrip('/')
+        try:
+            url = s3.generate_presigned_url(
+                'get_object', ExpiresIn=3600,
+                Params={'Bucket': s3_bucket, 'Key': key})
+            import urllib.request
+            with urllib.request.urlopen(url) as _r:
+                return io.BytesIO(_r.read())
+        except Exception as _e:
+            import warnings
+            warnings.warn(f'[DIANNE] presigned download failed for {full}: {_e}')
+            return None
+    if fs is not None:
+        if not fs.exists(full):
+            return None
+        with fs.open(full, 'rb') as _f:
+            return io.BytesIO(_f.read())
+    p = Path(bundle_path) / fname
+    return p if p.exists() else None
+
+
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
                   xenium_mpp=0.2125, category_colors=None, max_cells=2000,
                   xenium_bundle_paths=None, matrices=None, annotations=None,
@@ -115,7 +144,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   secondary_images=None, secondary_matrices=None,
                   draw_on_secondary=False, visium_ads=None,
                   sample_mapping=None, fullscreen_on_load=True,
-                  sample_metadata=None, fs=None):
+                  sample_metadata=None, fs=None, s3=None, s3_bucket=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -389,14 +418,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       if bundle_path is None:
         continue
 
-      # Proceed only if at least one of files cells.zarr.zip, cells_fast.zarr.zip, or transcripts.zarr.zip exists
-      def _xe_exists(fname, _bp=bundle_path, _fs=fs):
-        p = str(_bp).rstrip('/') + '/' + fname
-        result = _fs.exists(p) if _fs is not None else (Path(_bp) / fname).exists()
-        print(f'[DIANNE] checking {p}: {result}', flush=True)
-        return result
-      if not any(_xe_exists(fname) for fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']):
-        print(f'[DIANNE] no xenium files found for {sample}, skipping', flush=True)
+      # Pre-fetch all xenium zip files for this bundle (once, into BytesIO)
+      _xe_zips = {}
+      for _fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']:
+        _content = _fetch_xe_zip(bundle_path, _fname, fs=fs, s3=s3, s3_bucket=s3_bucket)
+        if _content is not None:
+          _xe_zips[_fname] = _content
+          print(f'[DIANNE] fetched {_fname} for {sample}', flush=True)
+      if not _xe_zips:
+        print(f'[DIANNE] no xenium files found for {sample} at {bundle_path}, skipping', flush=True)
         continue
 
       matrix_path = matrices.get(sample)
@@ -405,23 +435,24 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
       sample_xenium = XeniumTranscripts(bundle_path, sample_images[sample].metadata,
                         matrix_path=matrix_path,
-                        xenium_mpp=xenium_mpp, fs=fs)
-      _fast_zip_path = str(bundle_path).rstrip('/') + '/cells_fast.zarr.zip'
-      _fast_zip_exists = fs.exists(_fast_zip_path) if fs is not None else (Path(bundle_path) / 'cells_fast.zarr.zip').exists()
-      if _fast_zip_exists:
-        sample_cells = XeniumCellsFast(_fast_zip_path, sample_images[sample].metadata,
+                        xenium_mpp=xenium_mpp,
+                        _zip_content=_xe_zips.get('transcripts.zarr.zip'))
+      if 'cells_fast.zarr.zip' in _xe_zips:
+        sample_cells = XeniumCellsFast(bundle_path, sample_images[sample].metadata,
                        matrix_path=matrix_path,
                        xenium_mpp=xenium_mpp,
                        cell_id_to_category=sample_annotations,
                        category_colors=sample_colors,
-                       max_cells=max_cells, fs=fs)
+                       max_cells=max_cells,
+                       _zip_content=_xe_zips['cells_fast.zarr.zip'])
       else:
         sample_cells = XeniumCells(bundle_path, sample_images[sample].metadata,
                        matrix_path=matrix_path,
                        xenium_mpp=xenium_mpp,
                        cell_id_to_category=sample_annotations,
                        category_colors=sample_colors,
-                       max_cells=max_cells, fs=fs)
+                       max_cells=max_cells,
+                       _zip_content=_xe_zips.get('cells.zarr.zip'))
       xenium_by_sample[sample] = sample_xenium
       xenium_cells_by_sample[sample] = sample_cells
       sample_xenium_meta[sample] = sample_xenium.metadata
