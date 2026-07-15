@@ -108,11 +108,11 @@ def _open_image(path):
 
 
 def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
-    """Return a BytesIO of *fname* inside *bundle_path*, or None if not found.
+    """Return a metadata dict for lazy access to *fname* inside *bundle_path*, or None if not found.
 
+    The dict contains {'type': ..., 'url': ..., 'fs': ..., 'path': ...} for lazy remote/local access.
     Priority: s3 (presigned URL) > fs (s3fs / any fsspec) > local Path.
     """
-    import io
     full = str(bundle_path).rstrip('/') + '/' + fname
     if s3 is not None and s3_bucket is not None:
         key = full.lstrip('/')
@@ -120,20 +120,19 @@ def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
             url = s3.generate_presigned_url(
                 'get_object', ExpiresIn=3600,
                 Params={'Bucket': s3_bucket, 'Key': key})
-            import urllib.request
-            with urllib.request.urlopen(url) as _r:
-                return io.BytesIO(_r.read())
+            return {'type': 's3', 'url': url, 'fs': None, 'path': None}
         except Exception as _e:
             import warnings
-            warnings.warn(f'[DIANNE] presigned download failed for {full}: {_e}')
+            warnings.warn(f'[DIANNE] presigned URL generation failed for {full}: {_e}')
             return None
     if fs is not None:
         if not fs.exists(full):
             return None
-        with fs.open(full, 'rb') as _f:
-            return io.BytesIO(_f.read())
+        return {'type': 'fsspec', 'url': None, 'fs': fs, 'path': full}
     p = Path(bundle_path) / fname
-    return p if p.exists() else None
+    if p.exists():
+        return {'type': 'local', 'url': None, 'fs': None, 'path': str(p)}
+    return None
 
 
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
@@ -418,13 +417,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       if bundle_path is None:
         continue
 
-      # Pre-fetch all xenium zip files for this bundle (once, into BytesIO)
+      # Collect metadata for lazy xenium zip access (no full download)
       _xe_zips = {}
       for _fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']:
-        _content = _fetch_xe_zip(bundle_path, _fname, fs=fs, s3=s3, s3_bucket=s3_bucket)
-        if _content is not None:
-          _xe_zips[_fname] = _content
-          print(f'[DIANNE] fetched {_fname} for {sample}', flush=True)
+        _meta = _fetch_xe_zip(bundle_path, _fname, fs=fs, s3=s3, s3_bucket=s3_bucket)
+        if _meta is not None:
+          _xe_zips[_fname] = _meta
+          print(f'[DIANNE] found {_fname} for {sample} ({_meta["type"]})', flush=True)
       if not _xe_zips:
         print(f'[DIANNE] no xenium files found for {sample} at {bundle_path}, skipping', flush=True)
         continue

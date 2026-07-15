@@ -47,7 +47,7 @@ class XeniumTranscripts:
 
         _bp = str(self.bundle_path).rstrip('/')
         transcript_path = _bp + '/transcripts.zarr.zip'
-        # _zip_content takes priority (pre-fetched BytesIO or local Path)
+        # Check if file exists
         if _zip_content is not None:
             _exists = True
         else:
@@ -55,7 +55,24 @@ class XeniumTranscripts:
                        else Path(transcript_path).exists())
         if _exists:
             try:
-                if _zip_content is not None:
+                # Handle metadata dict (new lazy approach)
+                if isinstance(_zip_content, dict) and 'type' in _zip_content:
+                    if _zip_content['type'] == 's3':
+                        # S3 presigned URL: pass presigned URL to fsspec (auto-detects HTTP)
+                        zip_fs = fsspec.filesystem('zip', fo=_zip_content['url'])
+                    elif _zip_content['type'] == 'fsspec':
+                        # fsspec file: open via the filesystem object and wrap
+                        import io
+                        _remote_fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
+                        zip_fs = fsspec.filesystem('zip', fo=_remote_fo)
+                    elif _zip_content['type'] == 'local':
+                        # Local file: lazy access via local path string
+                        zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
+                    else:
+                        # Fallback: treat as local path string
+                        zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
+                # Legacy: handle pre-fetched BytesIO or Path objects
+                elif _zip_content is not None:
                     import io
                     _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
                     zip_fs = fsspec.filesystem('zip', fo=_fo)
@@ -93,6 +110,11 @@ class XeniumTranscripts:
                 import warnings
                 warnings.warn(f'[DIANNE] Failed to open transcripts.zarr.zip at {transcript_path}: {_e}')
                 self._root = None
+                self.gene_to_index = {}
+                self.index_to_gene = {}
+                self.gene_names = []
+                self.grid_keys = []
+                self.grids = {}
                 self.gene_to_index = {}
                 self.index_to_gene = {}
                 self.gene_names = []

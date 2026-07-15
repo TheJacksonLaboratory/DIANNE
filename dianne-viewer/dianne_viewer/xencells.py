@@ -56,7 +56,23 @@ class XeniumCells:
         else:
             self.category_colors = dict(category_colors)
 
-        if _zip_content is not None:
+        # Handle metadata dict (new lazy approach) or legacy BytesIO/Path objects
+        if isinstance(_zip_content, dict) and 'type' in _zip_content:
+            if _zip_content['type'] == 's3':
+                # S3 presigned URL: pass presigned URL to fsspec (auto-detects HTTP)
+                zip_fs = fsspec.filesystem('zip', fo=_zip_content['url'])
+            elif _zip_content['type'] == 'fsspec':
+                # fsspec file: open via the filesystem object and wrap
+                import io
+                _remote_fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
+                zip_fs = fsspec.filesystem('zip', fo=_remote_fo)
+            elif _zip_content['type'] == 'local':
+                # Local file: lazy access via local path string
+                zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
+            else:
+                # Fallback: treat as local path string
+                zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
+        elif _zip_content is not None:
             _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
             zip_fs = fsspec.filesystem('zip', fo=_fo)
         elif self._fs is not None:
@@ -263,8 +279,23 @@ class XeniumCellsFast:
         self.cell_id_to_category = _to_dict(cell_id_to_category)
         self.category_colors      = _to_dict(category_colors)
 
-        # Open fast store
-        if _zip_content is not None:
+        # Open fast store: handle metadata dict (new lazy approach) or legacy BytesIO/Path objects
+        if isinstance(_zip_content, dict) and 'type' in _zip_content:
+            if _zip_content['type'] == 's3':
+                # S3 presigned URL: pass presigned URL to fsspec (auto-detects HTTP)
+                zip_fs = fsspec.filesystem("zip", fo=_zip_content['url'])
+            elif _zip_content['type'] == 'fsspec':
+                # fsspec file: open via the filesystem object and wrap
+                import io
+                _remote_fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
+                zip_fs = fsspec.filesystem("zip", fo=_remote_fo)
+            elif _zip_content['type'] == 'local':
+                # Local file: lazy access via local path string
+                zip_fs = fsspec.filesystem("zip", fo=_zip_content['path'])
+            else:
+                # Fallback: treat as local path string
+                zip_fs = fsspec.filesystem("zip", fo=_zip_content['path'])
+        elif _zip_content is not None:
             _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
             zip_fs = fsspec.filesystem("zip", fo=_fo)
         elif self._fs is not None:
