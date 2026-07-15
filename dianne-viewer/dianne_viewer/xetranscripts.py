@@ -58,8 +58,9 @@ class XeniumTranscripts:
                 # Handle metadata dict (new lazy approach)
                 if isinstance(_zip_content, dict) and 'type' in _zip_content:
                     if _zip_content['type'] == 's3':
-                        # S3 presigned URL: pass presigned URL to fsspec (auto-detects HTTP)
-                        zip_fs = fsspec.filesystem('zip', fo=_zip_content['url'])
+                        # S3 presigned URL: use fsspec.open() for HTTP range request support (seeking)
+                        _fo = fsspec.open(_zip_content['url'], 'rb')
+                        zip_fs = fsspec.filesystem('zip', fo=_fo)
                     elif _zip_content['type'] == 'fsspec':
                         # fsspec file: open via the filesystem object and wrap
                         import io
