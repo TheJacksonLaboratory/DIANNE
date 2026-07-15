@@ -1,4 +1,5 @@
 from pathlib import Path
+import threading
 
 import fsspec
 import numpy as np
@@ -41,6 +42,8 @@ class XeniumTranscripts:
             self._Mi = np.linalg.inv(self._M)
 
         self._root = None
+        self._zip_meta = None   # stored for reopening per-request (remote stores are not thread-safe)
+        self._lock = threading.Lock()
         self.gene_to_index = {}
         self.index_to_gene = {}
         self.gene_names = []
@@ -60,7 +63,9 @@ class XeniumTranscripts:
                 # Handle metadata dict (new lazy approach)
                 if isinstance(_zip_content, dict) and 'type' in _zip_content:
                     if _zip_content['type'] == 'fsspec':
-                        # s3fs / any fsspec: seekable via S3 range requests — lazy, no full download
+                        # s3fs / any fsspec: seekable via S3 range requests — lazy, no full download.
+                        # Store meta for reopening per-request (file handles are not thread-safe).
+                        self._zip_meta = _zip_content
                         _fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
                         zip_fs = ZipFileSystem(_fo, mode='r')
                         store = FSMap('', zip_fs, check=False)
@@ -123,6 +128,15 @@ class XeniumTranscripts:
             },
         }
 
+    def _open_root(self):
+        """Open a fresh zarr root for remote stores (s3fs handles are not thread-safe)."""
+        if self._zip_meta is not None and self._zip_meta['type'] == 'fsspec':
+            _fo = self._zip_meta['fs'].open(self._zip_meta['path'], 'rb')
+            zip_fs = ZipFileSystem(_fo, mode='r')
+            store = FSMap('', zip_fs, check=False)
+            return zarr.open(store, mode='r')
+        return self._root
+
     def get_tile_transcripts(self, grid, level, row, col, genes):
         if not genes or self._root is None:
             return []
@@ -157,42 +171,46 @@ class XeniumTranscripts:
         x1_xe, y1_xe = xe_corners.max(axis=0)
 
         grid_meta = self.grids[grid]
-        grid_group = self._root['grids'][grid_meta['key']]
 
-        points = []
-        for loc in self._grid_locs_for_box(x0_xe, y0_xe, x1_xe, y1_xe, grid_meta['spacing']):
-            if loc not in grid_group:
-                continue
+        # Open a fresh root per request for remote stores (s3fs handles are not thread-safe)
+        with self._lock:
+            root = self._open_root()
+            grid_group = root['grids'][grid_meta['key']]
 
-            cell = grid_group[loc]
-            coords = np.asarray(cell['location'][:])
-            if coords.size == 0:
-                continue
-            coords = coords[:, :2]
+            points = []
+            for loc in self._grid_locs_for_box(x0_xe, y0_xe, x1_xe, y1_xe, grid_meta['spacing']):
+                if loc not in grid_group:
+                    continue
 
-            gene_ids = np.asarray(cell['gene_identity'][:]).reshape(-1)
-            mask = (
-                (coords[:, 0] >= x0_xe) & (coords[:, 0] < x1_xe) &
-                (coords[:, 1] >= y0_xe) & (coords[:, 1] < y1_xe) &
-                np.isin(gene_ids, gene_indices)
-            )
-            if not np.any(mask):
-                continue
+                cell = grid_group[loc]
+                coords = np.asarray(cell['location'][:])
+                if coords.size == 0:
+                    continue
+                coords = coords[:, :2]
 
-            # Transform XE coords back to H&E pixel space for rendering
-            he_coords = self._xe_to_he(coords[mask])
-            counts = None
-            if grid != 0 and 'cluster_count' in cell:
-                counts = np.asarray(cell['cluster_count'][:]).reshape(-1)[mask]
-            for i, (he_coord, gene_id) in enumerate(zip(he_coords, gene_ids[mask])):
-                pt = {
-                    'x': float(he_coord[0]),
-                    'y': float(he_coord[1]),
-                    'gene': self.index_to_gene[int(gene_id)],
-                }
-                if counts is not None:
-                    pt['count'] = int(counts[i])
-                points.append(pt)
+                gene_ids = np.asarray(cell['gene_identity'][:]).reshape(-1)
+                mask = (
+                    (coords[:, 0] >= x0_xe) & (coords[:, 0] < x1_xe) &
+                    (coords[:, 1] >= y0_xe) & (coords[:, 1] < y1_xe) &
+                    np.isin(gene_ids, gene_indices)
+                )
+                if not np.any(mask):
+                    continue
+
+                # Transform XE coords back to H&E pixel space for rendering
+                he_coords = self._xe_to_he(coords[mask])
+                counts = None
+                if grid != 0 and 'cluster_count' in cell:
+                    counts = np.asarray(cell['cluster_count'][:]).reshape(-1)[mask]
+                for i, (he_coord, gene_id) in enumerate(zip(he_coords, gene_ids[mask])):
+                    pt = {
+                        'x': float(he_coord[0]),
+                        'y': float(he_coord[1]),
+                        'gene': self.index_to_gene[int(gene_id)],
+                    }
+                    if counts is not None:
+                        pt['count'] = int(counts[i])
+                    points.append(pt)
 
         return points
 
