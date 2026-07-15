@@ -59,11 +59,12 @@ class XeniumCells:
         # Handle metadata dict (new lazy approach) or legacy BytesIO/Path objects
         if isinstance(_zip_content, dict) and 'type' in _zip_content:
             if _zip_content['type'] == 's3':
-                # S3 presigned URL: use fsspec.open() for HTTP range request support (seeking)
-                _fo = fsspec.open(_zip_content['url'], 'rb')
-                zip_fs = fsspec.filesystem('zip', fo=_fo)
+                # S3 presigned URL: use target_protocol='http' for range request seeking
+                zip_fs = fsspec.filesystem('zip', fo=_zip_content['url'],
+                                          target_protocol='http',
+                                          target_options={'use_listings_cache': False})
             elif _zip_content['type'] == 'fsspec':
-                # fsspec file: open via the filesystem object and wrap
+                # fsspec file: lazy access via fsspec (e.g., s3fs, but not presigned)
                 import io
                 _remote_fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
                 zip_fs = fsspec.filesystem('zip', fo=_remote_fo)
@@ -283,11 +284,12 @@ class XeniumCellsFast:
         # Open fast store: handle metadata dict (new lazy approach) or legacy BytesIO/Path objects
         if isinstance(_zip_content, dict) and 'type' in _zip_content:
             if _zip_content['type'] == 's3':
-                # S3 presigned URL: use fsspec.open() for HTTP range request support (seeking)
-                _fo = fsspec.open(_zip_content['url'], 'rb')
-                zip_fs = fsspec.filesystem("zip", fo=_fo)
+                # S3 presigned URL: use target_protocol='http' for range request seeking
+                zip_fs = fsspec.filesystem("zip", fo=_zip_content['url'],
+                                          target_protocol='http',
+                                          target_options={'use_listings_cache': False})
             elif _zip_content['type'] == 'fsspec':
-                # fsspec file: open via the filesystem object and wrap
+                # fsspec file: lazy access via fsspec (e.g., s3fs, but not presigned)
                 import io
                 _remote_fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
                 zip_fs = fsspec.filesystem("zip", fo=_remote_fo)
