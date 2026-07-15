@@ -34,6 +34,7 @@ const HAS_VISIUM               = __HAS_VISIUM__;
 const VISIUM_GENES_BY_SAMPLE   = __VISIUM_GENES_BY_SAMPLE__;
 const SAMPLE_MAPPING           = __SAMPLE_MAPPING__;
 const SAMPLE_METADATA          = __SAMPLE_METADATA__;
+const MPP                      = __MPP__;  // µm per image pixel; null if not provided
 const _STOP_URL                = __STOP_URL__;
 
 // ── Mutable session state ─────────────────────────────────────────────────
@@ -446,6 +447,9 @@ _metadataPanel = createMetadataPanel({
 
 // ── Modals ────────────────────────────────────────────────────────────────
 const modalHelpers = createModalHelpers();
+
+// ── Scale bar ─────────────────────────────────────────────────────────────
+createScaleBar(root, viewport, MPP);
 
 // ── Footer controls ───────────────────────────────────────────────────────
 createFooterControls({

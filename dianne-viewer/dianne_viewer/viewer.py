@@ -147,6 +147,7 @@ def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
 
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
                   xenium_mpp=0.2125, category_colors=None, max_cells=2000,
+                  mpp=None,
                   xenium_bundle_paths=None, matrices=None, annotations=None,
                   run_inference_fn=None, sample_sizes=None,
                   save_func=None, load_func=None, list_names_func=None,
@@ -572,6 +573,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       'toolbar.js',
       'demo.js',
       # Extracted UI modules (Part 1b refactor)
+      'scalebar.js',
       'network_gauges.js',
       'perf_monitor.js',
       'secondary_layer.js',
@@ -631,6 +633,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       visium_genes_by_sample = json.dumps(_visium_genes_by_sample),
       sample_mapping       = json.dumps({str(k): str(v) for k, v in sample_mapping.items()} if sample_mapping else {}),
       sample_metadata      = sample_metadata_json,
+      mpp                  = str(float(mpp)) if mpp is not None else 'null',
       stop_url             = json.dumps(_stop_url),
     )
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
