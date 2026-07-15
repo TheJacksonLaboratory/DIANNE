@@ -419,13 +419,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
       # Collect metadata for lazy xenium zip access (no full download)
       _xe_zips = {}
-      for _fname in ['cells.zarr.zip', 'cells_fast.zarr.zip', 'transcripts.zarr.zip']:
+      for _fname in ['cells.zarr.zip', 'transcripts.zarr.zip']:
         _meta = _fetch_xe_zip(bundle_path, _fname, fs=fs, s3=s3, s3_bucket=s3_bucket)
         if _meta is not None:
           _xe_zips[_fname] = _meta
-          print(f'[DIANNE] found {_fname} for {sample} ({_meta["type"]})', flush=True)
+        #   print(f'[DIANNE] found {_fname} for {sample} ({_meta["type"]})', flush=True)
       if not _xe_zips:
-        print(f'[DIANNE] no xenium files found for {sample} at {bundle_path}, skipping', flush=True)
+        # print(f'[DIANNE] no xenium files found for {sample} at {bundle_path}, skipping', flush=True)
         continue
 
       matrix_path = matrices.get(sample)
