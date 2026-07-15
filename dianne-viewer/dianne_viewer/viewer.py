@@ -110,25 +110,35 @@ def _open_image(path):
 def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
     """Return a metadata dict for lazy access to *fname* inside *bundle_path*, or None if not found.
 
-    The dict contains {'type': ..., 'url': ..., 'fs': ..., 'path': ...} for lazy remote/local access.
-    Priority: s3 (presigned URL) > fs (s3fs / any fsspec) > local Path.
+    Priority: fs (s3fs / any fsspec) > s3+s3_bucket (boto3, credentials extracted to s3fs) > local Path.
+    Both remote paths use s3fs for seekable range-request access — no full download.
     """
     full = str(bundle_path).rstrip('/') + '/' + fname
-    if s3 is not None and s3_bucket is not None:
-        key = full.lstrip('/')
-        try:
-            url = s3.generate_presigned_url(
-                'get_object', ExpiresIn=3600,
-                Params={'Bucket': s3_bucket, 'Key': key})
-            return {'type': 's3', 'url': url, 'fs': None, 'path': None}
-        except Exception as _e:
-            import warnings
-            warnings.warn(f'[DIANNE] presigned URL generation failed for {full}: {_e}')
-            return None
+    # fs (s3fs / any fsspec): lazy seekable access via range requests
     if fs is not None:
         if not fs.exists(full):
             return None
         return {'type': 'fsspec', 'url': None, 'fs': fs, 'path': full}
+    if s3 is not None and s3_bucket is not None:
+        # Build an s3fs from the boto3 client's credentials so we get seekable range-request access
+        # instead of non-seekable presigned HTTP URLs.
+        try:
+            import s3fs as _s3fs
+            _creds = s3._request_signer._credentials.get_frozen_credentials()
+            _s3_fs = _s3fs.S3FileSystem(
+                key=_creds.access_key,
+                secret=_creds.secret_key,
+                token=_creds.token,
+            )
+            key = full.lstrip('/')
+            s3_path = f's3://{s3_bucket}/{key}'
+            if not _s3_fs.exists(s3_path):
+                return None
+            return {'type': 'fsspec', 'url': None, 'fs': _s3_fs, 'path': s3_path}
+        except Exception as _e:
+            import warnings
+            warnings.warn(f'[DIANNE] s3fs construction from boto3 credentials failed for {full}: {_e}')
+            return None
     p = Path(bundle_path) / fname
     if p.exists():
         return {'type': 'local', 'url': None, 'fs': None, 'path': str(p)}

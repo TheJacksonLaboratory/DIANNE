@@ -59,25 +59,17 @@ class XeniumTranscripts:
             try:
                 # Handle metadata dict (new lazy approach)
                 if isinstance(_zip_content, dict) and 'type' in _zip_content:
-                    if _zip_content['type'] == 's3':
-                        # S3 presigned URL: use fs.open() for seekable file-like object
-                        _fo = fsspec.open(_zip_content['url'], 'rb')
-                        zip_fs = ZipFileSystem(_fo, mode='r')
-                        store = FSMap('', zip_fs, check=False)
-                        self._root = zarr.open(store, mode='r')
-                    elif _zip_content['type'] == 'fsspec':
-                        # fsspec file (s3fs, etc): use fs.open() for seekable access
+                    if _zip_content['type'] == 'fsspec':
+                        # s3fs / any fsspec: seekable via S3 range requests — lazy, no full download
                         _fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
                         zip_fs = ZipFileSystem(_fo, mode='r')
                         store = FSMap('', zip_fs, check=False)
                         self._root = zarr.open(store, mode='r')
                     elif _zip_content['type'] == 'local':
-                        # Local file: use standard fsspec approach
                         zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
                         store = zip_fs.get_mapper('')
                         self._root = zarr.open(store, mode='r')
                     else:
-                        # Fallback: treat as local path string
                         zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
                         store = zip_fs.get_mapper('')
                         self._root = zarr.open(store, mode='r')
