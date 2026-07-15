@@ -2,6 +2,8 @@ from collections import OrderedDict
 from pathlib import Path
 
 import fsspec
+from fsspec.implementations.zip import ZipFileSystem
+from fsspec.mapping import FSMap
 import numpy as np
 import pandas as pd
 import zarr
@@ -59,34 +61,27 @@ class XeniumCells:
         # Handle metadata dict (new lazy approach) or legacy BytesIO/Path objects
         if isinstance(_zip_content, dict) and 'type' in _zip_content:
             if _zip_content['type'] == 's3':
-                # S3 presigned URL: use target_protocol='http' for range request seeking
-                zip_fs = fsspec.filesystem('zip', fo=_zip_content['url'],
-                                          target_protocol='http',
-                                          target_options={'use_listings_cache': False})
+                # S3 presigned URL: use fs.open() for seekable file-like object
+                _fo = fsspec.open(_zip_content['url'], 'rb')
+                zip_fs = ZipFileSystem(_fo, mode='r')
+                store = FSMap('', zip_fs, check=False)
+                self._root = zarr.open(store, mode='r')
             elif _zip_content['type'] == 'fsspec':
-                # fsspec file: lazy access via fsspec (e.g., s3fs, but not presigned)
-                import io
-                _remote_fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
-                zip_fs = fsspec.filesystem('zip', fo=_remote_fo)
+                # fsspec file (s3fs, etc): use fs.open() for seekable access
+                _fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
+                zip_fs = ZipFileSystem(_fo, mode='r')
+                store = FSMap('', zip_fs, check=False)
+                self._root = zarr.open(store, mode='r')
             elif _zip_content['type'] == 'local':
-                # Local file: lazy access via local path string
+                # Local file: use standard fsspec approach
                 zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
+                store = zip_fs.get_mapper('')
+                self._root = zarr.open(store, mode='r')
             else:
                 # Fallback: treat as local path string
                 zip_fs = fsspec.filesystem('zip', fo=_zip_content['path'])
-        elif _zip_content is not None:
-            _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
-            zip_fs = fsspec.filesystem('zip', fo=_fo)
-        elif self._fs is not None:
-            import io
-            _cells_path = str(self.bundle_path).rstrip('/') + '/cells.zarr.zip'
-            with self._fs.open(_cells_path, 'rb') as _remote:
-                _buf = io.BytesIO(_remote.read())
-            zip_fs = fsspec.filesystem('zip', fo=_buf)
-        else:
-            zip_fs = fsspec.filesystem('zip', fo=str(self.bundle_path / 'cells.zarr.zip'))
-        store = zip_fs.get_mapper('')
-        self._root = zarr.open(store, mode='r')
+                store = zip_fs.get_mapper('')
+                self._root = zarr.open(store, mode='r')
         self._coords_xe = np.asarray(self._root['cell_summary'][:, :2], dtype=float)
         self._tree = KDTree(self._coords_xe)
         self._has_polygon_vertices = 'polygon_vertices' in self._root
@@ -284,33 +279,27 @@ class XeniumCellsFast:
         # Open fast store: handle metadata dict (new lazy approach) or legacy BytesIO/Path objects
         if isinstance(_zip_content, dict) and 'type' in _zip_content:
             if _zip_content['type'] == 's3':
-                # S3 presigned URL: use target_protocol='http' for range request seeking
-                zip_fs = fsspec.filesystem("zip", fo=_zip_content['url'],
-                                          target_protocol='http',
-                                          target_options={'use_listings_cache': False})
+                # S3 presigned URL: use fs.open() for seekable file-like object
+                _fo = fsspec.open(_zip_content['url'], 'rb')
+                zip_fs = ZipFileSystem(_fo, mode='r')
+                store = FSMap('', zip_fs, check=False)
+                self._root = zarr.open(store, mode='r')
             elif _zip_content['type'] == 'fsspec':
-                # fsspec file: lazy access via fsspec (e.g., s3fs, but not presigned)
-                import io
-                _remote_fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
-                zip_fs = fsspec.filesystem("zip", fo=_remote_fo)
+                # fsspec file (s3fs, etc): use fs.open() for seekable access
+                _fo = _zip_content['fs'].open(_zip_content['path'], 'rb')
+                zip_fs = ZipFileSystem(_fo, mode='r')
+                store = FSMap('', zip_fs, check=False)
+                self._root = zarr.open(store, mode='r')
             elif _zip_content['type'] == 'local':
-                # Local file: lazy access via local path string
+                # Local file: use standard fsspec approach
                 zip_fs = fsspec.filesystem("zip", fo=_zip_content['path'])
+                store = zip_fs.get_mapper('')
+                self._root = zarr.open(store, mode='r')
             else:
                 # Fallback: treat as local path string
                 zip_fs = fsspec.filesystem("zip", fo=_zip_content['path'])
-        elif _zip_content is not None:
-            _fo = _zip_content if hasattr(_zip_content, 'read') else open(_zip_content, 'rb')
-            zip_fs = fsspec.filesystem("zip", fo=_fo)
-        elif self._fs is not None:
-            import io
-            with self._fs.open(str(self.fast_path), 'rb') as _remote:
-                _buf = io.BytesIO(_remote.read())
-            zip_fs = fsspec.filesystem("zip", fo=_buf)
-        else:
-            zip_fs = fsspec.filesystem("zip", fo=str(self.fast_path))
-        store    = zip_fs.get_mapper("")
-        self._root = zarr.open(store, mode="r")
+                store = zip_fs.get_mapper('')
+                self._root = zarr.open(store, mode='r')
 
         root_attrs = dict(self._root.attrs)
         self._grid_spacing_xe = float(root_attrs["grid_spacing_xe"])
