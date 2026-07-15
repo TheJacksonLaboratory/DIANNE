@@ -25,7 +25,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -189,6 +189,27 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   // Tiles (patch overlay) toggle
   if (patchOverlay) {
     actionRow.appendChild(patchOverlay.toggleBtn);
+  }
+
+  // Align button (shown whenever matrices are present)
+  if (alignOptions && typeof alignOptions.onAlign === 'function') {
+    const alignBtn = document.createElement('button');
+    alignBtn.textContent = 'Align';
+    alignBtn.title = 'Auto-align images via phase cross-correlation (adjusts translation only)';
+    alignBtn.dataset.demoId = 'align-btn';
+    alignBtn.style.cssText = [
+      'background:rgba(80,200,255,0.15)', 'border:1px solid #40b8e8',
+      'color:#9de0f5', 'border-radius:4px', 'padding:2px 7px',
+      'cursor:pointer', 'font-size:12px', 'line-height:1.4', 'white-space:nowrap',
+    ].join(';');
+    alignBtn.addEventListener('click', () => {
+      if (!alignBtn.disabled) {
+        alignBtn.style.opacity = '0.55';
+        alignOptions.onAlign(alignBtn);
+        alignBtn.style.opacity = '1';
+      }
+    });
+    actionRow.appendChild(alignBtn);
   }
 
   // ── Row 6 (save row) — built lazily; appended to bar only if non-empty ───

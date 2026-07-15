@@ -36,6 +36,8 @@ const SAMPLE_MAPPING           = __SAMPLE_MAPPING__;
 const SAMPLE_METADATA          = __SAMPLE_METADATA__;
 const MPP                      = __MPP__;  // µm per image pixel; null if not provided
 const _STOP_URL                = __STOP_URL__;
+const HAS_MATRICES             = __HAS_MATRICES__;
+const ADJUST_PRIMARY_MATRICES  = __ADJUST_PRIMARY_MATRICES__;
 
 // ── Mutable session state ─────────────────────────────────────────────────
 let ACTIVE_SAMPLE = SAMPLES[0];
@@ -311,7 +313,32 @@ const toolbar = createToolbar(root, viewport, draw, BASE_URL,
   visiumOverlay,
   (IS_MONOCHANNEL && mono2d) ? { mono2d, monoMeta: MONO_META, isSampleMono: s => !!(SAMPLE_IS_MONO[s]) } : null,
   { dropdown: secLayer.getSecChDropdown() },
-  hoverInteraction
+  hoverInteraction,
+  HAS_MATRICES ? {
+    onAlign: function(btn) {
+      if (btn) btn.disabled = true;
+      const vpRect = root.getBoundingClientRect();
+      const tl = viewport.toImageSpace(0, 0);
+      const br = viewport.toImageSpace(vpRect.width, vpRect.height);
+      const vp = { x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y };
+      fetch(BASE_URL + '/align', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sample: ACTIVE_SAMPLE, viewport: vp }),
+      }).then(r => r.json()).then(res => {
+        if (res.ok && res.matrix) {
+          SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE] = res.matrix;
+          secLayer.drawSecondaryLayer(viewport.getTransform());
+          const dx = res.shift ? res.shift.dx.toFixed(1) : '?';
+          const dy = res.shift ? res.shift.dy.toFixed(1) : '?';
+          log('Aligned: dx=' + dx + ' dy=' + dy + ' px');
+        } else {
+          log('Align error: ' + (res.error || 'unknown'));
+        }
+      }).catch(err => log('Align error: ' + err))
+        .finally(() => { if (btn) btn.disabled = false; });
+    },
+  } : null
 );
 toolbar.setMonoActive(!!(IS_MONOCHANNEL && SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
 // Expose draw on toolbar for overlay_controls reference

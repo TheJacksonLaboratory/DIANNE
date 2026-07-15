@@ -154,7 +154,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   secondary_images=None, secondary_matrices=None,
                   draw_on_secondary=False, visium_ads=None,
                   sample_mapping=None, fullscreen_on_load=True,
-                  sample_metadata=None, fs=None, s3=None, s3_bucket=None):
+                  sample_metadata=None, fs=None, s3=None, s3_bucket=None,
+                  adjust_primary_matrices=True):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -481,6 +482,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     # annotation_layers_json is built later; attach placeholder now, replace after build
     server._annotation_layers_json = '[]'
 
+    # ── store per-sample alignment matrices on server for /align endpoint ─────
+    server._align_matrices = dict(sample_secondary_matrix)   # {sample: matrix_dict|None}
+    server._adjust_primary_matrices = bool(adjust_primary_matrices)
+
     # ── store tile_coords_fn on server for lazy per-sample serving ────────────
     # Derived from run_inference_fn.tile_coords / .tile_size when available.
     _tile_coords_fn = None
@@ -603,6 +608,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     _stop_url = f'{base_url}/stop'
 
     _ts = _time.monotonic()
+    has_matrices = bool(matrices) or bool(secondary_matrices)
+
     html = _render(
       _read_html('shell.html'),
       js                   = js,
@@ -635,6 +642,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       sample_metadata      = sample_metadata_json,
       mpp                  = str(float(mpp)) if mpp is not None else 'null',
       stop_url             = json.dumps(_stop_url),
+      has_matrices         = 'true' if has_matrices else 'false',
+      adjust_primary_matrices = 'true' if adjust_primary_matrices else 'false',
     )
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 

@@ -110,6 +110,9 @@ class ViewerServer:
         self._tile_coords_fn  = None   # callable(sample) -> {'x': [...], 'y': [...]}
         self._tile_size       = None   # int, secondary-space pixels
         self._visium_ads      = {}     # dict[sample] -> AnnData (spots × genes)
+        # Alignment matrices — set by create_viewer after construction
+        self._align_matrices = {}          # {sample: matrix_dict|None}
+        self._adjust_primary_matrices = True
 
         if port is None:
             with socket.socket() as s:
@@ -158,6 +161,203 @@ class ViewerServer:
     def strokes(self):
         """Backward-compat property: return strokes for current sample."""
         return self.strokes_by_sample.get(self.chosen_sample, {'strokes_positive': [], 'strokes_negative': []})
+
+    # ── alignment helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_lowres_gray(img, max_dim=1000):
+        """Extract a low-res float32 grayscale array from any supported image type.
+
+        Returns (gray_array, downsample_factor) where downsample_factor is the
+        number of full-resolution pixels per low-res pixel.
+        """
+        import numpy as np
+        import zarr
+
+        z = getattr(img, '_z', None)
+        if z is None:
+            raise RuntimeError('image has no zarr store (_z)')
+
+        n_levels = img.n_levels
+        levels_meta = img.levels
+
+        # Find the finest level that still fits within max_dim on its longest axis
+        best = n_levels - 1
+        for i in range(n_levels):
+            h, w = levels_meta[i]['shape']
+            if max(h, w) <= max_dim:
+                best = i
+                break
+
+        arr = z[str(best)] if isinstance(z, zarr.Group) else z
+        data = arr[:]  # load into memory
+
+        if data.ndim == 2:
+            gray = data.astype(np.float32)
+        elif data.ndim == 3:
+            channels_last = getattr(img, '_channels_last', False)
+            if channels_last:      # (H, W, C)
+                gray = data[:, :, :min(3, data.shape[2])].astype(np.float32).mean(axis=2)
+            else:                  # (C, H, W)
+                gray = data[:min(3, data.shape[0])].astype(np.float32).mean(axis=0)
+        else:
+            raise RuntimeError(f'unexpected zarr array shape {data.shape}')
+
+        h0, _w0 = levels_meta[0]['shape']
+        h_lr = gray.shape[0]
+        ds = h0 / h_lr  # full-res pixels per low-res pixel
+        return gray, ds
+
+    def _compute_alignment(self, sample, viewport=None):
+        """Compute translation correction via phase cross-correlation.
+
+        Warps the secondary image into primary space (using the current affine
+        matrix), runs phase_cross_correlation against the primary image, and
+        returns an updated matrix dict with tx/ty corrected.
+
+        If adjust_primary_matrices is True the shift is applied in the primary
+        direction (shift subtracted); otherwise it is applied directly to the
+        secondary transform (shift added).  Both cases update
+        self._align_matrices[sample] and return the new matrix.
+        """
+        import numpy as np
+        try:
+            from skimage.registration import phase_cross_correlation
+        except ImportError:
+            raise RuntimeError(
+                'scikit-image is required for alignment. '
+                'Install it with: pip install scikit-image'
+            )
+
+        primary_img   = self.images.get(sample)
+        secondary_img = self.secondary_images.get(sample)
+        if primary_img is None:
+            raise RuntimeError(f'no primary image for sample {sample!r}')
+        if secondary_img is None:
+            raise RuntimeError(f'no secondary image for sample {sample!r}')
+
+        MAX_DIM = 1000
+        primary_gray, prim_ds = self._get_lowres_gray(primary_img,   MAX_DIM)
+        sec_gray,     sec_ds  = self._get_lowres_gray(secondary_img, MAX_DIM)
+
+        mat = self._align_matrices.get(sample)
+
+        if mat is not None:
+            from scipy.ndimage import affine_transform
+
+            # Optional: crop to viewport region (primary low-res coords)
+            if viewport:
+                x0 = max(0,  int(viewport.get('x', 0)            / prim_ds))
+                y0 = max(0,  int(viewport.get('y', 0)            / prim_ds))
+                x1 = min(primary_gray.shape[1],
+                         int((viewport.get('x', 0) + viewport.get('w', primary_gray.shape[1]*prim_ds)) / prim_ds))
+                y1 = min(primary_gray.shape[0],
+                         int((viewport.get('y', 0) + viewport.get('h', primary_gray.shape[0]*prim_ds)) / prim_ds))
+                if x1 <= x0 or y1 <= y0:
+                    x0, y0, x1, y1 = 0, 0, primary_gray.shape[1], primary_gray.shape[0]
+            else:
+                x0, y0 = 0, 0
+                y1, x1 = primary_gray.shape
+
+            primary_crop = primary_gray[y0:y1, x0:x1]
+
+            # Build the scipy affine_transform from primary-crop (row,col) to
+            # secondary low-res (row,col).
+            #
+            # Notation (using image convention: col=x, row=y):
+            #   prim_full_x = (c + x0) * prim_ds
+            #   prim_full_y = (r + y0) * prim_ds
+            #   sec_full_x  = mi00*(prim_x - tx) + mi01*(prim_y - ty)
+            #   sec_full_y  = mi10*(prim_x - tx) + mi11*(prim_y - ty)
+            #   sec_lr_row  = sec_full_y / sec_ds
+            #   sec_lr_col  = sec_full_x / sec_ds
+            #
+            # scipy affine_transform:  input_coord = A @ output_coord + b
+            #   output_coord = [r, c]  (row, col in primary crop)
+            #   input_coord  = [sec_lr_row, sec_lr_col]
+            s   = prim_ds / sec_ds
+            bx  = x0 * prim_ds - mat['tx']
+            by  = y0 * prim_ds - mat['ty']
+            A   = np.array([
+                [mat['mi11'] * s,  mat['mi10'] * s],
+                [mat['mi01'] * s,  mat['mi00'] * s],
+            ])
+            b   = np.array([
+                (mat['mi10'] * bx + mat['mi11'] * by) / sec_ds,
+                (mat['mi00'] * bx + mat['mi01'] * by) / sec_ds,
+            ])
+            warped_sec = affine_transform(
+                sec_gray, A, offset=b,
+                output_shape=primary_crop.shape,
+                order=1, cval=0.0,
+            )
+        else:
+            # No matrix: resize secondary to primary dimensions and align
+            from PIL import Image as _PIL
+            primary_crop = primary_gray
+            ph, pw = primary_gray.shape
+            _max_val = sec_gray.max()
+            sec_uint8 = np.clip(sec_gray / (_max_val + 1e-6) * 255, 0, 255).astype(np.uint8)
+            warped_sec = np.array(
+                _PIL.fromarray(sec_uint8).resize((pw, ph), _PIL.Resampling.BILINEAR)
+            ).astype(np.float32)
+
+        # Phase cross-correlation: subtract mean to eliminate DC dominance
+        # (DC component causes a spurious half-image-size shift when not removed).
+        def _norm_for_corr(a):
+            """Zero-mean, unit-std normalization; zero out warped background pixels."""
+            a = a.copy()
+            mask = a != 0
+            if mask.sum() < 100:
+                return a
+            a -= a[mask].mean()
+            std = a[mask].std()
+            if std > 0:
+                a /= std
+            a[~mask] = 0.0
+            return a
+
+        ref  = _norm_for_corr(primary_crop)
+        mov  = _norm_for_corr(warped_sec)
+
+        shift, _err, _phase = phase_cross_correlation(ref, mov, normalization=None)
+
+        # Clamp shift to ≤ 25 % of the image size to reject wrap-around artifacts
+        max_shift_r = ref.shape[0] * 0.25
+        max_shift_c = ref.shape[1] * 0.25
+        shift = np.array([
+            float(np.clip(shift[0], -max_shift_r, max_shift_r)),
+            float(np.clip(shift[1], -max_shift_c, max_shift_c)),
+        ])
+
+        # Convert low-res shift to full-res primary-image pixels
+        dx = float(shift[1]) * prim_ds   # x (col)
+        dy = float(shift[0]) * prim_ds   # y (row)
+
+        # phase_cross_correlation(primary, warped_sec) returns the displacement
+        # that must be added to warped_sec to align it with primary.
+        # warped_sec is secondary mapped into primary space via tx/ty, so
+        # adding (dx, dy) to tx/ty corrects the secondary matrix.
+        #
+        # adjust_primary_matrices=True  → conceptually the primary is "off";
+        #   we correct by reversing the shift direction.
+        # adjust_primary_matrices=False → secondary is the moving image;
+        #   apply the shift directly (default positive sense).
+        sign = 1.0 if self._adjust_primary_matrices else -1.0
+
+        if mat is not None:
+            new_mat = dict(mat)
+            new_mat['tx'] = mat['tx'] + sign * dx
+            new_mat['ty'] = mat['ty'] + sign * dy
+        else:
+            new_mat = {
+                'm00': 1.0, 'm01': 0.0, 'm10': 0.0, 'm11': 1.0,
+                'tx':  sign * dx,  'ty': sign * dy,
+                'mi00': 1.0, 'mi01': 0.0, 'mi10': 0.0, 'mi11': 1.0,
+            }
+
+        self._align_matrices[sample] = new_mat
+        return {'matrix': new_mat, 'shift': {'dx': dx, 'dy': dy}}
 
     def set_sample(self, sample):
         sample_name = str(sample)
@@ -546,6 +746,18 @@ class ViewerServer:
                     except Exception as exc:
                         import traceback; traceback.print_exc()
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/align':
+                    sample = data.get('sample', srv.chosen_sample) if isinstance(data, dict) else srv.chosen_sample
+                    viewport = data.get('viewport') if isinstance(data, dict) else None
+                    try:
+                        result = srv._compute_alignment(str(sample), viewport)
+                        body = json.dumps({'ok': True, **result}).encode()
+                    except Exception as _exc:
+                        import traceback as _tb; _tb.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(_exc)}).encode()
                     self._respond(200, body, 'application/json')
                     return
 
