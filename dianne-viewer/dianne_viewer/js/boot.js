@@ -315,16 +315,22 @@ const toolbar = createToolbar(root, viewport, draw, BASE_URL,
   { dropdown: secLayer.getSecChDropdown() },
   hoverInteraction,
   HAS_MATRICES ? {
-    onAlign: function(btn) {
+    onAlign: function(btn, manualShift) {
       if (btn) btn.disabled = true;
-      const vpRect = root.getBoundingClientRect();
-      const tl = viewport.toImageSpace(0, 0);
-      const br = viewport.toImageSpace(vpRect.width, vpRect.height);
-      const vp = { x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y };
+      let body;
+      if (manualShift && manualShift.manual_dx !== undefined) {
+        body = { sample: ACTIVE_SAMPLE, manual_dx: manualShift.manual_dx, manual_dy: manualShift.manual_dy };
+      } else {
+        const vpRect = root.getBoundingClientRect();
+        const tl = viewport.toImageSpace(0, 0);
+        const br = viewport.toImageSpace(vpRect.width, vpRect.height);
+        const vp = { x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y };
+        body = { sample: ACTIVE_SAMPLE, viewport: vp };
+      }
       fetch(BASE_URL + '/align', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sample: ACTIVE_SAMPLE, viewport: vp }),
+        body: JSON.stringify(body),
       }).then(r => r.json()).then(res => {
         if (res.ok && res.matrix) {
           SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE] = res.matrix;

@@ -38,6 +38,10 @@ function createDraw(container, viewport) {
   let   strokeId   = 0;
   let   selectedId = null;  // id of the currently selected contour, or null
 
+  // ── manual-align anchor mode ─────────────────────────────────────────────
+  let manualAlignActive = false;  // true while waiting for 2 anchor clicks
+  let manualAlignAnchor = null;   // first anchor {x, y} in image space
+
   // ── canvas setup ───────────────────────────────────────────────────────────
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:3;';
@@ -478,6 +482,8 @@ function createDraw(container, viewport) {
         else selectedId = null;  // stroke was removed externally
       }
     }
+    // Anchor marker persists even when cursor leaves the canvas.
+    if (manualAlignActive && manualAlignAnchor) _renderManualAlignAnchor();
     _renderCursor();
   }
 
@@ -504,11 +510,57 @@ function createDraw(container, viewport) {
     ctx.restore();
   }
 
+  // ── manual-align cursor & anchor rendering ─────────────────────────────────
+  function _renderManualAlignX(x, y) {
+    // Green-glowing red ✕
+    const S = 13;
+    ctx.save();
+    ctx.lineCap     = 'round';
+    ctx.lineWidth   = 2.5;
+    ctx.shadowColor = 'rgba(0, 255, 80, 1.0)';
+    ctx.shadowBlur  = 15;
+    ctx.strokeStyle = '#ff2222';
+    ctx.beginPath();
+    ctx.moveTo(x - S, y - S); ctx.lineTo(x + S, y + S);
+    ctx.moveTo(x + S, y - S); ctx.lineTo(x - S, y + S);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function _renderManualAlignAnchor() {
+    const sp = viewport.toScreenSpace(manualAlignAnchor.x, manualAlignAnchor.y);
+    const R  = 11;
+    ctx.save();
+    ctx.lineCap     = 'round';
+    ctx.lineWidth   = 2.5;
+    ctx.shadowColor = 'rgba(0, 255, 80, 1.0)';
+    ctx.shadowBlur  = 15;
+    ctx.strokeStyle = '#ff2222';
+    ctx.beginPath();
+    ctx.moveTo(sp.x - R, sp.y - R); ctx.lineTo(sp.x + R, sp.y + R);
+    ctx.moveTo(sp.x + R, sp.y - R); ctx.lineTo(sp.x - R, sp.y + R);
+    ctx.stroke();
+    // green ring
+    ctx.strokeStyle = 'rgba(0, 255, 80, 0.85)';
+    ctx.lineWidth   = 1.5;
+    ctx.shadowBlur  = 8;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, R + 5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function _renderCursor() {
     if (!cursorVisible) return;
     ctx.save();
     ctx.strokeStyle = '#00ff40';
     ctx.globalAlpha = 1.0;
+
+    if (manualAlignActive) {
+      ctx.restore();
+      _renderManualAlignX(cursorVpX, cursorVpY);
+      return;
+    }
 
     if (brushMode === 'noodle') {
       // ── disk mode: circle + crosshair extending beyond the circle ──────────
@@ -622,6 +674,28 @@ function createDraw(container, viewport) {
     ctx.stroke();
   }
 
+  // ── manual-align public API ────────────────────────────────────────────────
+  function enterManualAlignMode() {
+    manualAlignActive = true;
+    manualAlignAnchor = null;
+    cursorVisible = true;
+    redraw();
+  }
+
+  function exitManualAlignMode() {
+    manualAlignActive = false;
+    manualAlignAnchor = null;
+    cursorVisible = false;
+    redraw();
+  }
+
+  function setManualAlignAnchor1(imgPt) {
+    manualAlignAnchor = { x: imgPt.x, y: imgPt.y };
+    redraw();
+  }
+
+  function isManualAlignMode() { return manualAlignActive; }
+
   // ── contour selection public API ───────────────────────────────────────────
   function hitTestStroke(vpX, vpY) { return _hitTest(vpX, vpY); }
   function selectStroke(id)        { selectedId = id; redraw(); }
@@ -667,5 +741,9 @@ function createDraw(container, viewport) {
     hasSelection,
     clearSelection,
     deleteSelected,
+    enterManualAlignMode,
+    exitManualAlignMode,
+    setManualAlignAnchor1,
+    isManualAlignMode,
   };
 }

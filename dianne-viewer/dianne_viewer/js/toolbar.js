@@ -195,18 +195,29 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   if (alignOptions && typeof alignOptions.onAlign === 'function') {
     const alignBtn = document.createElement('button');
     alignBtn.textContent = 'Align';
-    alignBtn.title = 'Auto-align images via phase cross-correlation (adjusts translation only)';
+    alignBtn.title = 'Manual align by default (pick two anchors). Hold Option/Alt and click for auto-align (SIFT+phase).';
     alignBtn.dataset.demoId = 'align-btn';
     alignBtn.style.cssText = [
       'background:rgba(80,200,255,0.15)', 'border:1px solid #40b8e8',
       'color:#9de0f5', 'border-radius:4px', 'padding:2px 7px',
       'cursor:pointer', 'font-size:12px', 'line-height:1.4', 'white-space:nowrap',
     ].join(';');
-    alignBtn.addEventListener('click', () => {
+    alignBtn.addEventListener('click', e => {
       if (!alignBtn.disabled) {
-        alignBtn.style.opacity = '0.55';
-        alignOptions.onAlign(alignBtn);
-        alignBtn.style.opacity = '1';
+        if (!e.altKey && typeof draw.enterManualAlignMode === 'function') {
+          // Plain click → manual anchor mode
+          manualAligning     = true;
+          manualAlignStep    = 1;
+          manualAlignAnchor1 = null;
+          manualAlignBtn     = alignBtn;
+          container.style.cursor = 'none';
+          draw.enterManualAlignMode();
+        } else {
+          // Alt/Option + click → auto-align
+          alignBtn.style.opacity = '0.55';
+          alignOptions.onAlign(alignBtn);
+          alignBtn.style.opacity = '1';
+        }
       }
     });
     actionRow.appendChild(alignBtn);
@@ -757,8 +768,41 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   let mouseDownPos = null;
   const clicks = [];
 
+  // ── manual-align anchor state ────────────────────────────────────────────
+  let manualAligning     = false;
+  let manualAlignStep    = 0;    // 1 = waiting for 1st click, 2 = waiting for 2nd
+  let manualAlignAnchor1 = null; // image-space {x, y} of first anchor
+  let manualAlignBtn     = null;
+
   container.addEventListener('mousedown', e => {
     if (_isUiEventTarget(e.target)) return;
+    // Manual align anchor picking takes absolute priority over all other tools.
+    if (manualAligning && e.button === 0) {
+      e.preventDefault();
+      const [vpX, vpY] = _toVPArr(e);
+      const imgPt = viewport.toImageSpace(vpX, vpY);
+      if (manualAlignStep === 1) {
+        // First click: place anchor and wait for second.
+        manualAlignAnchor1 = imgPt;
+        manualAlignStep    = 2;
+        if (typeof draw.setManualAlignAnchor1 === 'function') draw.setManualAlignAnchor1(imgPt);
+      } else if (manualAlignStep === 2) {
+        // Second click: compute shift and trigger alignment.
+        const dx = manualAlignAnchor1.x - imgPt.x;
+        const dy = manualAlignAnchor1.y - imgPt.y;
+        manualAligning     = false;
+        manualAlignStep    = 0;
+        manualAlignAnchor1 = null;
+        if (typeof draw.exitManualAlignMode === 'function') draw.exitManualAlignMode();
+        const _btn = manualAlignBtn;
+        manualAlignBtn = null;
+        container.style.cursor = activeTool === 'pan' ? 'grab' : (_isDrawTool(activeTool) ? 'none' : 'cell');
+        if (_btn) _btn.style.opacity = '0.55';
+        alignOptions.onAlign(_btn, { manual_dx: dx, manual_dy: dy });
+        if (_btn) _btn.style.opacity = '1';
+      }
+      return;
+    }
     if (e.button !== 0) return;
     mouseDownPos = { x: e.clientX, y: e.clientY };
     const { x: vpX, y: vpY } = _toVP(e);
@@ -783,6 +827,10 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   });
 
   window.addEventListener('mousemove', e => {
+    // Keep the manual-align cursor alive regardless of active tool.
+    if (manualAligning && typeof draw.onMouseMove === 'function') {
+      draw.onMouseMove(..._toVPArr(e));
+    }
     if (activeTool === 'pan' && panning) {
       viewport.panBy(e.clientX - panX, e.clientY - panY);
       panX = e.clientX; panY = e.clientY;
@@ -867,6 +915,17 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if (e.key === 'Escape') {
+      // Cancel manual align mode first; Escape consumed so fullscreen isn't exited.
+      if (manualAligning) {
+        manualAligning     = false;
+        manualAlignStep    = 0;
+        manualAlignAnchor1 = null;
+        if (manualAlignBtn) { manualAlignBtn.style.opacity = '1'; manualAlignBtn = null; }
+        if (typeof draw.exitManualAlignMode === 'function') draw.exitManualAlignMode();
+        container.style.cursor = activeTool === 'pan' ? 'grab' : (_isDrawTool(activeTool) ? 'none' : 'cell');
+        e.stopImmediatePropagation();
+        return;
+      }
       if (typeof draw.hasSelection === 'function' && draw.hasSelection()) {
         draw.clearSelection();
         e.stopImmediatePropagation();  // prevent fullscreen Escape handler from firing

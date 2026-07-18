@@ -5,7 +5,68 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import multiprocessing
+import cv2
+import numpy as np
 
+# Standard H&E stain vectors (Ruifrok & Johnston), rows = stains, cols = RGB
+_HE_MATRIX = np.array([
+    [0.65, 0.70, 0.29],   # Hematoxylin
+    [0.07, 0.99, 0.11],   # Eosin
+    [0.27, 0.57, 0.78],   # Residual/background
+])
+_M_INV = np.linalg.pinv(_HE_MATRIX)
+
+def is_he_image(rgb: np.ndarray, residual_thresh=0.15, neg_thresh=0.05):
+    """
+    rgb: HxWx3 uint8 numpy array
+    Returns (is_he, mean_residual, neg_fraction, H) where H is HxW hematoxylin channel
+    """
+    h, w = rgb.shape[:2]
+    arr = rgb.astype(float).reshape(-1, 3)
+    arr[arr == 0] = 1
+    od = -np.log(arr / 255.0)
+
+    conc = od @ _M_INV
+    recon = conc @ _HE_MATRIX
+    residual = np.linalg.norm(od - recon, axis=1).mean()
+    neg_frac = (conc[:, :2] < -0.05).mean()
+
+    is_he = residual < residual_thresh and neg_frac < neg_thresh
+    H = conc[:, 0].reshape(h, w)
+
+    return is_he, residual, neg_frac, H
+
+def getShift(img1, img2, dist_cutoff=0.8, contrastThreshold=0.005, edgeThreshold=20):
+    """Compute median (dx, dy) translation between img1 and img2 via SIFT+FLANN keypoint matching."""
+    img1 = np.ascontiguousarray(img1)
+    img2 = np.ascontiguousarray(img2)
+
+    sift = cv2.SIFT_create(contrastThreshold=contrastThreshold, edgeThreshold=edgeThreshold)
+    kp1, des1 = sift.detectAndCompute(img1, None)
+    kp2, des2 = sift.detectAndCompute(img2, None)
+
+    # print(f"Found {len(kp1)} SIFT keypoints in img1, {len(kp2)} in img2")
+
+    if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+        return None
+
+    # FLANN KD-tree expects CV_32F descriptors for SIFT.
+    des1 = np.ascontiguousarray(des1, dtype=np.float32)
+    des2 = np.ascontiguousarray(des2, dtype=np.float32)
+
+    matches = cv2.FlannBasedMatcher(dict(algorithm=1, trees=5), dict(checks=50)).knnMatch(des1, des2, k=2)
+    good = [m for pair in matches if len(pair) == 2 for m, n in [pair] if m.distance < dist_cutoff * n.distance]
+
+    # print(f"Found {len(good)} good SIFT matches")
+
+    if len(good) < 3:
+        return None
+
+    pts1 = np.array([kp1[m.queryIdx].pt for m in good])
+    pts2 = np.array([kp2[m.trainIdx].pt for m in good])
+
+    dx, dy = np.median(pts1 - pts2, axis=0)
+    return float(dx), float(dy)
 
 class _ViewerHTTPServer(ThreadingHTTPServer):
     # A larger accept backlog avoids short request bursts getting stuck in
@@ -166,10 +227,13 @@ class ViewerServer:
 
     @staticmethod
     def _get_lowres_gray(img, max_dim=1000):
-        """Extract a low-res float32 grayscale array from any supported image type.
+        """Extract a low-res float32 alignment channel from any supported image type.
 
-        Returns (gray_array, downsample_factor) where downsample_factor is the
+        Returns (channel_array, downsample_factor) where downsample_factor is the
         number of full-resolution pixels per low-res pixel.
+
+        If the image looks like H&E brightfield, this returns the low-res
+        hematoxylin channel; otherwise it returns grayscale intensity.
         """
         import numpy as np
         import zarr
@@ -192,16 +256,43 @@ class ViewerServer:
         arr = z[str(best)] if isinstance(z, zarr.Group) else z
         data = arr[:]  # load into memory
 
+        rgb = None
         if data.ndim == 2:
             gray = data.astype(np.float32)
         elif data.ndim == 3:
             channels_last = getattr(img, '_channels_last', False)
             if channels_last:      # (H, W, C)
-                gray = data[:, :, :min(3, data.shape[2])].astype(np.float32).mean(axis=2)
+                rgb = data[:, :, :min(3, data.shape[2])]
+                gray = rgb.astype(np.float32).mean(axis=2)
             else:                  # (C, H, W)
-                gray = data[:min(3, data.shape[0])].astype(np.float32).mean(axis=0)
+                rgb = np.moveaxis(data[:min(3, data.shape[0])], 0, -1)
+                gray = rgb.astype(np.float32).mean(axis=2)
         else:
             raise RuntimeError(f'unexpected zarr array shape {data.shape}')
+
+        # Use the hematoxylin channel for alignment when this looks like H&E.
+        if rgb is not None and rgb.shape[2] == 3:
+            rgbf = rgb.astype(np.float32)
+            if np.issubdtype(rgb.dtype, np.floating):
+                vmax = float(np.nanmax(rgbf))
+                vmin = float(np.nanmin(rgbf))
+                if vmax <= 1.5 and vmin >= 0.0:
+                    rgb8 = np.clip(rgbf * 255.0, 0, 255).astype(np.uint8)
+                elif vmax > vmin:
+                    rgb8 = np.clip((rgbf - vmin) / (vmax - vmin) * 255.0, 0, 255).astype(np.uint8)
+                else:
+                    rgb8 = np.zeros_like(rgbf, dtype=np.uint8)
+            elif np.issubdtype(rgb.dtype, np.integer):
+                iinfo = np.iinfo(rgb.dtype)
+                scale = max(float(iinfo.max), 1.0)
+                rgb8 = np.clip(rgbf / scale * 255.0, 0, 255).astype(np.uint8)
+            else:
+                rgb8 = np.clip(rgbf, 0, 255).astype(np.uint8)
+
+            is_he, _residual, _neg_frac, h_chan = is_he_image(rgb8)
+            if is_he:
+                print(f"Detected H&E image at level {best}, using hematoxylin channel for alignment")
+                gray = h_chan.astype(np.float32)
 
         h0, _w0 = levels_meta[0]['shape']
         h_lr = gray.shape[0]
@@ -231,6 +322,7 @@ class ViewerServer:
 
         primary_img   = self.images.get(sample)
         secondary_img = self.secondary_images.get(sample)
+
         if primary_img is None:
             raise RuntimeError(f'no primary image for sample {sample!r}')
         if secondary_img is None:
@@ -261,20 +353,6 @@ class ViewerServer:
 
             primary_crop = primary_gray[y0:y1, x0:x1]
 
-            # Build the scipy affine_transform from primary-crop (row,col) to
-            # secondary low-res (row,col).
-            #
-            # Notation (using image convention: col=x, row=y):
-            #   prim_full_x = (c + x0) * prim_ds
-            #   prim_full_y = (r + y0) * prim_ds
-            #   sec_full_x  = mi00*(prim_x - tx) + mi01*(prim_y - ty)
-            #   sec_full_y  = mi10*(prim_x - tx) + mi11*(prim_y - ty)
-            #   sec_lr_row  = sec_full_y / sec_ds
-            #   sec_lr_col  = sec_full_x / sec_ds
-            #
-            # scipy affine_transform:  input_coord = A @ output_coord + b
-            #   output_coord = [r, c]  (row, col in primary crop)
-            #   input_coord  = [sec_lr_row, sec_lr_col]
             s   = prim_ds / sec_ds
             bx  = x0 * prim_ds - mat['tx']
             by  = y0 * prim_ds - mat['ty']
@@ -320,6 +398,7 @@ class ViewerServer:
         ref  = _norm_for_corr(primary_crop)
         mov  = _norm_for_corr(warped_sec)
 
+        # Default robust fallback: phase cross-correlation.
         shift, _err, _phase = phase_cross_correlation(ref, mov, normalization=None)
 
         # Clamp shift to ≤ 25 % of the image size to reject wrap-around artifacts
@@ -329,6 +408,22 @@ class ViewerServer:
             float(np.clip(shift[0], -max_shift_r, max_shift_r)),
             float(np.clip(shift[1], -max_shift_c, max_shift_c)),
         ])
+
+        # Optionally refine with SIFT+FLANN. If SIFT cannot produce enough
+        # features/matches, keep the phase-correlation shift.
+        def _to_u8(a):
+            a = np.asarray(a, dtype=np.float32)
+            if a.size == 0:
+                return np.zeros((0, 0), dtype=np.uint8)
+            lo, hi = float(np.nanmin(a)), float(np.nanmax(a))
+            if hi <= lo:
+                return np.zeros_like(a, dtype=np.uint8)
+            return np.clip((a - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+
+        sift_shift = getShift(_to_u8(ref), _to_u8(mov))
+        if sift_shift is not None:
+            sx, sy = sift_shift
+            shift = np.array([sy, sx], dtype=np.float32)
 
         # Convert low-res shift to full-res primary-image pixels
         dx = float(shift[1]) * prim_ds   # x (col)
@@ -356,6 +451,23 @@ class ViewerServer:
                 'mi00': 1.0, 'mi01': 0.0, 'mi10': 0.0, 'mi11': 1.0,
             }
 
+        self._align_matrices[sample] = new_mat
+        return {'matrix': new_mat, 'shift': {'dx': dx, 'dy': dy}}
+
+    def _apply_manual_shift(self, sample, dx, dy):
+        """Apply an explicit translation (primary-image pixels) without image analysis."""
+        mat  = self._align_matrices.get(sample)
+        sign = 1.0 if self._adjust_primary_matrices else -1.0
+        if mat is not None:
+            new_mat = dict(mat)
+            new_mat['tx'] = mat['tx'] + sign * dx
+            new_mat['ty'] = mat['ty'] + sign * dy
+        else:
+            new_mat = {
+                'm00': 1.0, 'm01': 0.0, 'm10': 0.0, 'm11': 1.0,
+                'tx':  sign * dx, 'ty': sign * dy,
+                'mi00': 1.0, 'mi01': 0.0, 'mi10': 0.0, 'mi11': 1.0,
+            }
         self._align_matrices[sample] = new_mat
         return {'matrix': new_mat, 'shift': {'dx': dx, 'dy': dy}}
 
@@ -751,9 +863,14 @@ class ViewerServer:
 
                 elif parsed.path == '/align':
                     sample = data.get('sample', srv.chosen_sample) if isinstance(data, dict) else srv.chosen_sample
-                    viewport = data.get('viewport') if isinstance(data, dict) else None
                     try:
-                        result = srv._compute_alignment(str(sample), viewport)
+                        manual_dx = data.get('manual_dx') if isinstance(data, dict) else None
+                        manual_dy = data.get('manual_dy') if isinstance(data, dict) else None
+                        if manual_dx is not None and manual_dy is not None:
+                            result = srv._apply_manual_shift(str(sample), float(manual_dx), float(manual_dy))
+                        else:
+                            viewport = data.get('viewport') if isinstance(data, dict) else None
+                            result = srv._compute_alignment(str(sample), viewport)
                         body = json.dumps({'ok': True, **result}).encode()
                     except Exception as _exc:
                         import traceback as _tb; _tb.print_exc()
