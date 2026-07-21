@@ -102,6 +102,8 @@ def getDiscreteCombinedCDF(qs, v1, i1, v2, i2, alpha=1., beta=1., interpolate_n=
         x10 = np.concatenate((np.array([x10in[0] - (x10in[1]-x10in[0])]), x10in))
         y10 = np.concatenate((np.array([0]), y10in))
         pdf = np.diff(y10) / np.diff(x10)
+        wh = np.isfinite(pdf)
+        pdf[~wh] = np.max(pdf[wh])
         pdf = np.concatenate((pdf, np.array([0])))
         x10 = np.concatenate((x10, np.array([x10[-1] + 0.5*(x10[-1]-x10[-2])])))
         pdf = np.concatenate((np.array([pdf[0]]), pdf))
