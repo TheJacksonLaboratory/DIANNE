@@ -177,7 +177,7 @@ def viewSamples(samples=None, func=None):
     if not samples is None:
         samples = [s for s in samples if s in all_samples]
     else:
-        sample = all_samples
+        samples = all_samples
     
     idm = '/opt/DIANNE/scripts/identity-matrix.csv'
     xenium_to_he_matrices = {sample: idm for sample in samples}
