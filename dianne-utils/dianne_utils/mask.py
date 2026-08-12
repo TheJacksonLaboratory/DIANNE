@@ -143,7 +143,7 @@ def extractContoursForQuPath(downsampled_map, fshape, cutoff=0.5, min_area=100, 
 
     return geojson
 
-def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime', holes_color='lime', linewidth=2, figsize=(5, 5)):
+def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime', holes_color='lime', linewidth=2, figsize=(5, 5), savepath=None, prefix=''):
 
     """Visualize the extracted contours on the original WSI image at a specified downsampled level.
 
@@ -156,6 +156,8 @@ def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime'
         holes_color: Color for the holes within contours (default 'lime')
         linewidth: Line width for contour visualization (default 2)
         figsize: Tuple representing the figure size for visualization (default (5, 5))
+        savepath: Path to save the overlay image (default None)
+        prefix: Prefix for the saved overlay image filename (default '')
 
     Returns:
         None (displays the plot with contours overlaid on the image)
@@ -164,7 +166,9 @@ def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime'
     fig, ax = plt.subplots(figsize=figsize)
     with tifffile.imread(imgpath, aszarr=True) as store:
         with zarr.open(store, mode='r') as zArray:
-            img_ = np.moveaxis(zArray[level], 0, -1)
+            img_ = zArray[level]
+    if img_.ndim == 3 and img_.shape[0] in (3, 4):
+        img_ = np.moveaxis(img_, 0, -1)
     ax.imshow(img_, extent=(0, fshape[1], fshape[0], 0), interpolation='nearest')
     for feature in geojson["features"]:
         for i, ring in enumerate(feature["geometry"]["coordinates"]):
@@ -172,6 +176,9 @@ def viewContoursOnImage(imgpath, geojson, fshape, level=2, contours_color='lime'
             ax.plot(ring[:, 0], ring[:, 1], color=contours_color if i == 0 else holes_color, linewidth=linewidth)
     ax.axis('off')
     plt.show()
+
+    if savepath is not None:
+        fig.savefig(f'{savepath}/{prefix}.overlay.png', bbox_inches='tight', dpi=150)
 
     return
 

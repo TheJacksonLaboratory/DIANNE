@@ -708,7 +708,7 @@ def saveGUIClassifier(clf, classifierPaths, clfname, samples, ts, mpp, patch_siz
     """Save the classifier and its associated information to a file."""
 
     data = {}
-    data.update({'clf': clf, 'samples': samples, 'patches': patchesCDFsMod.index,
+    data.update({'clf': clf, 'samples': samples, 'patches': patchesCDFsMod.index if patchesCDFsMod is not None else [],
                 'ts': ts, 'mpp': mpp, 'N': patch_size,'qs': qs, 'tile_size': tile_size, 'drawings': drawings,
                 'body_overlap': body_overlap, 'annotations': annotationsMod})
 
@@ -747,7 +747,7 @@ def makeSaveFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8,
             ads, samples, qs, augFunc=PCMA, alpha=PCMA_alpha, seed=0, showPatches=False)
 
         if clf is None:
-            raise ValueError("No classifier to save.")
+            print("No classifier to save.")
 
         saveGUIClassifier(clf, classifierPaths, clfname=clfname, samples=samples, ts=ts, mpp=mpp,
                             patch_size=patch_size, tile_size=tile_size, body_overlap=body_overlap, qs=qs,
