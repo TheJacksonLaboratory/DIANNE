@@ -257,3 +257,36 @@ def viewSamples(samples=None, func=None, load_features=True):
                                     annotations=all_annotations, category_colors=annotationsPalette,
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn, s3=s3, s3_bucket=bucket)[1]
     return drawings
+
+def addAnalysis(drawings, samples, patchCoordinates, ads, samples, qs, ts, mpp, tile_size, patch_size):
+
+    if False:
+        clf = dianne.loadGUIClassifier(classifierPaths, 'some-name-gui')
+    else:
+        # Train the classifier on the patches and the corresponding features
+        body_overlap = 0.25 # Fraction overlap between the drawn annotations and the tiles
+        clf, patchesCDFsMod, annotationsMod = dianne.getClassifierForFromStrokes(drawings, patchCoordinates, tile_size, body_overlap, patch_size,
+                                                                                ads, samples, qs, augFunc=dianne_core.PCMA, alpha=0.8, seed=0, showPatches=False)
+        # dianne.saveGUIClassifier(clf, classifierPaths, 'some-name-gui', samples, ts, mpp, patch_size, tile_size, body_overlap, qs, patchesCDFsMod, annotationsMod, drawings)
+    
+    print(patchesCDFsMod.shape)
+    
+    # Run inference and visualize the results
+    if True:
+        if not clf is None:
+            infSample = samples[1]
+            multiplier = 2 # Interpolation parameter for the probability heatmap
+            x, y, p = dianne_core.inferProbFast(ads[infSample], clf, qs, tsize=ts/mpp, R=2, erode=True)
+            xi, yi, pi = dianne.interpolatePoints(x, y, p, multiplier=multiplier)
+            dianne.showProbImg(xi, yi, pi, f=2, figsize=(3, 3), ts=ts, mpp=mpp, title=infSample, invert=False)
+            viewer.set_overlay_points(xi, yi, pi, infSample, delta=tile_size / multiplier, alpha=0.5, color_low='#FFA500', color_high='#0000FF')
+
+
+    # FILE ACCESS S3 NOT IMPLEMENTED
+    # # Create probability masks, extract contours and visualize them on the H&E image
+    # downsampled_map, fshape = dianne.makeProbMask(ads[infSample], imgs[infSample], x, y, p, ts=ts, mpp=mpp, downfactor=16, verbose=True)
+    # geojson = dianne.extractContoursForQuPath(downsampled_map, fshape, cutoff=0.5, min_area=10**6, downfactor=16, sigma=100)
+    # dianne.viewContoursOnImage(imgs[infSample], geojson, fshape, level=2, figsize=(12, 12), linewidth=1)
+
+    return
+
