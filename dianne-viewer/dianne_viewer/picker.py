@@ -142,6 +142,11 @@ def datasetPicker(data: dict, target_var: str = 'ds'):
 </script>
 """))
 
+import json, os, socket, threading, uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from IPython.display import display, HTML
+
+
 def samplePicker(data: dict, target_var: str = 'samples'):
     """
     Dark, color-coded multi-select button grid for sample metadata `data`
@@ -206,16 +211,22 @@ def samplePicker(data: dict, target_var: str = 'samples'):
         target=ThreadingHTTPServer(('0.0.0.0', port), Handler).serve_forever, daemon=True
     ).start()
 
-    # ── URL construction: same trick as ViewerServer.base_url ───────────────
+    # ── URL construction ─────────────────────────────────────────────────
+    # Behind JupyterHub, route through jupyter-server-proxy (this path is
+    # relative, so the browser resolves it against the page's own origin --
+    # always reachable). Outside a hub, DON'T resolve a hostname/IP on the
+    # Python side (that address is only meaningful inside the kernel's own
+    # network namespace and is frequently unreachable from the browser over
+    # SSH tunnels, port-forwards, VPNs, Docker, etc.). Instead, hand the
+    # port to JS and let the browser build the URL from window.location --
+    # i.e. whatever address the browser already used to load this page,
+    # which is by definition reachable.
     service_prefix = os.environ.get('JUPYTERHUB_SERVICE_PREFIX', '')
     if service_prefix:
-        api_url = f"{service_prefix.rstrip('/')}/proxy/{port}"
+        api_url_literal = json.dumps(f"{service_prefix.rstrip('/')}/proxy/{port}")
     else:
-        try:
-            host = socket.gethostbyname(socket.gethostname())
-        except socket.gaierror:
-            host = '127.0.0.1'
-        api_url = f"http://{host}:{port}"
+        # built client-side; see bridgeUrl() in the script below
+        api_url_literal = 'null'
 
     # initialize target_var so it exists even before any click
     ip.user_ns[target_var] = []
@@ -351,6 +362,19 @@ def samplePicker(data: dict, target_var: str = 'samples'):
   // active filter values per field, e.g. {{treatment: Set(...), origin: Set(...)}}
   const activeFilters = {{ treatment: new Set(), origin: new Set(), institution: new Set(), timing: new Set() }};
 
+  // If behind JupyterHub, the server gave us a relative /proxy/<port> path
+  // (resolves against this page's own origin -- always reachable). Otherwise
+  // build the URL from window.location: the browser's own address/protocol
+  // paired with the bridge server's port. This is the address the browser
+  // used to load the notebook itself, so it's guaranteed reachable, unlike
+  // any hostname/IP the Python kernel might guess at on its own side.
+  const HUB_URL = {api_url_literal};
+  const PORT = {port};
+  function bridgeUrl() {{
+    if (HUB_URL) return HUB_URL;
+    return window.location.protocol + '//' + window.location.hostname + ':' + PORT;
+  }}
+
   function applyFilters() {{
     root.querySelectorAll('.s-btn').forEach(btn => {{
       let visible = true;
@@ -386,15 +410,22 @@ def samplePicker(data: dict, target_var: str = 'samples'):
 
   async function pushSelection() {{
     statusCount.textContent = selected.size;
+    const url = bridgeUrl();
     try {{
-      await fetch('{api_url}', {{
+      const resp = await fetch(url, {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
         body: JSON.stringify({{selected: Array.from(selected)}})
       }});
+      if (!resp.ok) throw new Error('server responded ' + resp.status);
+      root.querySelector('.sp-status').innerHTML =
+        'Selected: <b class="sp-count">' + selected.size + '</b> / {len(keys)}';
     }} catch (e) {{
       root.querySelector('.sp-status').innerHTML =
-        'Selected: <b class="sp-count">' + selected.size + '</b> / {len(keys)} &nbsp;⚠ ' + e;
+        'Selected: <b class="sp-count">' + selected.size + '</b> / {len(keys)} ' +
+        '&nbsp;⚠ could not reach ' + url + ' (' + e + '). ' +
+        'The selection is tracked in this tab but not yet pushed to the kernel -- ' +
+        'try again, or check that port {port} is reachable from your browser.';
     }}
   }}
 

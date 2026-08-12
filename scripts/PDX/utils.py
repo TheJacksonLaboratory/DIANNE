@@ -34,6 +34,20 @@ s3 = boto3.client('s3',
     aws_access_key_id=os.environ['S3_ACCESS_KEY'],
     aws_secret_access_key=os.environ['S3_SECRET_KEY'])
 
+def getMetaDict():
+    with fs.open(f'/{bucket}/spatial-pilot-xenium/sample_metadata_20260323.csv', 'r') as f:
+        df_meta = pd.read_csv(f).set_index('sample_id')[['Treatment_class',
+            'Treatment_agent',
+            'Control,_early_treatment/MRD,_late_treatment/recurrence_(CTRL,_ET,_LT)',
+            'Primary_tumor_tissue_of_origin',
+            'Submitter_Tumor_ID',
+            'Submitting_institution']].fillna('N/A')
+    df_meta = df_meta.rename({'Treatment_class': 'Treatment', 'Treatment_agent': 'Drug',
+           'Control,_early_treatment/MRD,_late_treatment/recurrence_(CTRL,_ET,_LT)': 'Timing',
+           'Primary_tumor_tissue_of_origin': 'Origin', 'Submitter_Tumor_ID': 'LabID',
+           'Submitting_institution': 'Institution'}, axis=1)
+    return df_meta.T.to_dict()
+
 def load_pdx_metadata(ds, mpis, fs=None):
     def get_mpp(s):
         l = [v for v in s.split('|') if 'MPP' in v or 'mpp' in v]
