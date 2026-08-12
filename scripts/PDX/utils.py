@@ -265,13 +265,13 @@ def viewSamples(samples=None, func=None, load_features=True):
 
     df_meta = pd.concat([df_meta_core, df_meta_wsi])
     
-    df_meta = df_meta.reindex(samples).fillna('NA')
+    metadata = df_meta.reindex(samples).fillna('NA').to_dict(orient='index')
 
     drawings = viewer.create_viewer(samples, secondary_images, height="800px", run_inference_fn=runfn, sample_sizes=sizes,
                                     xenium_mpp=0.2125, max_cells=20000, matrices=xenium_to_he_matrices, xenium_bundle_paths=xenium_bundle_paths,
                                     secondary_images=imgs, secondary_matrices=secondary_matrices, draw_on_secondary=True,
                                     annotations=all_annotations, category_colors=annotationsPalette,
-                                    sample_metadata=df_meta,
+                                    sample_metadata=metadata,
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn, s3=s3, s3_bucket=bucket)[1]
     return drawings
 
