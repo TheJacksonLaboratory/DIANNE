@@ -7,6 +7,7 @@ import s3fs
 import boto3
 
 ds = None
+samples = None
 
 def gurl(key, s3, bucket='my-store', ExpiresIn=3600):
     url = s3.generate_presigned_url('get_object', ExpiresIn=ExpiresIn,
@@ -164,3 +165,87 @@ def read_xlsx_sheet(fileobj, sheet_name):
         df = df.T.set_index(v.tolist()).T
         df.index.name = None
         return df
+
+def viewSamples(samples=None, func=None):
+
+    stqDataPath = '/spatial-pilot-stq'
+    xeniumBundlesDir = '/spatial-pilot-xenium'
+    XTRACT_DIR   = '/spatial-pilot-xtract'
+    REGISTRY_CSV = f'{XTRACT_DIR}/reports/tissue_data_registry.csv'
+    
+    all_samples = [d.split('/')[-1] for d in fs.ls(bucket + stqDataPath) if not 'pipeline' in d]
+    if not samples is None:
+        samples = [s for s in samples if s in all_samples]
+    else:
+        sample = all_samples
+    
+    idm = '/opt/DIANNE/scripts/identity-matrix.csv'
+    xenium_to_he_matrices = {sample: idm for sample in samples}
+    
+    species = {}
+    mouse_cell_type = {}
+    mouse_cell_type_broad = {}
+    xenium_bundle_paths = {}
+    for s in samples:
+        xenium_bundle_paths.update({s: None})
+        if '-CORE' in s:
+            sid = s.split("-CORE")[0]
+            xenium_bundle_paths.update({s: f'{xeniumBundlesDir}/{sid}/'})
+    
+            with fs.open(f'/{bucket}{xeniumBundlesDir}/{sid}/species.csv', 'r') as f:
+                species.update({s: pd.Categorical(pd.read_csv(f, header=None)[0])})
+            
+            with fs.open(f'/{bucket}{xeniumBundlesDir}/{sid}/mouse_cell_type.csv', 'r') as f:
+                mouse_cell_type.update({s: pd.Categorical(pd.read_csv(f, header=None)[0])})
+                
+            with fs.open(f'/{bucket}{xeniumBundlesDir}/{sid}/mouse_cell_type_broad.csv', 'r') as f:
+                mouse_cell_type_broad.update({s: pd.Categorical(pd.read_csv(f, header=None)[0])})
+    all_annotations = [species, mouse_cell_type, mouse_cell_type_broad]
+    annotationsPalette = [{a: mcolors.to_hex(dianne.Set123(i)) for i, a in enumerate(labels[samples[0]].categories)} for labels in all_annotations]
+    
+    with fs.open(f'/{bucket}{REGISTRY_CSV}', 'r') as f:
+        se_morph = XTRACT_DIR + '/' + pd.read_csv(f).set_index('sample_id')['Spatial Data Path'].str.replace('_sdata.zarr', '_xenium_explorer/morphology.ome.tif')
+    
+    secondary_images = {}
+    for s in samples:
+        if '-CORE' in s:
+            found = se_morph[s.split('-CORE')[0]]
+            if len(found)>1:
+                found = found.iloc[0]
+            secondary_images.update({s: found})
+        else:
+            secondary_images.update({s: f'{stqDataPath}/{s}/image.ome.tiff'})
+    
+    secondary_matrices = xenium_to_he_matrices.copy()
+    secondary_images = {k:gurl(f'/{bucket}{v}', s3, bucket=bucket, ExpiresIn=3600) for k,v in secondary_images.items()}
+    
+    classifierPaths = 'classifiers/'
+    dianne.setupClassifierPaths(classifierPaths)
+    
+    load_features = True
+    
+    if load_features:
+        F = 1
+        patch_size = 6 # number of tiles, in each dimension, to include in a patch (e.g. 8 means 8x8=64 tiles per patch)
+        ts, mpp, tile_size = dianne.loadSTQParams(f'/{bucket}{stqDataPath}/{samples[0]}', F, fs=fs)
+        fname = f'img.data.uni2-{F}.h5ad'
+        ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N = dianne_core.loadDataAndPreparePatches(samples, f'/{bucket}{stqDataPath}/', fname, L=None, ts=ts, mpp=mpp, N=patch_size, fs=fs)
+        sizes = {s: ads[s].shape[0] for s in samples}
+        print(f'Prepared {patchesCDFs.shape[0]} patches')
+    
+        runfn = dianne.makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, tile_size=tile_size, patch_size=patch_size, PCMA_alpha=0.8, alpha_img=0.5, multiplier=2)
+        savefn = dianne.makeSaveFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, tile_size=tile_size, patch_size=patch_size, body_overlap=0.25, classifierPaths=classifierPaths)
+        loadfn = dianne.makeLoadFn(classifierPaths)
+        listfn = dianne.makeListFn(classifierPaths)
+    else:
+        runfn, savefn, loadfn, listfn, sizes = None, None, None, None, None
+        imgs = {s: f'/{bucket}{stqDataPath}/{s}/image.ome.tiff' for s in samples}
+    
+    imgs = {k:gurl(v, s3, bucket=bucket, ExpiresIn=3600) for k,v in imgs.items()}
+    
+    drawings = viewer.create_viewer(samples, secondary_images, height="800px", run_inference_fn=runfn, sample_sizes=sizes,
+                                    xenium_mpp=0.2125, max_cells=20000, matrices=xenium_to_he_matrices, xenium_bundle_paths=xenium_bundle_paths,
+                                    secondary_images=imgs, secondary_matrices=secondary_matrices, draw_on_secondary=True,
+                                    annotations=all_annotations, category_colors=annotationsPalette,
+                                    save_func=savefn, load_func=loadfn, list_names_func=listfn, s3=s3, s3_bucket=bucket)[1]
+    return drawings
