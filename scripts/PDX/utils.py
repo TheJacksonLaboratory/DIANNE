@@ -3,6 +3,25 @@ import pandas as pd
 import numpy as np
 import zipfile
 import xml.etree.ElementTree as ET
+import s3fs
+import boto3
+
+ds = None
+
+def gurl(key, s3, bucket='my-store', ExpiresIn=3600):
+    url = s3.generate_presigned_url('get_object', ExpiresIn=ExpiresIn,
+                                    Params={'Bucket': bucket, 'Key': key.split(f'/{bucket}/')[1]})
+    return url
+
+fs = s3fs.S3FileSystem(
+    key=os.environ['S3_ACCESS_KEY'],
+    secret=os.environ['S3_SECRET_KEY'],
+    endpoint_url=os.environ['S3_ENDPOINT'])
+
+s3 = boto3.client('s3',
+    endpoint_url=os.environ['S3_ENDPOINT'],
+    aws_access_key_id=os.environ['S3_ACCESS_KEY'],
+    aws_secret_access_key=os.environ['S3_SECRET_KEY'])
 
 def load_pdx_metadata(ds, mpis, fs=None):
     def get_mpp(s):
@@ -48,6 +67,27 @@ mpis = {'results.MDA.Dataset_breast_PT_PDX': [f'{rpath}/MDA.mda-breast-pt-pdx-sv
         'results.WUSTL.Dataset_PDX': [f'{rpath}/WUSTL.wustl-svs-metadata.csv', f'{rpath}/WUSTL.PDXNETimage_metadata_wustl_all_standardized.RJM_220726.xlsx'],}
 
 NS = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+
+def viewHistologyDataset(ds, bucket='dianne-store', func=None, height="800px"):
+    dataPath = f'/results/{ds}/'
+    samples = [d.split('/')[-1] for d in fs.ls(bucket + dataPath) if not 'pipeline' in d]
+    imgs = {s: f'/{bucket}{dataPath}{s}/image.ome.tiff' for s in samples}
+    imgs = {k:gurl(v, s3, bucket='dianne-store', ExpiresIn=3600) for k,v in imgs.items()}
+    df_meta = load_pdx_metadata(ds, mpis, fs=fs)
+    df_meta = df_meta.loc[[not v is None for v in df_meta.index]]
+    metadata = df_meta.reindex(samples).fillna('NA').T.to_dict()
+    drawings = func(samples, imgs, height=height, sample_metadata=metadata, fullscreen_on_load=False)[1]
+    return drawings
+
+def getDsSizes():
+    dss = list(mpis.keys())
+    bucket = 'dianne-store'
+    ds_sizes = {}
+    for ds in dss:
+        dataPath = f'/results/{ds}/'
+        samples = [d.split('/')[-1] for d in fs.ls(bucket + dataPath) if not 'pipeline' in d]
+        ds_sizes[ds] = len(samples)
+    return ds_sizes
 
 def col_to_index(col_str):
     idx = 0
