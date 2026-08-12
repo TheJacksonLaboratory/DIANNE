@@ -250,11 +250,28 @@ def viewSamples(samples=None, func=None, load_features=True):
         imgs = {s: f'/{bucket}{stqDataPath}/{s}/image.ome.tiff' for s in samples}
     
     imgs = {k:gurl(v, s3, bucket=bucket, ExpiresIn=3600) for k,v in imgs.items()}
+
+    with fs.open(f'/{bucket}/spatial-pilot-xenium/sample_metadata_20260323.csv', 'r') as f:
+        df_meta = pd.read_csv(f)
+
+    df_meta = df_meta.set_index('sample_id')
+    df_meta_core = df_meta.copy()
+    df_meta_core['is_core'] = True
+    df_meta_core.index += '-CORE'
+
+    df_meta_wsi = df_meta.copy()
+    df_meta_wsi['is_core'] = False
+    df_meta_wsi.index += '-WSI'
+
+    df_meta = pd.concat([df_meta_core, df_meta_wsi])
     
+    df_meta = df_meta.reindex(samples).fillna('NA')
+
     drawings = viewer.create_viewer(samples, secondary_images, height="800px", run_inference_fn=runfn, sample_sizes=sizes,
                                     xenium_mpp=0.2125, max_cells=20000, matrices=xenium_to_he_matrices, xenium_bundle_paths=xenium_bundle_paths,
                                     secondary_images=imgs, secondary_matrices=secondary_matrices, draw_on_secondary=True,
                                     annotations=all_annotations, category_colors=annotationsPalette,
+                                    sample_metadata=df_meta,
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn, s3=s3, s3_bucket=bucket)[1]
     return drawings
 
