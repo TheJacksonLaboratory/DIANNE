@@ -355,15 +355,19 @@ def trainClassifier(annotation_results, patchesCDFs, alpha=None, seed=None, augF
     if (alpha is not None) and (augFunc is not None):
         dpos_v = []
         for s_pos in curated_positive:
-            for i in range(repeats):
-                s_neg = np.random.choice(curated_negative)
-                df_pos = patchesCDFs.loc[s_pos].unstack()
-                df_neg = patchesCDFs.loc[s_neg].unstack()
-                assert df_pos.index.equals(df_neg.index)
-                acdf = augFunc(df_pos.index.values, df_pos.values,
-                               df_neg.values, alpha=alpha, beta=1. - alpha)
-                acdf = pd.DataFrame(index=df_pos.index, columns=df_pos.columns, data=acdf)
-                dpos_v.append(acdf.T.sort_index().T.stack().rename(s_pos))
+            try:
+                for i in range(repeats):
+                    s_neg = np.random.choice(curated_negative)
+                    df_pos = patchesCDFs.loc[s_pos].unstack()
+                    df_neg = patchesCDFs.loc[s_neg].unstack()
+                    assert df_pos.index.equals(df_neg.index)
+                    acdf = augFunc(df_pos.index.values, df_pos.values,
+                                df_neg.values, alpha=alpha, beta=1. - alpha)
+                    acdf = pd.DataFrame(index=df_pos.index, columns=df_pos.columns, data=acdf)
+                    dpos_v.append(acdf.T.sort_index().T.stack().rename(s_pos))
+            except Exception as e:
+                print(f"Error augmenting positive patch {s_pos}: {e}")
+                dpos_v.append(patchesCDFs.loc[s_pos])
         dpos = pd.concat(dpos_v, axis=1).T
 
         X_train = pd.concat([dpos, patchesCDFs.loc[curated_negative]], sort=False)
