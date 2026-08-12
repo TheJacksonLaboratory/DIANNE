@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import matplotlib.colors as mcolors
 import numpy as np
 import zipfile
 import xml.etree.ElementTree as ET
@@ -166,7 +167,7 @@ def read_xlsx_sheet(fileobj, sheet_name):
         df.index.name = None
         return df
 
-def viewSamples(samples=None, func=None):
+def viewSamples(samples=None, func=None, load_features=True):
 
     stqDataPath = '/spatial-pilot-stq'
     xeniumBundlesDir = '/spatial-pilot-xenium'
@@ -221,8 +222,6 @@ def viewSamples(samples=None, func=None):
     
     classifierPaths = 'classifiers/'
     dianne.setupClassifierPaths(classifierPaths)
-    
-    load_features = True
     
     if load_features:
         F = 1
