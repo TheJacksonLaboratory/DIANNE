@@ -142,11 +142,6 @@ def datasetPicker(data: dict, target_var: str = 'ds'):
 </script>
 """))
 
-import json, os, socket, threading, uuid
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from IPython.display import display, HTML
-
-
 def samplePicker(data: dict, target_var: str = 'samples'):
     """
     Dark, color-coded multi-select button grid for sample metadata `data`
@@ -408,6 +403,16 @@ def samplePicker(data: dict, target_var: str = 'samples'):
     }});
   }});
 
+  // Each selected sample expands to two output entries: '<sample>-CORE'
+  // and '<sample>-WSI'. Edit SUFFIXES to change how many/which entries
+  // each sample produces.
+  const SUFFIXES = ['CORE', 'WSI'];
+  function expand(keys) {{
+    const out = [];
+    keys.forEach(k => SUFFIXES.forEach(suf => out.push(k + '-' + suf)));
+    return out;
+  }}
+
   async function pushSelection() {{
     statusCount.textContent = selected.size;
     const url = bridgeUrl();
@@ -415,7 +420,7 @@ def samplePicker(data: dict, target_var: str = 'samples'):
       const resp = await fetch(url, {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{selected: Array.from(selected)}})
+        body: JSON.stringify({{selected: expand(Array.from(selected))}})
       }});
       if (!resp.ok) throw new Error('server responded ' + resp.status);
       root.querySelector('.sp-status').innerHTML =
