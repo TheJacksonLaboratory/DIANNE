@@ -1,3 +1,12 @@
+import sys
+DIANNE = "/opt/DIANNE/"
+sys.path.insert(0, f"{DIANNE}/dianne-core")
+sys.path.insert(0, f"{DIANNE}/dianne-utils")
+sys.path.insert(0, f"{DIANNE}/dianne-viewer")
+import dianne_core
+import dianne_viewer as viewer
+import dianne_utils as dianne
+
 import os
 import pandas as pd
 import matplotlib.colors as mcolors
