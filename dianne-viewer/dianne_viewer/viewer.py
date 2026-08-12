@@ -129,6 +129,7 @@ def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
                 key=_creds.access_key,
                 secret=_creds.secret_key,
                 token=_creds.token,
+                client_kwargs={'endpoint_url': s3.meta.endpoint_url},
             )
             key = full.lstrip('/')
             s3_path = f's3://{s3_bucket}/{key}'
