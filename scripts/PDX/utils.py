@@ -258,7 +258,7 @@ def viewSamples(samples=None, func=None, load_features=True):
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn, s3=s3, s3_bucket=bucket)[1]
     return drawings
 
-def addAnalysis(drawings, samples, patchCoordinates, ads, samples, qs, ts, mpp, tile_size, patch_size):
+def addAnalysis(drawings, samples, patchCoordinates, ads, qs, ts, mpp, tile_size, patch_size):
 
     if False:
         clf = dianne.loadGUIClassifier(classifierPaths, 'some-name-gui')
