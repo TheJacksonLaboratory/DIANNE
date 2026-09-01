@@ -172,6 +172,10 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
     ts, mpp, tile_size = loadSTQParams(dataPath + samples[0], F)
     if load_features:
         fname = f'features/false-{F}-{model}_features.tsv.gz'
+        if not os.path.isfile(f'{dataPath}{samples[0]}/features/false-{F}-{model}_features.tsv.gz'):
+            fname = fname.replace('tsv.gz', 'csv.gz').replace('/false-', '/')
+
+        print(fname)
         ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N = loadDataAndPreparePatches(samples, 
                                                                 dataPath, fname, L=None, ts=ts, mpp=mpp, N=patch_size)
         print(f'Prepared {patchesCDFs.shape[0]} patches')
