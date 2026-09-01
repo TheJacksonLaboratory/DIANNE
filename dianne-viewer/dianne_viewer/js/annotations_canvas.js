@@ -9,15 +9,22 @@
  * kept as a separate layer so existing positive/negative behavior is
  * untouched.
  *
- * Exposes createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, log })
+ * Exposes createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log })
  *   .setTool(name)              → 'none'|'polygon'|'freehand'|'vertex_edit'|'ruler'
  *   .onMouseDown/onMouseMove/onMouseUp/onKeyDown(e)
  *   .setSelected(id)            → highlight + used by bidirectional list sync
  *   .panZoomTo(ann)             → center viewport on an annotation
  *   .redraw()
  *   .setVisibility(id, visible) / setClassVisibility(cls, visible)
+ *
+ * `settings` (optional) supplies the 'contourSimplify' / 'contourSimplifyPx'
+ * viewer settings (see settings.js): newly finished polygon/freehand/noodle
+ * rings are run through annotations.simplifyRing() with a tolerance derived
+ * from the *screen*-px setting divided by the current viewport scale, so the
+ * same on-screen fidelity is kept regardless of the zoom level the contour
+ * was drawn at.
  */
-function createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, log }) {
+function createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log }) {
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:3;';
   container.appendChild(canvas);
@@ -327,12 +334,12 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
           const smoothed = _smoothOpenPath(freehandPoints, brushSmoothing, Math.max(1, Math.round(brushSmoothing * 8)));
           const contours = _extractNoodleContours(smoothed, brushRadius);
           for (const rings of contours) {
-            const ann = annotations.makeAnnotation({ sample, rings: [rings], cls: freehandCls });
+            const ann = annotations.makeAnnotation({ sample, rings: [_maybeSimplify(rings)], cls: freehandCls });
             annotations.addAnnotation(sample, 'library', ann);
           }
         }
       } else if (freehandPoints.length >= 8) {
-        const ann = annotations.makeAnnotation({ sample, rings: [_closeRing(freehandPoints)], cls: freehandCls });
+        const ann = annotations.makeAnnotation({ sample, rings: [_maybeSimplify(_closeRing(freehandPoints))], cls: freehandCls });
         annotations.addAnnotation(sample, 'library', ann);
       }
       freehandPoints = null;
@@ -455,10 +462,26 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     return out;
   }
 
+  // Reduce vertex count of a freshly-drawn ring, if enabled in settings.
+  // Tolerance is specified in screen px so it reads the same to the user at
+  // any zoom level; converted to image-space px (the unit simplifyRing and
+  // ann.rings use) via the viewport scale active right now (i.e. when the
+  // contour is finished), which is when a given ring's vertex density in
+  // image-space was determined.
+  function _maybeSimplify(ring) {
+    if (!settings || settings.get('contourSimplify') === false) return ring;
+    if (!ring || ring.length < 8) return ring;
+    const screenTolPx = settings.get('contourSimplifyPx');
+    if (!screenTolPx) return ring;
+    const { scale } = viewport.getTransform();
+    const tolerancePx = screenTolPx / (scale || 1);
+    return annotations.simplifyRing(ring, tolerancePx);
+  }
+
   function finishPolygon() {
     if (polyPoints.length < 3) { polyPoints = []; redraw(); return; }
     const sample = getActiveSample();
-    const ann = annotations.makeAnnotation({ sample, rings: [_closeRing(polyPoints)] });
+    const ann = annotations.makeAnnotation({ sample, rings: [_maybeSimplify(_closeRing(polyPoints))] });
     annotations.addAnnotation(sample, 'library', ann);
     polyPoints = [];
     redraw();
@@ -485,6 +508,15 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     redraw();
   }
   function setSelected(id) { selectedId = id; redraw(); }
+  function hasSelection() { return selectedId != null; }
+  function clearSelection() { selectedId = null; redraw(); }
+  function deleteSelected() {
+    if (selectedId == null) return;
+    const sample = getActiveSample();
+    if (sample) annotations.deleteAnnotation(sample, 'library', selectedId);
+    selectedId = null;
+    redraw();
+  }
   function setVisibility(id, visible) {
     if (visible) hiddenIds.delete(id); else hiddenIds.add(id);
     redraw();
@@ -521,7 +553,8 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
 
   return {
     setTool, onMouseDown, onMouseMove, onMouseUp, onKeyDown, onMouseLeave,
-    setSelected, setVisibility, setClassVisibility, setClassOpacity,
+    setSelected, hasSelection, clearSelection, deleteSelected,
+    setVisibility, setClassVisibility, setClassOpacity,
     setClassColor, getClassColor,
     setFreehandMode, getFreehandMode,
     setBrushMode, getBrushMode,

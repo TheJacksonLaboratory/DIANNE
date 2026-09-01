@@ -25,7 +25,7 @@ import tifffile
 import numpy as np
 import pandas as pd
 import scanpy as sc
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from multiprocessing import shared_memory
 from sklearn.linear_model import LogisticRegression as LR
 from scipy.ndimage import generic_filter

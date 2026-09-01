@@ -605,13 +605,35 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   function stopAutosave() { if (_autosaveTimer) clearInterval(_autosaveTimer); _autosaveTimer = null; }
 
   // ── §13 export ──────────────────────────────────────────────────────────
-  function exportGeoJSON(sampleOrAll, include) {
+  // Simplifies GeoJSON Polygon/MultiPolygon ring coordinate arrays in place
+  // (image-px space, same units as the exported [x,y] pairs) using the same
+  // Douglas-Peucker pass as simplifyRing, so "simplify on export" can trim
+  // vertex count without needing a live annotation/ring object.
+  function _simplifyCoordRing(coords, tolerancePx) {
+    const pts = coords.map(c => ({ x: c[0], y: c[1] }));
+    const simplified = simplifyRing(pts, tolerancePx);
+    return simplified.map(p => [p.x, p.y]);
+  }
+  function simplifyFeatureCollection(fc, tolerancePx) {
+    if (!fc || !fc.features || !tolerancePx) return fc;
+    for (const feat of fc.features) {
+      const geom = feat && feat.geometry;
+      if (!geom) continue;
+      if (geom.type === 'Polygon') {
+        geom.coordinates = geom.coordinates.map(ring => _simplifyCoordRing(ring, tolerancePx));
+      } else if (geom.type === 'MultiPolygon') {
+        geom.coordinates = geom.coordinates.map(poly => poly.map(ring => _simplifyCoordRing(ring, tolerancePx)));
+      }
+    }
+    return fc;
+  }
+  function exportGeoJSON(sampleOrAll, include, simplifyTolerancePx) {
     const inc = (include && include.length ? include : ['library', 'positive', 'negative']).join(',');
     const url = baseUrl + '/annotations/export?sample=' + encodeURIComponent(sampleOrAll) + '&include=' + encodeURIComponent(inc);
-    return fetch(url).then(r => r.json());
+    return fetch(url).then(r => r.json()).then(fc => simplifyTolerancePx ? simplifyFeatureCollection(fc, simplifyTolerancePx) : fc);
   }
-  function downloadGeoJSON(sampleOrAll, include, filename) {
-    return exportGeoJSON(sampleOrAll, include).then(fc => {
+  function downloadGeoJSON(sampleOrAll, include, filename, simplifyTolerancePx) {
+    return exportGeoJSON(sampleOrAll, include, simplifyTolerancePx).then(fc => {
       const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -637,7 +659,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     unitsForSample, formatArea, formatLength, computeAreaPx2, computePerimeterPx,
     markDirty, isDirty, undo, redo,
     saveSample, saveIfDirty, loadSample, startAutosave, stopAutosave,
-    exportGeoJSON, downloadGeoJSON,
+    exportGeoJSON, downloadGeoJSON, simplifyFeatureCollection,
     logAndRecord, flushHistoryLog,
     selection,
   };

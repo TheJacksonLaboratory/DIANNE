@@ -129,12 +129,12 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       annotRow.appendChild(btn);
       buttons[t.name] = btn;
     }
-    const finishPolyBtn = document.createElement('button');
-    finishPolyBtn.textContent = '✓';
-    finishPolyBtn.title = 'Finish polygon';
-    finishPolyBtn.style.cssText = _btnCss;
-    finishPolyBtn.addEventListener('click', () => _ac.finishPolygon());
-    annotRow.appendChild(finishPolyBtn);
+    // const finishPolyBtn = document.createElement('button');
+    // finishPolyBtn.textContent = '✓';
+    // finishPolyBtn.title = 'Finish polygon';
+    // finishPolyBtn.style.cssText = _btnCss;
+    // finishPolyBtn.addEventListener('click', () => _ac.finishPolygon());
+    // annotRow.appendChild(finishPolyBtn);
 
     const undoAnnotBtn = document.createElement('button');
     undoAnnotBtn.textContent = '↩︎';
@@ -154,7 +154,10 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     exportBtn.textContent = '⤓ GeoJSON';
     exportBtn.title = 'Export annotations to QuPath-compatible GeoJSON';
     exportBtn.style.cssText = _btnCss + ';font-size:11px;';
-    exportBtn.addEventListener('click', () => _ann.downloadGeoJSON(annotationsOptions.getActiveSample()));
+    exportBtn.addEventListener('click', () => {
+      const simplifyPx = (settings && settings.get('contourSimplifyOnExport')) ? settings.get('contourSimplifyExportPx') : 0;
+      _ann.downloadGeoJSON(annotationsOptions.getActiveSample(), undefined, undefined, simplifyPx);
+    });
     annotRow.appendChild(exportBtn);
 
     // ── Row 1c: brush controls for annot_draw/draw+/draw- (same controls as
@@ -1061,7 +1064,15 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       const hitId = draw.hitTestStroke(vpX, vpY);
       if (hitId !== null) {
         draw.selectStroke(hitId);
+        return;
       }
+    }
+    const _ac = annotationsOptions && annotationsOptions.annotationsCanvas;
+    if (_ac && typeof _ac.hitTest === 'function') {
+      const [vpX, vpY] = _toVPArr(e);
+      const imgPt = viewport.toImageSpace(vpX, vpY);
+      const hit = _ac.hitTest(imgPt);
+      if (hit) _ac.setSelected(hit.id);
     }
     // viewport.reset() intentionally removed — dblclick miss no longer resets zoom
   });
@@ -1086,9 +1097,17 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       if (typeof draw.hasSelection === 'function' && draw.hasSelection()) {
         draw.clearSelection();
         e.stopImmediatePropagation();  // prevent fullscreen Escape handler from firing
+        return;
+      }
+      const _ac = annotationsOptions && annotationsOptions.annotationsCanvas;
+      if (_ac && typeof _ac.hasSelection === 'function' && _ac.hasSelection()) {
+        _ac.clearSelection();
+        e.stopImmediatePropagation();
       }
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       if (typeof draw.deleteSelected === 'function') draw.deleteSelected();
+      const _ac = annotationsOptions && annotationsOptions.annotationsCanvas;
+      if (_ac && typeof _ac.deleteSelected === 'function') _ac.deleteSelected();
     }
   });
 

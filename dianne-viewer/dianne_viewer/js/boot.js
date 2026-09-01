@@ -243,8 +243,29 @@ const visiumOverlay = HAS_VISIUM
   ? createVisiumOverlay(root, viewport, VISIUM_GENES_BY_SAMPLE)
   : null;
 if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
-const draw = createDraw(root, viewport);
+const draw = createDraw(root, viewport, settings);
 hoverInteraction.setDrawRef(draw);
+
+// Keep the Annotations tab list / badges / thumbnail overlays in sync with
+// direct draw+/draw- mutations that don't go through boot.js's own
+// _pushPromotedStroke / _deletePosNegStroke helpers (i.e. drawing a new
+// stroke, undo, and Delete-key/selection removal, all wired directly by
+// toolbar.js to the draw object). Wrapping here — rather than editing
+// draw.js — keeps draw.js focused purely on canvas/geometry concerns.
+function _refreshAfterDrawChange() {
+  strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
+  _refreshAnnotationBadges();
+  if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+  if (typeof sampleRibbonApi !== 'undefined' && sampleRibbonApi) sampleRibbonApi.updateThumbOverlays();
+}
+for (const _drawFn of ['onMouseUp', 'undoLast', 'deleteSelected', 'clear']) {
+  const _orig = draw[_drawFn];
+  draw[_drawFn] = function (...args) {
+    const result = _orig.apply(draw, args);
+    _refreshAfterDrawChange();
+    return result;
+  };
+}
 
 // ── §2-§13 annotation library subsystem (coexists with draw.js pos/neg) ────
 function _getMppForSample(sample) {
@@ -266,6 +287,7 @@ const annotations = createAnnotations({
 const annotationsCanvas = createAnnotationsCanvas({
   container: root, viewport, annotations,
   getActiveSample: () => ACTIVE_SAMPLE,
+  settings,
   log,
 });
 
@@ -587,6 +609,8 @@ _metadataPanel = createMetadataPanel({
     annotations,
     annotationsCanvas,
     getActiveSample: () => ACTIVE_SAMPLE,
+    viewport,
+    settings,
     log,
     getPosNegCounts: _getPosNegCounts,
     getPosNegStrokes: _getPosNegStrokes,

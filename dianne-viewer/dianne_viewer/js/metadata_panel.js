@@ -109,6 +109,11 @@ function createMetadataPanel({
   samplesRibbon.insertBefore(countLabel, ribbonWrap);
 
   function _updateCount() {
+    if (_activeTab === 'annotations') {
+      countLabel.textContent = ACTIVE_SAMPLE_REF();
+      countLabel.style.color = '#53d9ff';
+      return;
+    }
     const n = _filteredSamples.length, total = SAMPLES.length;
     countLabel.textContent = n + ' / ' + total + ' samples';
     countLabel.style.color = n < total ? '#fa6' : '#666';
@@ -171,6 +176,7 @@ function createMetadataPanel({
       _ensureAnnotationsPanelBuilt();
       if (_annotationsApi && typeof _annotationsApi.onShow === 'function') _annotationsApi.onShow();
     }
+    _updateCount();
   }
   tabSamples.addEventListener('click', () => _switchTab('samples'));
   tabMeta.addEventListener('click',    () => _switchTab('metadata'));
@@ -624,6 +630,7 @@ function createMetadataPanel({
 
   // ── Sync active sample highlight in table ─────────────────────────────
   function syncActiveSample() {
+    _updateCount();
     const activeSample = ACTIVE_SAMPLE_REF();
     let activeRow = null;
     for (const tr of tbody.querySelectorAll('tr[data-sample-name]')) {

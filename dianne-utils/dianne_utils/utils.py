@@ -6,7 +6,7 @@ import tifffile
 import numpy as np
 import pandas as pd
 import cv2
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from IPython.display import display, HTML
 import pickle
 

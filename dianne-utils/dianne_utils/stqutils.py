@@ -12,7 +12,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import scanpy as sc
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import scipy
 
 from numba import njit, prange

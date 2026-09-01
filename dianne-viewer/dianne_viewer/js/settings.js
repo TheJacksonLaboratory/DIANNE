@@ -25,6 +25,10 @@ function createSettings(toolbarEl, rootEl, defaults) {
     maxCellsBoundaries : 10000,       // force dots when visible cell count exceeds this (0 = off)
     inferMsPerCell     : 0.25,       // loader animation ms per cell in inference sample
     patchOpacity       : 0.35,       // semi-transparency of the patch/tile overlay (0–1)
+    contourSimplify    : true,       // auto-simplify newly drawn library annotation contours
+    contourSimplifyPx  : 1.5,        // simplification tolerance, in *screen* px (scale-independent)
+    contourSimplifyOnExport : false, // additionally re-simplify at GeoJSON export time
+    contourSimplifyExportPx : 50,    // export tolerance, in *image*-space px (not screen-scaled)
   }, defaults || {});
 
   // Load persisted values; only accept keys/types that exist in DEFAULTS.
@@ -165,6 +169,15 @@ function createSettings(toolbarEl, rootEl, defaults) {
     return inp;
   }
 
+  function _makeCheckbox({ key }) {
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = !!vals[key];
+    inp.style.cssText = 'cursor:pointer;';
+    inp.addEventListener('change', () => set(key, inp.checked));
+    return inp;
+  }
+
   function _makeSelect({ key, options }) {
     const sel = document.createElement('select');
     sel.style.cssText = [
@@ -299,6 +312,45 @@ function createSettings(toolbarEl, rootEl, defaults) {
       _makeSlider({ key: 'patchOpacity', min: 0, max: 1, step: 0.05,
         format: v => v.toFixed(2) }),
       'Fill opacity for the Tiles overlay rectangles (0 = invisible, 1 = solid).'));
+
+    // ── Annotation contours ─────────────────────────────────────────────────
+    panel.appendChild(_makeSectionHeader('Annotation Contours'));
+
+    panel.appendChild(_makeRow(
+      'Auto-simplify on draw',
+      _makeCheckbox({ key: 'contourSimplify' }),
+      'Automatically reduce vertex count of newly drawn polygon/freehand\n' +
+      'library annotations (Douglas-Peucker decimation). Keeps saved GeoJSON\n' +
+      'small without visibly changing the outline.'));
+
+    panel.appendChild(_makeRow(
+      'Simplify tolerance (screen px)',
+      _makeSlider({ key: 'contourSimplifyPx', min: 0.25, max: 20, step: 0.25,
+        format: v => v.toFixed(2) }),
+      'Max allowed on-screen deviation of the simplified outline from the\n' +
+      'original stroke, in screen pixels — converted to image-space tolerance\n' +
+      'using the zoom level active when the contour is finished, so contours\n' +
+      'drawn zoomed-in or zoomed-out are simplified consistently.'));
+    panel.appendChild(_makeHint('Higher = fewer vertices / smaller GeoJSON, lower = more faithful outline'));
+
+    panel.appendChild(_makeRow(
+      'Auto-simplify on export',
+      _makeCheckbox({ key: 'contourSimplifyOnExport' }),
+      'Re-simplify every contour again right before GeoJSON download/export\n' +
+      '(on top of, or instead of, the on-draw pass above). Since export is not\n' +
+      'tied to a viewport zoom level, this tolerance is a fixed image-space\n' +
+      'pixel value (see below) rather than a screen-px one.'));
+
+    panel.appendChild(_makeRow(
+      'Export tolerance (image px)',
+      _makeSlider({ key: 'contourSimplifyExportPx', min: 1, max: 500, step: 1,
+        format: v => String(Math.round(v)) }),
+      'Max allowed deviation of the exported outline from the original, in\n' +
+      'full-resolution image pixels. Large slides can tolerate a much more\n' +
+      'aggressive tolerance here (tens to hundreds of px) than the on-screen\n' +
+      'draw-time setting, since one image px is a tiny fraction of a screen px\n' +
+      'once zoomed out.'));
+    panel.appendChild(_makeHint('Aggressive: 100–300 px  •  Conservative: 10–30 px'));
 
     // ── Sticky footer with reset button ────────────────────────────────────────
     const footer = document.createElement('div');

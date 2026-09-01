@@ -8,10 +8,10 @@
  * positive/negative.
  *
  * Exposes createAnnotationsTab({ container, annotations, annotationsCanvas,
- *   getActiveSample, log, getPosNegCounts, getPosNegStrokes,
+ *   getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes,
  *   onDeletePosNegStroke, onImportPosNegToAnnotation }) → { refresh, onShow }
  */
-function createAnnotationsTab({ container, annotations, annotationsCanvas, getActiveSample, log, getPosNegCounts, getPosNegStrokes, onDeletePosNegStroke, onImportPosNegToAnnotation }) {
+function createAnnotationsTab({ container, annotations, annotationsCanvas, getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes, onDeletePosNegStroke, onImportPosNegToAnnotation }) {
   container.style.padding = '6px';
   container.style.gap = '6px';
   container.style.overflowY = 'auto';
@@ -103,10 +103,27 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     selectedIds.clear();
     refresh(); annotationsCanvas.redraw();
   });
+  // Reduce vertex count of already-drawn contours (e.g. imported, or drawn
+  // before turning on auto-simplify). Tolerance uses the same screen-px
+  // setting as the auto-simplify-on-draw path, converted via the viewport's
+  // *current* zoom level (the level the user is looking at when they choose
+  // to simplify), so the visual fidelity trade-off is a screen concept
+  // regardless of what zoom the contour was originally drawn at.
+  _mkBulkBtn('Simplify', () => {
+    if (!viewport || typeof annotations.simplifyAnnotation !== 'function') return;
+    const sample = getActiveSample();
+    const screenTolPx = (settings ? settings.get('contourSimplifyPx') : null) || 1.5;
+    const { scale } = viewport.getTransform();
+    const tolerancePx = screenTolPx / (scale || 1);
+    for (const id of selectedIds) annotations.simplifyAnnotation(sample, 'library', id, tolerancePx);
+    refresh(); annotationsCanvas.redraw();
+  });
   _mkBulkBtn('Export selection', () => {
     const sample = getActiveSample();
     const anns = annotations.listAnnotations(sample, 'library').filter(a => selectedIds.has(a.id));
-    const fc = { type: 'FeatureCollection', features: anns.map(a => ({ type: 'Feature', geometry: { type: 'Polygon', coordinates: a.rings }, properties: { ...a, rings: undefined } })) };
+    const fc = { type: 'FeatureCollection', features: anns.map(a => ({ type: 'Feature', geometry: { type: 'Polygon', coordinates: a.rings.map(r => r.map(p => [p.x, p.y])) }, properties: { ...a, rings: undefined } })) };
+    const simplifyPx = (settings && settings.get('contourSimplifyOnExport')) ? settings.get('contourSimplifyExportPx') : 0;
+    if (simplifyPx && typeof annotations.simplifyFeatureCollection === 'function') annotations.simplifyFeatureCollection(fc, simplifyPx);
     const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

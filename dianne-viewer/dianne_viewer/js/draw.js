@@ -18,7 +18,7 @@
  *   draw.setWidth(px)
  */
 
-function createDraw(container, viewport) {
+function createDraw(container, viewport, settings) {
   const MIN_STROKE_POINTS = 15;
 
   // ── state (must be declared before resizeCanvas calls redraw) ─────────────
@@ -102,6 +102,7 @@ function createDraw(container, viewport) {
         active.points = _smoothPoints(active.points, smoothing);
       }
       if (active.points.length >= MIN_STROKE_POINTS) {
+        active.points = _maybeSimplify(active.points);
         const target = active.kind === 'negative' ? strokesNegative : strokesPositive;
         target.push(active);
       }
@@ -117,7 +118,52 @@ function createDraw(container, viewport) {
     const smoothed = _smoothOpenPath(center, smoothing, Math.max(1, Math.round(smoothing * 8)));
     const contours = _extractNoodleContours(smoothed, noodleRadius, stroke.kind, gid);
     const target   = stroke.kind === 'negative' ? strokesNegative : strokesPositive;
-    for (const s of contours) target.push(s);
+    for (const s of contours) { s.points = _maybeSimplify(s.points); target.push(s); }
+  }
+
+  // Reduce vertex count of a freshly-finished stroke, mirroring
+  // annotations_canvas.js's _maybeSimplify: tolerance is specified in the
+  // shared 'contourSimplifyPx' *screen*-px setting, converted to image-space
+  // px via the viewport scale active right now (i.e. when the stroke is
+  // finished), so the same on-screen fidelity is kept regardless of the zoom
+  // level the contour was drawn at.
+  function _maybeSimplify(points) {
+    if (!settings || settings.get('contourSimplify') === false) return points;
+    if (!points || points.length < 8) return points;
+    const screenTolPx = settings.get('contourSimplifyPx');
+    if (!screenTolPx) return points;
+    const { scale } = viewport.getTransform();
+    const tolerancePx = screenTolPx / (scale || 1);
+    return _simplifyRing(points, tolerancePx);
+  }
+
+  /** Simplify via Douglas-Peucker decimation (mirrors annotations.js's simplifyRing). */
+  function _simplifyRing(points, tolerancePx) {
+    if (points.length < 4) return points;
+    const tol2 = (tolerancePx || 1) ** 2;
+    function distToSeg(p, a, b) {
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy || 1e-9;
+      let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = a.x + t * dx, py = a.y + t * dy;
+      return (p.x - px) ** 2 + (p.y - py) ** 2;
+    }
+    function rdp(pts) {
+      if (pts.length < 3) return pts;
+      let maxD = 0, idx = 0;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const d = distToSeg(pts[i], pts[0], pts[pts.length - 1]);
+        if (d > maxD) { maxD = d; idx = i; }
+      }
+      if (maxD > tol2) {
+        const left = rdp(pts.slice(0, idx + 1));
+        const right = rdp(pts.slice(idx));
+        return left.slice(0, -1).concat(right);
+      }
+      return [pts[0], pts[pts.length - 1]];
+    }
+    return rdp(points);
   }
 
   // ── public controls ────────────────────────────────────────────────────────
