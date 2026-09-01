@@ -105,7 +105,7 @@ class ViewerServer:
                  xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
                  run_inference_fn=None, sample_sizes=None,
                  save_fn=None, load_fn=None, list_names_fn=None,
-                 secondary_images=None):
+                 secondary_images=None, annotations_dir=None):
         if images is None:
             if image is None:
                 raise ValueError('ViewerServer requires image or images')
@@ -183,7 +183,7 @@ class ViewerServer:
             sample: {'library': [], 'positive': [], 'negative': []}
             for sample in self.images.keys()
         }
-        self.annotations_dir = os.environ.get('DIANNE_ANNOTATIONS_DIR') or os.path.join(os.getcwd(), '.dianne_annotations')
+        self.annotations_dir = os.environ.get('DIANNE_ANNOTATIONS_DIR') or annotations_dir or os.path.join(os.getcwd(), '.dianne_annotations')
         self.history_log_path = os.path.join(self.annotations_dir, 'history.log')
         # Class colors are global (not per-slide, a class means the same thing
         # across every sample), persisted to their own small JSON file

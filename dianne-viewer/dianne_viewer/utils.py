@@ -22,7 +22,7 @@ def is_pyramidal(path):
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
             patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_', fs=None,
             sample_metadata=None, template1='img.data.{model}-{F}.h5ad',
-            template2='features/false-{F}-{model}_features.tsv.gz', mpp=None):
+            template2='features/false-{F}-{model}_features.tsv.gz', mpp=None, save_path=None):
 
     """Creates a viewer for the given directory path containing sample subdirectories with image files.
     Args:
@@ -143,7 +143,7 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
 
         return create_viewer(valid_samples, imgs, height=height, run_inference_fn=runfn, sample_sizes=sizes,
                                         save_func=savefn, load_func=loadfn, list_names_func=listfn,
-                                        sample_metadata=sample_metadata_, mpp=mpp)[1]
+                                        sample_metadata=sample_metadata_, mpp=mpp, save_path=save_path)[1]
 
     else:
         imgs = {s: os.path.join(dpath, s, imfname) for s in valid_samples}
@@ -159,11 +159,11 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         else:
             sample_metadata_ = None
 
-        return create_viewer(valid_samples, imgs, height=height, sample_metadata=sample_metadata_, mpp=mpp)[1]
+        return create_viewer(valid_samples, imgs, height=height, sample_metadata=sample_metadata_, mpp=mpp, save_path=save_path)[1]
 
 def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_size=8, PCMA_alpha=0.8, multiplier=2,
                 body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv', classifierPaths=None, load_features=False,
-                sample_metadata=None):
+                sample_metadata=None, mpp=None, save_path=None):
 
     """Views KOMP STQ data using the DIANNE viewer.
     Similar to viewSTQ, but specifically for KOMP data. It loads the necessary parameters and prepares the patches for viewing.
@@ -211,7 +211,7 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
                                     xenium_mpp=mpp, max_cells=max_cells, matrices=matrices, xenium_bundle_paths=bundle_paths,
                                     annotations=all_annotations, category_colors=annotationsPalette,
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn,
-                                    sample_metadata=sample_metadata)[1]
+                                    sample_metadata=sample_metadata, mpp=mpp, save_path=save_path)[1]
     return drawings
 
 

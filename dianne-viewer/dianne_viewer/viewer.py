@@ -156,7 +156,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   draw_on_secondary=False, visium_ads=None,
                   sample_mapping=None, fullscreen_on_load=True,
                   sample_metadata=None, fs=None, s3=None, s3_bucket=None,
-                  adjust_primary_matrices=True):
+                  adjust_primary_matrices=True, save_path=None):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -228,6 +228,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         pixel space and are transformed to primary-image space via the
         secondary affine matrix.  Populated automatically by
         ``dianne.makeRunFn(…)`` with no extra arguments needed.
+    save_path : str | Path, optional
+        Directory (relative to the notebook's working directory, i.e.
+        ``os.getcwd()``, or absolute) under which the annotation-library
+        GeoJSON files, class-colors file, and session history log are
+        persisted (in a ``.dianne_annotations`` subfolder). Defaults to
+        ``'./'`` — the notebook's own directory. Overridden by the
+        ``DIANNE_ANNOTATIONS_DIR`` environment variable if set.
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -270,6 +277,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     missing = [s for s in sample_list if s not in images]
     if missing:
       raise KeyError(f'missing image path(s) for sample(s): {missing}')
+
+    # Resolve where annotations + the session history log are persisted.
+    # `save_path` is interpreted relative to the notebook's working directory
+    # (i.e. os.getcwd(), which Jupyter sets to the notebook's own directory);
+    # absolute paths are used as-is. Defaults to './' (the notebook dir itself).
+    _save_root = Path(save_path) if save_path else Path('.')
+    if not _save_root.is_absolute():
+      _save_root = Path.cwd() / _save_root
+    annotations_dir = str((_save_root / '.dianne_annotations').resolve())
 
     chosen_sample = sample_list[0]
     import time as _time
@@ -479,7 +495,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           save_fn=save_func,
           load_fn=load_func,
           list_names_fn=list_names_func,
-          secondary_images=secondary_sample_images)
+          secondary_images=secondary_sample_images,
+          annotations_dir=annotations_dir)
     # annotation_layers_json is built later; attach placeholder now, replace after build
     server._annotation_layers_json = '[]'
 
