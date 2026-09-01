@@ -1,7 +1,10 @@
+import gzip
 import json
+import os
 import queue
 import socket
 import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import multiprocessing
@@ -168,6 +171,24 @@ class ViewerServer:
             for sample in self.images.keys()
         }
         self._annotation_layers_json = '[]'
+
+        # ── §2/§8 library/positive/negative annotation store (per slide) ──────
+        # In-memory: {sample: {'library': [...], 'positive': [...], 'negative': [...]}}
+        # annotation objects follow task.md §2's schema (id/group_id/label/class/
+        # status/locked/author/timestamps/slide_id/area/perimeter/...).
+        # Persisted to disk as gzip-compressed GeoJSON FeatureCollections, one
+        # file per sample, alongside the existing named 'Save classifier' flow
+        # (which is untouched and remains available separately).
+        self.annotations_by_sample = {
+            sample: {'library': [], 'positive': [], 'negative': []}
+            for sample in self.images.keys()
+        }
+        self.annotations_dir = os.environ.get('DIANNE_ANNOTATIONS_DIR') or os.path.join(os.getcwd(), '.dianne_annotations')
+        self.history_log_path = os.path.join(self.annotations_dir, 'history.log')
+        # Class colors are global (not per-slide, a class means the same thing
+        # across every sample), persisted to their own small JSON file
+        # alongside the per-sample GeoJSON annotation files.
+        self.class_colors = self._load_class_colors_from_disk()
         self._tile_coords_fn  = None   # callable(sample) -> {'x': [...], 'y': [...]}
         self._tile_size       = None   # int, secondary-space pixels
         self._visium_ads      = {}     # dict[sample] -> AnnData (spots × genes)
@@ -207,6 +228,99 @@ class ViewerServer:
         self._stopped = True
         self._inference_queue.put(None)   # stop worker
         self._server.shutdown()
+
+    # ── §8 annotation persistence (independent of the named classifier save) ──
+
+    @staticmethod
+    def _annotation_to_geojson_feature(ann):
+        """Convert one in-memory annotation object (task.md §2 schema) to a
+        GeoJSON Feature. Rings sharing group_id are merged into a single
+        Polygon-with-holes geometry (first ring = outer, remainder = holes)."""
+        rings = ann.get('rings') or []
+        coords = [r for r in rings] if rings else []
+        geometry = {'type': 'Polygon', 'coordinates': coords} if coords else None
+        props = {k: v for k, v in ann.items() if k != 'rings'}
+        return {'type': 'Feature', 'geometry': geometry, 'properties': props}
+
+    def _sample_annotations_path(self, sample):
+        safe = str(sample).replace(os.sep, '_')
+        return os.path.join(self.annotations_dir, f'{safe}.annotations.geojson.gz')
+
+    def save_annotations(self, sample, library=None, positive=None, negative=None):
+        """Persist one sample's annotation sets to a compressed GeoJSON file.
+        Called by the /annotations/save route (autosave, manual save, and
+        on-slide-switch flush per task.md §8)."""
+        bucket = self.annotations_by_sample.setdefault(
+            sample, {'library': [], 'positive': [], 'negative': []})
+        if library is not None:
+            bucket['library'] = library
+        if positive is not None:
+            bucket['positive'] = positive
+        if negative is not None:
+            bucket['negative'] = negative
+
+        os.makedirs(self.annotations_dir, exist_ok=True)
+        features = []
+        for cls in ('library', 'positive', 'negative'):
+            for ann in bucket.get(cls, []):
+                features.append(self._annotation_to_geojson_feature(ann))
+        fc = {'type': 'FeatureCollection', 'sample': sample, 'features': features}
+        payload = json.dumps(fc).encode('utf-8')
+        with gzip.open(self._sample_annotations_path(sample), 'wb') as f:
+            f.write(payload)
+        return True
+
+    def load_annotations(self, sample):
+        """Load a previously-saved sample's annotation sets, if present on disk."""
+        path = self._sample_annotations_path(sample)
+        if not os.path.exists(path):
+            return self.annotations_by_sample.get(
+                sample, {'library': [], 'positive': [], 'negative': []})
+        with gzip.open(path, 'rb') as f:
+            fc = json.loads(f.read().decode('utf-8'))
+        bucket = {'library': [], 'positive': [], 'negative': []}
+        for feat in fc.get('features', []):
+            props = dict(feat.get('properties') or {})
+            geom = feat.get('geometry') or {}
+            props['rings'] = geom.get('coordinates', [])
+            cls = 'library'
+            if props.get('_promoted_class') in ('positive', 'negative'):
+                cls = props['_promoted_class']
+            bucket.setdefault(cls, []).append(props)
+        self.annotations_by_sample[sample] = bucket
+        return bucket
+
+    def _class_colors_path(self):
+        return os.path.join(self.annotations_dir, 'class_colors.json')
+
+    def _load_class_colors_from_disk(self):
+        path = self._class_colors_path()
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def save_class_colors(self, colors):
+        """Persist the global class → color map (§ class colors must save
+        along with classes and all the other details)."""
+        if not isinstance(colors, dict):
+            return
+        self.class_colors.update(colors)
+        os.makedirs(self.annotations_dir, exist_ok=True)
+        with open(self._class_colors_path(), 'w', encoding='utf-8') as f:
+            json.dump(self.class_colors, f)
+
+    def append_history_log(self, entries):
+        """Append transient status-bar messages to the persistent session
+        history log file (task.md §9). `entries` is a list of {ts, message}."""
+        os.makedirs(self.annotations_dir, exist_ok=True)
+        with open(self.history_log_path, 'a', encoding='utf-8') as f:
+            for e in entries:
+                ts = e.get('ts') or datetime.now(timezone.utc).isoformat()
+                f.write(f"[{ts}] {e.get('message', '')}\n")
 
     @property
     def base_url(self):
@@ -657,6 +771,36 @@ class ViewerServer:
                     body = srv._annotation_layers_json.encode()
                     self._respond(200, body, 'application/json')
 
+                elif parsed.path == '/annotations/load':
+                    sample = qs.get('sample', [srv.chosen_sample])[0]
+                    try:
+                        bucket = srv.load_annotations(sample)
+                        body = json.dumps({'ok': True, 'sample': sample, 'class_colors': srv.class_colors, **bucket}).encode()
+                        self._respond(200, body, 'application/json')
+                    except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                        self._respond(200, body, 'application/json')
+
+                elif parsed.path == '/annotations/export':
+                    # QuPath-compatible GeoJSON export (task.md §13).
+                    # ?sample=NAME (or 'all' for every open sample) &include=library,positive,negative
+                    sample_q = qs.get('sample', [srv.chosen_sample])[0]
+                    include = set((qs.get('include', ['library,positive,negative'])[0]).split(','))
+                    samples = list(srv.images.keys()) if sample_q == 'all' else [sample_q]
+                    features = []
+                    for s in samples:
+                        bucket = srv.annotations_by_sample.get(s, {})
+                        for cls in ('library', 'positive', 'negative'):
+                            if cls not in include:
+                                continue
+                            for ann in bucket.get(cls, []):
+                                feat = srv._annotation_to_geojson_feature(ann)
+                                feat['properties']['slide_id'] = s
+                                features.append(feat)
+                    fc = {'type': 'FeatureCollection', 'features': features}
+                    body = json.dumps(fc).encode()
+                    self._respond(200, body, 'application/json')
+
                 elif parsed.path == '/cell_profile':
                     xenium = srv.xenium_by_sample.get(sample_name)
                     if xenium is None:
@@ -875,6 +1019,41 @@ class ViewerServer:
                     except Exception as _exc:
                         import traceback as _tb; _tb.print_exc()
                         body = json.dumps({'ok': False, 'error': str(_exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/annotations/save':
+                    # task.md §8: autosave / manual-save / on-slide-switch flush.
+                    # Independent of the named 'Save classifier' flow (§15 misc).
+                    sample = data.get('sample') if isinstance(data, dict) else None
+                    if not sample:
+                        body = json.dumps({'ok': False, 'error': 'missing sample'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        srv.save_annotations(
+                            sample,
+                            library=data.get('library'),
+                            positive=data.get('positive'),
+                            negative=data.get('negative'),
+                        )
+                        if data.get('class_colors'):
+                            srv.save_class_colors(data.get('class_colors'))
+                        body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        import traceback; traceback.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/history_log':
+                    # task.md §9: persistent flush of the status-bar message history.
+                    entries = data.get('entries', []) if isinstance(data, dict) else []
+                    try:
+                        srv.append_history_log(entries)
+                        body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
                     self._respond(200, body, 'application/json')
                     return
 

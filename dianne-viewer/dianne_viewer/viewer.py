@@ -589,6 +589,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       'modals.js',
       'footer_controls.js',
       'metadata_panel.js',
+      # §2-§13 annotation library subsystem (data model, canvas, tab UI)
+      'annotations.js',
+      'annotations_canvas.js',
+      'annotations_tab.js',
       # Boot: wires everything together (must be last)
       'boot.js',
     ])

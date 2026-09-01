@@ -25,7 +25,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions, annotationsOptions) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -62,6 +62,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     { name: 'pan',           label: '✥',     title: 'Pan / zoom' },
     { name: 'draw_positive', label: 'draw+', title: 'Draw positive contour' },
     { name: 'draw_negative', label: 'draw-', title: 'Draw negative contour' },
+    { name: 'annot_draw',        label: 'draw',  title: 'Freehand/disk brush → unclassified library annotation', freehandCls: 'unclassified' },
     // { name: 'click',         label: '⊕',     title: 'Click to record point' },
   ];
 
@@ -71,11 +72,160 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     btn.textContent = t.label;
     btn.title       = t.title;
     btn.style.cssText = _btnCss;
-    btn.addEventListener('click', () => setTool(t.name));
+    btn.addEventListener('click', () => {
+      setTool(t.name);
+      // annot_draw/annot_draw_positive/annot_draw_negative drive the shared
+      // annotationsCanvas 'freehand' tool — must set its mode/tool explicitly,
+      // otherwise it keeps whatever internal tool (e.g. 'polygon') was last set.
+      if (t.freehandCls !== undefined && annotationsOptions && annotationsOptions.annotationsCanvas) {
+        annotationsOptions.annotationsCanvas.setFreehandMode(t.freehandCls);
+        annotationsOptions.annotationsCanvas.setTool('freehand');
+      }
+    });
     btn.dataset.demoId = 'tool-' + t.name.replace(/_/g, '-');
     toolRow.appendChild(btn);
     buttons[t.name] = btn;
   }
+
+  // ── Row 1b: §6 annotation library tools (polygon / freehand / vertex-edit / ruler) ──
+  if (annotationsOptions && annotationsOptions.annotationsCanvas) {
+    const _ac = annotationsOptions.annotationsCanvas;
+    const _ann = annotationsOptions.annotations;
+    const annotRow = _mkRow();
+    bar.appendChild(annotRow);
+    const annotTools = [
+      { name: 'ruler',             label: '📏', title: 'Ruler tool (single measurement, Esc to remove)' },
+      { name: 'annot_polygon',     label: '△',  title: 'Polygon tool: click to place vertices, Enter to close' }, // triangle symbol: '△'
+    //   { name: 'annot_draw',        label: 'draw',  title: 'Freehand/disk brush → unclassified library annotation', freehandCls: 'unclassified' },
+    //   { name: 'annot_draw_positive', label: 'draw+', title: 'Freehand/disk brush → positive library annotation', freehandCls: 'positive' },
+    //   { name: 'annot_draw_negative', label: 'draw-', title: 'Freehand/disk brush → negative library annotation', freehandCls: 'negative' },
+      { name: 'annot_vertex_edit', label: '*',  title: 'Vertex edit: drag/insert/delete vertices' },
+    ];
+    // annot_draw / annot_draw_positive / annot_draw_negative all drive the
+    // same underlying annotationsCanvas 'freehand' tool (line or noodle/disk
+    // brush, same as draw+/draw- in the main toolbar), just tagging the
+    // resulting annotation's class before creation.
+    function _isAnnotDrawTool(name) {
+      return name === 'annot_draw' || name === 'annot_draw_positive' || name === 'annot_draw_negative';
+    }
+    for (const t of annotTools) {
+      const btn = document.createElement('button');
+      btn.textContent = t.label;
+      btn.title = t.title;
+      btn.style.cssText = _btnCss;
+      // annotationsCanvas uses unprefixed internal tool names ('polygon',
+      // 'freehand', 'vertex_edit', 'ruler'); the toolbar's own activeTool
+      // keeps the 'annot_' prefix so it doesn't collide with other tool names.
+      btn.addEventListener('click', () => {
+        setTool(t.name);
+        if (_isAnnotDrawTool(t.name)) {
+          _ac.setFreehandMode(t.freehandCls);
+          _ac.setTool('freehand');
+        } else {
+          _ac.setTool(t.name.replace(/^annot_/, ''));
+        }
+      });
+      btn.dataset.demoId = 'tool-' + t.name.replace(/_/g, '-');
+      annotRow.appendChild(btn);
+      buttons[t.name] = btn;
+    }
+    const finishPolyBtn = document.createElement('button');
+    finishPolyBtn.textContent = '✓';
+    finishPolyBtn.title = 'Finish polygon';
+    finishPolyBtn.style.cssText = _btnCss;
+    finishPolyBtn.addEventListener('click', () => _ac.finishPolygon());
+    annotRow.appendChild(finishPolyBtn);
+
+    const undoAnnotBtn = document.createElement('button');
+    undoAnnotBtn.textContent = '↩︎';
+    undoAnnotBtn.title = 'Undo annotation geometry edit';
+    undoAnnotBtn.style.cssText = _btnCss;
+    undoAnnotBtn.addEventListener('click', () => { _ann.undo(annotationsOptions.getActiveSample()); _ac.redraw(); });
+    annotRow.appendChild(undoAnnotBtn);
+
+    const redoAnnotBtn = document.createElement('button');
+    redoAnnotBtn.textContent = '↪︎';
+    redoAnnotBtn.title = 'Redo annotation geometry edit';
+    redoAnnotBtn.style.cssText = _btnCss;
+    redoAnnotBtn.addEventListener('click', () => { _ann.redo(annotationsOptions.getActiveSample()); _ac.redraw(); });
+    annotRow.appendChild(redoAnnotBtn);
+
+    const exportBtn = document.createElement('button');
+    exportBtn.textContent = '⤓ GeoJSON';
+    exportBtn.title = 'Export annotations to QuPath-compatible GeoJSON';
+    exportBtn.style.cssText = _btnCss + ';font-size:11px;';
+    exportBtn.addEventListener('click', () => _ann.downloadGeoJSON(annotationsOptions.getActiveSample()));
+    annotRow.appendChild(exportBtn);
+
+    // ── Row 1c: brush controls for annot_draw/draw+/draw- (same controls as
+    // the main toolbar's draw+/draw-: brush-mode toggle, width/disk-radius
+    // slider, smoothing slider) — hidden unless one of those tools is active.
+    const annotBrushRow = _mkRow();
+    annotBrushRow.style.display = 'none';
+    bar.appendChild(annotBrushRow);
+
+    const annotBrushModeBtn = document.createElement('button');
+    annotBrushModeBtn.textContent = '⬤';
+    annotBrushModeBtn.title = 'Brush mode: line — click for disk (noodle)';
+    annotBrushModeBtn.style.cssText = _btnCss;
+    annotBrushRow.appendChild(annotBrushModeBtn);
+
+    const annotWidthLabel = document.createElement('span');
+    annotWidthLabel.textContent = 'Width';
+    annotWidthLabel.style.cssText = 'color:#ddd;font-size:11px;white-space:nowrap;';
+    annotBrushRow.appendChild(annotWidthLabel);
+
+    const annotWidthSlider = document.createElement('input');
+    annotWidthSlider.type = 'range';
+    annotWidthSlider.min = '1'; annotWidthSlider.max = '10'; annotWidthSlider.step = '1'; annotWidthSlider.value = '2';
+    annotWidthSlider.style.cssText = 'width:90px;';
+    annotBrushRow.appendChild(annotWidthSlider);
+
+    const annotSmoothLabel = document.createElement('span');
+    annotSmoothLabel.textContent = 'Smooth';
+    annotSmoothLabel.style.cssText = 'color:#ddd;font-size:11px;white-space:nowrap;';
+    annotBrushRow.appendChild(annotSmoothLabel);
+
+    const annotSmoothSlider = document.createElement('input');
+    annotSmoothSlider.type = 'range';
+    annotSmoothSlider.min = '0'; annotSmoothSlider.max = '1'; annotSmoothSlider.step = '0.05'; annotSmoothSlider.value = '0.35';
+    annotSmoothSlider.style.cssText = 'width:60px;';
+    annotBrushRow.appendChild(annotSmoothSlider);
+
+    function _syncAnnotBrushModeBtn(bm) {
+      if (bm === 'noodle') {
+        annotBrushModeBtn.textContent = '∿';
+        annotBrushModeBtn.title = 'Brush mode: disk (noodle) — click for line';
+        annotWidthSlider.min = '50'; annotWidthSlider.max = '2000'; annotWidthSlider.step = '20';
+        // Clamp the engine's actual radius into the slider's range and write it
+        // back, so the displayed slider value always matches what will actually
+        // be drawn/extracted (avoids UI showing 50 while brushRadius stays e.g. 40).
+        const cur = _ac.getBrushRadius ? _ac.getBrushRadius() : 300;
+        const clamped = Math.max(50, Math.min(2000, cur));
+        if (clamped !== cur && _ac.setBrushRadius) _ac.setBrushRadius(clamped);
+        annotWidthSlider.value = String(clamped);
+      } else {
+        annotBrushModeBtn.textContent = '⬤';
+        annotBrushModeBtn.title = 'Brush mode: line — click for disk (noodle)';
+        annotWidthSlider.min = '1'; annotWidthSlider.max = '10'; annotWidthSlider.step = '1';
+      }
+    }
+    annotBrushModeBtn.addEventListener('click', () => {
+      const next = (_ac.getBrushMode && _ac.getBrushMode() === 'noodle') ? 'line' : 'noodle';
+      _ac.setBrushMode(next);
+      _syncAnnotBrushModeBtn(next);
+    });
+    annotWidthSlider.addEventListener('input', () => _ac.setBrushRadius(Number(annotWidthSlider.value)));
+    annotSmoothSlider.addEventListener('input', () => _ac.setSmoothing(Number(annotSmoothSlider.value)));
+
+    const _origSetToolForAnnotBrush = setTool;
+    annotationsOptions._syncAnnotBrushRow = (name) => {
+      const show = _isAnnotDrawTool(name);
+      annotBrushRow.style.display = show ? 'flex' : 'none';
+      if (show) _syncAnnotBrushModeBtn(_ac.getBrushMode ? _ac.getBrushMode() : 'line');
+    };
+  }
+
 
   // ── Rows 2–4: draw-mode controls (hidden unless draw tool active) ──────────
 
@@ -753,10 +903,17 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       _syncBrushModeBtn(bm);
       _syncWidthSlider(bm);
     }
+    if (annotationsOptions && typeof annotationsOptions._syncAnnotBrushRow === 'function') {
+      annotationsOptions._syncAnnotBrushRow(name);
+    }
     container.style.cursor =
       name === 'pan'        ? 'grab' :
-      _isDrawTool(name)     ? 'none' :
+      (_isDrawTool(name) || _isAnnotDrawTool2(name)) ? 'none' :
       'cell';
+  }
+
+  function _isAnnotDrawTool2(name) {
+    return name === 'annot_draw' || name === 'annot_draw_positive' || name === 'annot_draw_negative';
   }
 
   setTool('pan');   // initial state

@@ -25,9 +25,23 @@ function createSampleRibbon({
   BASE_URL,
   ACTIVE_SAMPLE_REF,
   setActiveSampleFn,
+  getAnnotationsForMinimap,  // optional: (sampleName) => [{rings, area}] visible library annotations (§10)
 }) {
   // per-sample thumbnail overlay canvases (keyed by sample name)
   const thumbCanvases = {};
+  const annotBadges = {};  // §3: dirty/count badge elements, keyed by sample name
+
+  function updateAnnotationBadges(getInfoFn) {
+    if (typeof getInfoFn !== 'function') return;
+    for (const [sampleName, el] of Object.entries(annotBadges)) {
+      const info = getInfoFn(sampleName) || {};
+      const count = info.count || 0;
+      if (!count && !info.dirty) { el.style.display = 'none'; continue; }
+      el.style.display = 'inline-block';
+      el.textContent = (info.dirty ? '● ' : '') + count;
+      el.title = (info.dirty ? 'Unsaved changes — ' : '') + count + ' annotation(s)';
+    }
+  }
 
   // ── Layout / display constants ────────────────────────────────────────────
   const TOOLTIP_MAX_LABEL_CHARS = 25;  // max chars for key/value in sample hover tooltip
@@ -140,6 +154,33 @@ function createSampleRibbon({
       ctx2.strokeStyle = 'rgba(255,55,55,0.92)';
       ctx2.lineWidth = 1.5;
       ctx2.strokeRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+
+      // §10: overlay library annotations — small ones as dots, large ones as
+      // simplified outlines, thresholded by screen-space size at minimap scale.
+      if (typeof getAnnotationsForMinimap === 'function') {
+        const DOT_THRESHOLD_PX = 5;  // outline vs dot cutoff, in minimap px
+        for (const ann of getAnnotationsForMinimap(sampleName)) {
+          if (!ann.rings || !ann.rings[0] || !ann.rings[0].length) continue;
+          const pts = ann.rings[0].map(p => _imgToThumbPx(p.x, p.y, m, thumbLevel, containerW));
+          let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+          for (const p of pts) { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; if (p.y < miny) miny = p.y; if (p.y > maxy) maxy = p.y; }
+          const w = maxx - minx, h = maxy - miny;
+          ctx2.fillStyle = 'rgba(83,217,255,0.9)';
+          ctx2.strokeStyle = 'rgba(83,217,255,0.9)';
+          if (Math.max(w, h) < DOT_THRESHOLD_PX) {
+            ctx2.beginPath();
+            ctx2.arc((minx + maxx) / 2, (miny + maxy) / 2, 1.5, 0, Math.PI * 2);
+            ctx2.fill();
+          } else {
+            ctx2.lineWidth = 1;
+            ctx2.beginPath();
+            ctx2.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
+            ctx2.closePath();
+            ctx2.stroke();
+          }
+        }
+      }
       ctx2.restore();
     }
   }
@@ -264,6 +305,18 @@ function createSampleRibbon({
       card.appendChild(label);
       card.appendChild(badge);
 
+      // §3: dirty/annotation-count indicator (updated via updateAnnotationBadges)
+      const annotBadge = document.createElement('div');
+      annotBadge.dataset.annotBadge = sampleName;
+      annotBadge.style.cssText = [
+        'font:10px monospace', 'align-self:flex-start', 'display:none',
+        'padding:1px 6px', 'border-radius:999px',
+        'border:1px solid #ffb020', 'color:#ffd27a',
+        'background:rgba(255,176,32,0.15)',
+      ].join(';');
+      card.appendChild(annotBadge);
+      annotBadges[sampleName] = annotBadge;
+
       // ── Hover tooltip (only when this sample has metadata) ─────────────────
       const sampleMeta = SAMPLE_METADATA[sampleName];
       const hasMeta = sampleMeta && Object.keys(sampleMeta).length > 0;
@@ -352,5 +405,5 @@ function createSampleRibbon({
     if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  return { buildSampleRibbon, updateThumbOverlays, setVisibleSamples, scrollToSample };
+  return { buildSampleRibbon, updateThumbOverlays, setVisibleSamples, scrollToSample, updateAnnotationBadges };
 }

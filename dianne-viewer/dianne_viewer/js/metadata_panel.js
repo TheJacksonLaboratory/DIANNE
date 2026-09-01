@@ -26,6 +26,8 @@ function createMetadataPanel({
   onFilterChange,   // optional: called with filtered sample array on every filter change
   onSampleSelect,   // optional: called with sampleName after table row click (e.g. to scroll ribbon)
   scrollRibbonToSample, // optional: called when switching to Samples tab to autoscroll ribbon
+  buildAnnotationsPanel, // optional: (container) => api; builds the §3 "Annotations" tab content once
+  getAnnotationSummary, // optional: (sampleName) => {text} read-only per-row annotation coverage summary (§3)
 }) {
   // ── Layout constants (adjust here) ──────────────────────────────────────
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
@@ -41,10 +43,10 @@ function createMetadataPanel({
     const m = SAMPLE_METADATA[s];
     return m && Object.keys(m).length > 0;
   });
-  if (!_hasAnyMeta) {
-    // Feature is invisible when no metadata provided
-    return { syncActiveSample: () => {} };
-  }
+  // The Annotations tab (task.md §3) always exists regardless of metadata
+  // availability, so unlike before this panel no longer bails out entirely
+  // when there is no per-sample metadata — it just hides the Metadata tab
+  // button/content in that case and still builds the tab strip + Annotations tab.
 
   // ── Collect all column keys (union across all samples) ─────────────────
   const _allKeys = [];
@@ -91,10 +93,12 @@ function createMetadataPanel({
     return b;
   }
 
-  const tabSamples  = _makeTabBtn('Samples', true);
-  const tabMeta     = _makeTabBtn('Metadata', false);
+  const tabSamples     = _makeTabBtn('Samples', true);
+  const tabMeta        = _makeTabBtn('Metadata', false);
+  const tabAnnotations = _makeTabBtn('Annotations', false);
   tabStrip.appendChild(tabSamples);
-  tabStrip.appendChild(tabMeta);
+  if (_hasAnyMeta) tabStrip.appendChild(tabMeta);
+  tabStrip.appendChild(tabAnnotations);
 
   // Prepend tab strip inside samplesRibbon (before ribbonWrap)
   samplesRibbon.insertBefore(tabStrip, samplesRibbon.firstChild);
@@ -119,42 +123,58 @@ function createMetadataPanel({
   ].join(';');
   samplesRibbon.appendChild(metaPanel);
 
+  // ── Annotations panel container (task.md §3/§4) ────────────────────────
+  const annotPanel = document.createElement('div');
+  annotPanel.style.cssText = [
+    'display:none','flex-direction:column','gap:6px',
+    'width:100%','flex:1 1 auto','overflow:hidden','min-height:0',
+    'box-sizing:border-box',
+  ].join(';');
+  samplesRibbon.appendChild(annotPanel);
+  let _annotationsApi = null;
+  function _ensureAnnotationsPanelBuilt() {
+    if (_annotationsApi || typeof buildAnnotationsPanel !== 'function') return;
+    _annotationsApi = buildAnnotationsPanel(annotPanel);
+  }
+
   // ── Tab switch logic ───────────────────────────────────────────────────
+  const _allTabButtons = [tabSamples, tabMeta, tabAnnotations];
+  function _setTabStyles(activeBtn) {
+    for (const b of _allTabButtons) {
+      const active = b === activeBtn;
+      b.style.borderBottomColor = active ? '#53d9ff' : 'transparent';
+      b.style.color = active ? '#53d9ff' : '#888';
+      b.style.background = active ? '#1f1f1f' : 'transparent';
+    }
+  }
   let _activeTab = 'samples';
   function _switchTab(tab) {
     _activeTab = tab;
+    ribbonWrap.style.display = tab === 'samples' ? '' : 'none';
+    metaPanel.style.display = tab === 'metadata' ? 'flex' : 'none';
+    annotPanel.style.display = tab === 'annotations' ? 'flex' : 'none';
     if (tab === 'samples') {
-      // Restore original ribbon width
       samplesRibbon.setAttribute('style', _origRibbonStyle);
-      ribbonWrap.style.display = '';
-      metaPanel.style.display = 'none';
-      tabSamples.style.borderBottomColor = '#53d9ff';
-      tabSamples.style.color = '#53d9ff';
-      tabSamples.style.background = '#1f1f1f';
-      tabMeta.style.borderBottomColor = 'transparent';
-      tabMeta.style.color = '#888';
-      tabMeta.style.background = 'transparent';
-      // Autoscroll ribbon to the active sample
+      _setTabStyles(tabSamples);
       if (scrollRibbonToSample) setTimeout(() => scrollRibbonToSample(ACTIVE_SAMPLE_REF()), 0);
-    } else {
-      // Widen ribbon for the table view (~double width)
+    } else if (tab === 'metadata') {
       samplesRibbon.style.width = '1500px';
       samplesRibbon.style.minWidth = '380px';
       samplesRibbon.style.maxWidth = '1500px';
-      ribbonWrap.style.display = 'none';
-      metaPanel.style.display = 'flex';
-      tabMeta.style.borderBottomColor = '#53d9ff';
-      tabMeta.style.color = '#53d9ff';
-      tabMeta.style.background = '#1f1f1f';
-      tabSamples.style.borderBottomColor = 'transparent';
-      tabSamples.style.color = '#888';
-      tabSamples.style.background = 'transparent';
-      // Scroll active row into view
+      _setTabStyles(tabMeta);
       setTimeout(() => syncActiveSample(), 0);
+    } else if (tab === 'annotations') {
+      samplesRibbon.style.width = '420px';
+      samplesRibbon.style.minWidth = '340px';
+      samplesRibbon.style.maxWidth = '480px';
+      _setTabStyles(tabAnnotations);
+      _ensureAnnotationsPanelBuilt();
+      if (_annotationsApi && typeof _annotationsApi.onShow === 'function') _annotationsApi.onShow();
     }
   }
   tabSamples.addEventListener('click', () => _switchTab('samples'));
   tabMeta.addEventListener('click',    () => _switchTab('metadata'));
+  tabAnnotations.addEventListener('click', () => _switchTab('annotations'));
 
   // ── Build filter controls ─────────────────────────────────────────────
   // Analyse each column's data type and cardinality
@@ -425,6 +445,7 @@ function createMetadataPanel({
   }
 
   headerRow.appendChild(_mkTh('Sample', '__sample__'));
+  headerRow.appendChild(_mkTh('Annotations', '__annotations__'));
   for (const k of _allKeys) headerRow.appendChild(_mkTh(k, k));
   thead.appendChild(headerRow);
   table.appendChild(thead);
@@ -563,6 +584,13 @@ function createMetadataPanel({
       ].join(';');
       tr.appendChild(tdSample);
 
+      // §3: read-only annotation-coverage summary, independent of per-sample metadata
+      const tdAnnot = document.createElement('td');
+      const info = (typeof getAnnotationSummary === 'function') ? (getAnnotationSummary(sampleName) || {}) : {};
+      tdAnnot.textContent = info.text || '—';
+      tdAnnot.style.cssText = 'padding:3px 8px;color:#8cf;border-bottom:1px solid #222;white-space:nowrap;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
+      tr.appendChild(tdAnnot);
+
       const m = SAMPLE_METADATA[sampleName] || {};
       for (const k of _allKeys) {
         const td = document.createElement('td');
@@ -613,5 +641,9 @@ function createMetadataPanel({
   _renderRows(_filteredSamples);
   _updateCount();
 
-  return { syncActiveSample };
+  return {
+    syncActiveSample,
+    switchToAnnotationsTab: () => _switchTab('annotations'),
+    getAnnotationsApi: () => _annotationsApi,
+  };
 }

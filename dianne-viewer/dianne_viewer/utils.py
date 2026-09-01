@@ -21,7 +21,8 @@ def is_pyramidal(path):
 
 def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, F=2, model='ctranspath',
             patch_size=8, classifierPaths=None, height="800px", PCMA_alpha=0.8, multiplier=2, erode=True, drop_dots=False, replacement='_', fs=None,
-            sample_metadata=None):
+            sample_metadata=None, template1='img.data.{model}-{F}.h5ad',
+            template2='features/false-{F}-{model}_features.tsv.gz', mpp=None):
 
     """Creates a viewer for the given directory path containing sample subdirectories with image files.
     Args:
@@ -72,10 +73,7 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         raise ValueError("No valid samples found with the expected image file.")
 
 
-    if load_features:
-        template1 = 'img.data.{model}-{F}.h5ad'
-        template2 = 'features/false-{F}-{model}_features.tsv.gz'
-        
+    if load_features:        
         fname = template1.format(model=model, F=F)
         # Verify that the first (arbitrary sample) has the expected feature file
         if fs is None:
@@ -136,13 +134,16 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
 
         imgs = {s: imgs[s] for s in valid_samples}
 
-        used_slides = set([s for s in valid_samples])
-        dict_sel_slide_metadata = {k: v for k, v in sample_metadata.reindex(used_slides).fillna('NA').T.to_dict().items()}
-        sample_metadata_ = {s: dict_sel_slide_metadata[s] for s in valid_samples if s in dict_sel_slide_metadata.keys()}
+        if not sample_metadata is None:
+            used_slides = set([s for s in valid_samples])
+            dict_sel_slide_metadata = {k: v for k, v in sample_metadata.reindex(used_slides).fillna('NA').T.to_dict().items()}
+            sample_metadata_ = {s: dict_sel_slide_metadata[s] for s in valid_samples if s in dict_sel_slide_metadata.keys()}
+        else:
+            sample_metadata_ = None
 
         return create_viewer(valid_samples, imgs, height=height, run_inference_fn=runfn, sample_sizes=sizes,
                                         save_func=savefn, load_func=loadfn, list_names_func=listfn,
-                                        sample_metadata=sample_metadata_)[1]
+                                        sample_metadata=sample_metadata_, mpp=mpp)[1]
 
     else:
         imgs = {s: os.path.join(dpath, s, imfname) for s in valid_samples}
@@ -151,11 +152,14 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
             valid_samples = [s.replace('.', replacement) for s in valid_samples]
             imgs = {s.replace('.', replacement): imgs[s] for s in imgs.keys()}
     
-        used_slides = set([s for s in valid_samples])
-        dict_sel_slide_metadata = {k: v for k, v in sample_metadata.reindex(used_slides).fillna('NA').T.to_dict().items()}
-        sample_metadata_ = {s: dict_sel_slide_metadata[s] for s in valid_samples if s in dict_sel_slide_metadata.keys()}
+        if not sample_metadata is None:
+            used_slides = set([s for s in valid_samples])
+            dict_sel_slide_metadata = {k: v for k, v in sample_metadata.reindex(used_slides).fillna('NA').T.to_dict().items()}
+            sample_metadata_ = {s: dict_sel_slide_metadata[s] for s in valid_samples if s in dict_sel_slide_metadata.keys()}
+        else:
+            sample_metadata_ = None
 
-        return create_viewer(valid_samples, imgs, height=height, sample_metadata=sample_metadata_)[1]
+        return create_viewer(valid_samples, imgs, height=height, sample_metadata=sample_metadata_, mpp=mpp)[1]
 
 def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_size=8, PCMA_alpha=0.8, multiplier=2,
                 body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv', classifierPaths=None, load_features=False,

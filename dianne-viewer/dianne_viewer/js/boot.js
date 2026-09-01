@@ -246,6 +246,29 @@ if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
 const draw = createDraw(root, viewport);
 hoverInteraction.setDrawRef(draw);
 
+// ── §2-§13 annotation library subsystem (coexists with draw.js pos/neg) ────
+function _getMppForSample(sample) {
+  const m = SAMPLE_META[sample];
+  return (m && m.mpp) || MPP || null;
+}
+// sampleRibbonApi / _metadataPanel are created further below; this indirection
+// lets annotations.js notify them (list refresh, thumbnail overlay, badges)
+// on every mutation (add/delete/edit/status/promote/undo/redo) instead of
+// only when the user switches tabs or samples.
+let _onAnnotationsChange = null;
+const annotations = createAnnotations({
+  viewport, log,
+  getMppForSample: _getMppForSample,
+  baseUrl: BASE_URL,
+  onPromotedToPosNeg: (sample, cls, ann) => _pushPromotedStroke(sample, cls, ann),
+  onChange: (sample) => { if (typeof _onAnnotationsChange === 'function') _onAnnotationsChange(sample); },
+});
+const annotationsCanvas = createAnnotationsCanvas({
+  container: root, viewport, annotations,
+  getActiveSample: () => ACTIVE_SAMPLE,
+  log,
+});
+
 // ── per-sample stroke storage ──────────────────────────────────────────────
 const strokesBySample = {};
 const viewportStateBySample  = {};
@@ -253,6 +276,71 @@ const transcriptStateBySample = {};
 const cellStateBySample = {};
 for (const sample of SAMPLES) {
   strokesBySample[sample] = { strokes_positive: [], strokes_negative: [] };
+}
+
+// §3/§4/§5: bridge into the pre-existing draw+/draw- stroke system, which is
+// the actual positive/negative set consumed downstream (not this file's own
+// annotations-store 'positive'/'negative' buckets, which only track
+// promoted-copy provenance). Used both for the Annotations tab summary and
+// to make "Copy → pos/neg" promotions show up as real strokes.
+function _getPosNegCounts(sample) {
+  const s = (sample === ACTIVE_SAMPLE) ? draw.getStrokes() : (strokesBySample[sample] || { strokes_positive: [], strokes_negative: [] });
+  return {
+    positive: (s.strokes_positive || []).length,
+    negative: (s.strokes_negative || []).length,
+  };
+}
+function _getPosNegStrokes(sample) {
+  return (sample === ACTIVE_SAMPLE) ? draw.getStrokes() : (strokesBySample[sample] || { strokes_positive: [], strokes_negative: [] });
+}
+// Delete a single draw+/draw- stroke by id so it can be removed from the
+// Annotations tab list, not just via "undo last".
+function _deletePosNegStroke(sample, cls, id) {
+  if (sample === ACTIVE_SAMPLE) {
+    draw.selectStroke(id);
+    draw.deleteSelected();
+    strokesBySample[sample] = draw.getStrokes();
+  } else {
+    const bucket = strokesBySample[sample] || { strokes_positive: [], strokes_negative: [] };
+    const key = cls === 'negative' ? 'strokes_negative' : 'strokes_positive';
+    bucket[key] = (bucket[key] || []).filter(s => s.id !== id);
+    strokesBySample[sample] = bucket;
+  }
+  _refreshAnnotationBadges();
+  if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+  sampleRibbonApi.updateThumbOverlays();
+}
+// "Copy → anno": import a draw+/draw- stroke into the annotation library as
+// an independent copy (mirrors the existing "Copy → pos/neg" promotion, just
+// in the opposite direction), tagging the new annotation's class from the
+// stroke's kind so it's easy to tell where it came from.
+function _importStrokeToAnnotation(sample, cls, stroke) {
+  const points = (stroke.points || []).map(p => ({ x: p.x, y: p.y }));
+  if (points.length < 3) return null;
+  const first = points[0], last = points[points.length - 1];
+  if (Math.hypot(last.x - first.x, last.y - first.y) > 1e-6) points.push({ x: first.x, y: first.y });
+  const ann = annotations.makeAnnotation({ sample, rings: [points], cls });
+  return annotations.addAnnotation(sample, 'library', ann);
+}
+function _pushPromotedStroke(sample, cls, ann) {
+  const points = (ann.rings && ann.rings[0]) ? ann.rings[0].map(p => ({ x: p.x, y: p.y })) : [];
+  if (!points.length) return;
+  const strokeObj = { id: ann.id, points };
+  if (sample === ACTIVE_SAMPLE) {
+    const cur = draw.getStrokes();
+    const nextPos = cls === 'positive' ? [...cur.strokes_positive, strokeObj] : cur.strokes_positive;
+    const nextNeg = cls === 'negative' ? [...cur.strokes_negative, strokeObj] : cur.strokes_negative;
+    draw.setStrokes(nextPos, nextNeg);
+    strokesBySample[sample] = { strokes_positive: nextPos, strokes_negative: nextNeg };
+  } else {
+    const bucket = strokesBySample[sample] || { strokes_positive: [], strokes_negative: [] };
+    if (cls === 'positive') bucket.strokes_positive = [...bucket.strokes_positive, strokeObj];
+    else bucket.strokes_negative = [...bucket.strokes_negative, strokeObj];
+    strokesBySample[sample] = bucket;
+  }
+  _refreshAnnotationBadges();
+  if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+  sampleRibbonApi.updateThumbOverlays();
 }
 
 // ── Toolbar ────────────────────────────────────────────────────────────────
@@ -344,7 +432,8 @@ const toolbar = createToolbar(root, viewport, draw, BASE_URL,
       }).catch(err => log('Align error: ' + err))
         .finally(() => { if (btn) btn.disabled = false; });
     },
-  } : null
+  } : null,
+  { annotationsCanvas, annotations, getActiveSample: () => ACTIVE_SAMPLE }
 );
 toolbar.setMonoActive(!!(IS_MONOCHANNEL && SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
 // Expose draw on toolbar for overlay_controls reference
@@ -395,9 +484,18 @@ function setActiveSample(sampleName) {
       body: JSON.stringify({ sample: sampleName }),
     }).catch(() => {});
 
+    // §8: switching away from a slide triggers a save of the slide being left, if dirty.
+    annotations.saveIfDirty(ACTIVE_SAMPLE);
+
     ACTIVE_SAMPLE = sampleName;
     META = SAMPLE_META[sampleName];
     const l0Sample = META.levels[0];
+
+    annotations.loadSample(ACTIVE_SAMPLE).then(() => {
+      annotationsCanvas.redraw();
+      if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+      if (typeof sampleRibbonApi !== 'undefined') _refreshAnnotationBadges();
+    });
 
     hoverInteraction.clearSample(sampleName);
     hoverInteraction.setHasTranscripts(!!(SAMPLE_XENIUM_META[sampleName] &&
@@ -463,8 +561,16 @@ const sampleRibbonApi = createSampleRibbon({
   BASE_URL,
   ACTIVE_SAMPLE_REF: () => ACTIVE_SAMPLE,
   setActiveSampleFn: setActiveSample,
+  getAnnotationsForMinimap: (sampleName) => annotations.listAnnotations(sampleName, 'library'),
 });
 sampleRibbonApi.buildSampleRibbon();
+function _refreshAnnotationBadges() {
+  sampleRibbonApi.updateAnnotationBadges(s => ({
+    dirty: annotations.isDirty(s),
+    count: annotations.listAnnotations(s, 'library').length,
+  }));
+}
+_refreshAnnotationBadges();
 
 // ── Metadata panel (tab strip + panel) ────────────────────────────────────
 _metadataPanel = createMetadataPanel({
@@ -476,7 +582,34 @@ _metadataPanel = createMetadataPanel({
   onFilterChange: (samples) => sampleRibbonApi.setVisibleSamples(samples),
   onSampleSelect: (name) => sampleRibbonApi.scrollToSample(name),
   scrollRibbonToSample: (name) => sampleRibbonApi.scrollToSample(name),
+  buildAnnotationsPanel: (annotContainer) => createAnnotationsTab({
+    container: annotContainer,
+    annotations,
+    annotationsCanvas,
+    getActiveSample: () => ACTIVE_SAMPLE,
+    log,
+    getPosNegCounts: _getPosNegCounts,
+    getPosNegStrokes: _getPosNegStrokes,
+    onDeletePosNegStroke: _deletePosNegStroke,
+    onImportPosNegToAnnotation: _importStrokeToAnnotation,
+  }),
+  getAnnotationSummary: (sampleName) => {
+    const anns = annotations.listAnnotations(sampleName, 'library');
+    const { positive: posCount, negative: negCount } = _getPosNegCounts(sampleName);
+    if (!anns.length && !posCount && !negCount) return { text: '\u2014' };
+    return { text: `${anns.length} lib / ${posCount} pos / ${negCount} neg` };
+  },
 });
+
+// Now that both exist, route every annotations.js mutation straight through
+// to the list/thumbnail/badges (fixes: undo/redo, boolean ops, vertex-edit,
+// and status/class changes not refreshing until a tab/sample switch).
+_onAnnotationsChange = () => {
+  annotationsCanvas.redraw();
+  sampleRibbonApi.updateThumbOverlays();
+  if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+  _refreshAnnotationBadges();
+};
 
 // ── Modals ────────────────────────────────────────────────────────────────
 const modalHelpers = createModalHelpers();
@@ -561,6 +694,45 @@ tiles.update(viewport.getTransform());
 secLayer.drawSecondaryLayer(viewport.getTransform());
 
 log('Ready: ' + ACTIVE_SAMPLE);
+
+// ── §8 autosave + initial annotation load for the starting sample ─────────
+annotations.loadSample(ACTIVE_SAMPLE).then(() => {
+  if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+  annotationsCanvas.redraw();
+  _refreshAnnotationBadges();
+});
+annotations.startAutosave(() => ACTIVE_SAMPLE, 60000);
+setInterval(_refreshAnnotationBadges, 5000);
+window.addEventListener('beforeunload', () => { annotations.saveIfDirty(ACTIVE_SAMPLE); });
+
+// ── route annotation-tool mouse/keyboard events (polygon/freehand/vertex/ruler) ──
+const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'ruler'];
+root.addEventListener('mousedown', e => {
+  const tool = toolbar.getActiveTool();
+  if (ANNOT_MOUSE_TOOLS.includes(tool)) {
+    const r = root.getBoundingClientRect();
+    annotationsCanvas.onMouseDown(e.clientX - r.left, e.clientY - r.top);
+  }
+});
+root.addEventListener('mousemove', e => {
+  const tool = toolbar.getActiveTool();
+  if (ANNOT_MOUSE_TOOLS.includes(tool)) {
+    const r = root.getBoundingClientRect();
+    annotationsCanvas.onMouseMove(e.clientX - r.left, e.clientY - r.top);
+  }
+});
+root.addEventListener('mouseup', () => {
+  const tool = toolbar.getActiveTool();
+  if (ANNOT_MOUSE_TOOLS.includes(tool)) annotationsCanvas.onMouseUp();
+});
+root.addEventListener('mouseleave', () => {
+  const tool = toolbar.getActiveTool();
+  if (ANNOT_MOUSE_TOOLS.includes(tool)) annotationsCanvas.onMouseLeave();
+});
+document.addEventListener('keydown', e => {
+  const tool = toolbar.getActiveTool();
+  if (['annot_polygon', 'ruler'].includes(tool)) annotationsCanvas.onKeyDown(e);
+});
 
 // ── Async annotation layers ────────────────────────────────────────────────
 fetch(BASE_URL + '/annotation_layers')
