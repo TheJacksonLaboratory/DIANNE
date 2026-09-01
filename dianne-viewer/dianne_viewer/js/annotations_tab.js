@@ -99,7 +99,16 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   _mkBulkBtn('Delete', () => {
     const sample = getActiveSample();
     if (!confirm(`Delete ${selectedIds.size} selected annotation(s)?`)) return;
-    for (const id of selectedIds) annotations.deleteAnnotation(sample, 'library', id);
+    // Expand to whole groups (§6): deleting one piece of a multi-ring/hole
+    // shape must remove every sibling sharing its group_id.
+    const seenGroups = new Set();
+    for (const id of selectedIds) {
+      const ann = annotations.findAnnotation(sample, 'library', id);
+      const gid = ann ? ann.group_id : id;
+      if (seenGroups.has(gid)) continue;
+      seenGroups.add(gid);
+      annotations.deleteAnnotationGroup(sample, 'library', gid);
+    }
     selectedIds.clear();
     refresh(); annotationsCanvas.redraw();
   });
@@ -121,7 +130,25 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   _mkBulkBtn('Export selection', () => {
     const sample = getActiveSample();
     const anns = annotations.listAnnotations(sample, 'library').filter(a => selectedIds.has(a.id));
-    const fc = { type: 'FeatureCollection', features: anns.map(a => ({ type: 'Feature', geometry: { type: 'Polygon', coordinates: a.rings.map(r => r.map(p => [p.x, p.y])) }, properties: { ...a, rings: undefined } })) };
+    // Group by group_id (§6): a group of one ring exports as a Polygon;
+    // several sibling rings (disjoint noodle pieces / separately-added
+    // holes) export as a single MultiPolygon feature, one polygon entry per
+    // sibling annotation (each entry's own rings[0]=outer, rest=holes).
+    const groups = annotations.groupAnnotationsByGroupId(anns);
+    const fc = {
+      type: 'FeatureCollection',
+      features: groups.map(group => {
+        const props = { ...group[0], rings: undefined };
+        if (group.length === 1) {
+          return { type: 'Feature', geometry: { type: 'Polygon', coordinates: group[0].rings.map(r => r.map(p => [p.x, p.y])) }, properties: props };
+        }
+        return {
+          type: 'Feature',
+          geometry: { type: 'MultiPolygon', coordinates: group.map(a => a.rings.map(r => r.map(p => [p.x, p.y]))) },
+          properties: props,
+        };
+      }),
+    };
     const simplifyPx = (settings && settings.get('contourSimplifyOnExport')) ? settings.get('contourSimplifyExportPx') : 0;
     if (simplifyPx && typeof annotations.simplifyFeatureCollection === 'function') annotations.simplifyFeatureCollection(fc, simplifyPx);
     const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
@@ -267,7 +294,9 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     delBtn.style.cssText = 'background:transparent;border:none;color:#f66;cursor:pointer;font-size:12px;';
     delBtn.addEventListener('click', e => {
       e.stopPropagation();
-      annotations.deleteAnnotation(sample, 'library', ann.id); refresh(); annotationsCanvas.redraw();
+      // Delete the whole group_id group (§6) so a single click removes every
+      // sibling ring/hole belonging to this logical annotation.
+      annotations.deleteAnnotationGroup(sample, 'library', ann.group_id); refresh(); annotationsCanvas.redraw();
     });
     top.appendChild(delBtn);
     row.appendChild(top);
@@ -340,7 +369,11 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
   // ── draw+/draw- stroke rows (task feedback: these need to show up in the
   // list too, not just as a summary count) ───────────────────────────────
-  function _strokeRowEl(stroke, cls, sample) {
+  // Several raw strokes can share one group_id (e.g. a noodle-brush sweep
+  // that traced multiple contour pieces, some possibly holes of others), so
+  // they must render/act as ONE row instead of one row per raw stroke.
+  function _strokeRowEl(strokes, cls, sample) {
+    const primary = strokes[0];
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid #333;border-radius:5px;background:#151515;';
     row.addEventListener('contextmenu', e => e.preventDefault());
@@ -349,20 +382,25 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     dot.style.color = cls === 'negative' ? '#ff5233' : '#22f0ff';
     row.appendChild(dot);
     const label = document.createElement('span');
-    label.textContent = `${cls} stroke`;
+    label.textContent = strokes.length > 1 ? `${cls} stroke (${strokes.length} contours)` : `${cls} stroke`;
     label.style.cssText = 'flex:1;color:#ccc;font:11px monospace;';
     row.appendChild(label);
     const areaEl = document.createElement('span');
     areaEl.style.cssText = 'font:10px monospace;color:#999;';
-    areaEl.textContent = annotations.formatArea(annotations.computeAreaPx2([stroke.points]), sample);
+    // Each stroke object already carries its own outer ring (points) plus
+    // any hole rings (holes) as one assembled piece; sum those per-piece
+    // areas (not a flat sum of every raw ring) so a hole correctly
+    // subtracts rather than inflating the total.
+    const totalArea = strokes.reduce((sum, s) => sum + annotations.computeAreaPx2([s.points, ...(s.holes || [])]), 0);
+    areaEl.textContent = annotations.formatArea(totalArea, sample);
     row.appendChild(areaEl);
     const toAnnoBtn = document.createElement('button');
     toAnnoBtn.textContent = 'Copy \u2192 anno';
-    toAnnoBtn.title = 'Copy this contour into the annotation library';
+    toAnnoBtn.title = 'Copy this contour (all parts) into the annotation library';
     toAnnoBtn.style.cssText = 'background:#222;border:1px solid #ffd23f;color:#ffd23f;border-radius:3px;font:9px monospace;cursor:pointer;';
     toAnnoBtn.addEventListener('click', e => {
       e.stopPropagation();
-      if (typeof onImportPosNegToAnnotation === 'function') onImportPosNegToAnnotation(sample, cls, stroke);
+      if (typeof onImportPosNegToAnnotation === 'function') onImportPosNegToAnnotation(sample, cls, primary);
       refresh();
     });
     row.appendChild(toAnnoBtn);
@@ -372,7 +410,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     delBtn.style.cssText = 'background:transparent;border:none;color:#f66;cursor:pointer;font-size:12px;';
     delBtn.addEventListener('click', e => {
       e.stopPropagation();
-      if (typeof onDeletePosNegStroke === 'function') onDeletePosNegStroke(sample, cls, stroke.id);
+      if (typeof onDeletePosNegStroke === 'function') for (const s of strokes) onDeletePosNegStroke(sample, cls, s.id);
       refresh();
     });
     row.appendChild(delBtn);
@@ -402,8 +440,21 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     for (const ann of anns) listEl.appendChild(_rowEl(ann, sample));
     if (typeof getPosNegStrokes === 'function') {
       const strokes = getPosNegStrokes(sample) || { strokes_positive: [], strokes_negative: [] };
-      for (const s of strokes.strokes_positive || []) listEl.appendChild(_strokeRowEl(s, 'positive', sample));
-      for (const s of strokes.strokes_negative || []) listEl.appendChild(_strokeRowEl(s, 'negative', sample));
+      // Group raw strokes by group_id (falling back to each stroke's own id
+      // when ungrouped) so several contour pieces from one noodle sweep
+      // render as a single list row instead of one row per piece.
+      const _groupStrokes = list => {
+        const order = [];
+        const groups = new Map();
+        for (const s of (list || [])) {
+          const gid = s.group_id !== undefined ? s.group_id : s.id;
+          if (!groups.has(gid)) { groups.set(gid, []); order.push(gid); }
+          groups.get(gid).push(s);
+        }
+        return order.map(gid => groups.get(gid));
+      };
+      for (const group of _groupStrokes(strokes.strokes_positive)) listEl.appendChild(_strokeRowEl(group, 'positive', sample));
+      for (const group of _groupStrokes(strokes.strokes_negative)) listEl.appendChild(_strokeRowEl(group, 'negative', sample));
     }
     summaryEl.textContent = _summaryText(sample);
     _syncBulkRow();

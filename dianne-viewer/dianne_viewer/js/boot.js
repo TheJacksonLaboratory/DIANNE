@@ -124,7 +124,9 @@ function _secToPrim(mat, x, y) {
 }
 function _tfmStrokeList(list, fn) {
   return list.map(function(s) {
-    return Object.assign({}, s, { points: s.points.map(function(p) { return fn(p.x, p.y); }) });
+    var out = Object.assign({}, s, { points: s.points.map(function(p) { return fn(p.x, p.y); }) });
+    if (Array.isArray(s.holes)) out.holes = s.holes.map(function(ring) { return ring.map(function(p) { return fn(p.x, p.y); }); });
+    return out;
   });
 }
 function _buildServerStrokesPayload() {
@@ -281,7 +283,7 @@ const annotations = createAnnotations({
   viewport, log,
   getMppForSample: _getMppForSample,
   baseUrl: BASE_URL,
-  onPromotedToPosNeg: (sample, cls, ann) => _pushPromotedStroke(sample, cls, ann),
+  onPromotedToPosNeg: (sample, cls, copies, groupId) => _pushPromotedStroke(sample, cls, copies, groupId),
   onChange: (sample) => { if (typeof _onAnnotationsChange === 'function') _onAnnotationsChange(sample); },
 });
 const annotationsCanvas = createAnnotationsCanvas({
@@ -305,11 +307,16 @@ for (const sample of SAMPLES) {
 // annotations-store 'positive'/'negative' buckets, which only track
 // promoted-copy provenance). Used both for the Annotations tab summary and
 // to make "Copy → pos/neg" promotions show up as real strokes.
+function _countGroups(list) {
+  const seen = new Set();
+  for (const s of (list || [])) seen.add(s.group_id !== undefined ? s.group_id : s.id);
+  return seen.size;
+}
 function _getPosNegCounts(sample) {
   const s = (sample === ACTIVE_SAMPLE) ? draw.getStrokes() : (strokesBySample[sample] || { strokes_positive: [], strokes_negative: [] });
   return {
-    positive: (s.strokes_positive || []).length,
-    negative: (s.strokes_negative || []).length,
+    positive: _countGroups(s.strokes_positive),
+    negative: _countGroups(s.strokes_negative),
   };
 }
 function _getPosNegStrokes(sample) {
@@ -335,29 +342,70 @@ function _deletePosNegStroke(sample, cls, id) {
 // "Copy → anno": import a draw+/draw- stroke into the annotation library as
 // an independent copy (mirrors the existing "Copy → pos/neg" promotion, just
 // in the opposite direction), tagging the new annotation's class from the
-// stroke's kind so it's easy to tell where it came from.
-function _importStrokeToAnnotation(sample, cls, stroke) {
-  const points = (stroke.points || []).map(p => ({ x: p.x, y: p.y }));
-  if (points.length < 3) return null;
-  const first = points[0], last = points[points.length - 1];
-  if (Math.hypot(last.x - first.x, last.y - first.y) > 1e-6) points.push({ x: first.x, y: first.y });
-  const ann = annotations.makeAnnotation({ sample, rings: [points], cls });
-  return annotations.addAnnotation(sample, 'library', ann);
+// stroke's kind so it's easy to tell where it came from. Strokes sharing the
+// same group_id (e.g. several disjoint noodle-brush contours from one
+// stroke) are imported together as a single grouped library annotation, so
+// undo/redo/export/copy/promote treat the whole shape (holes included) as
+// one unit.
+function _strokeToRings(stroke) {
+  const closeRing = pts => {
+    const points = (pts || []).map(p => ({ x: p.x, y: p.y }));
+    if (points.length < 3) return null;
+    const first = points[0], last = points[points.length - 1];
+    if (Math.hypot(last.x - first.x, last.y - first.y) > 1e-6) points.push({ x: first.x, y: first.y });
+    return points;
+  };
+  const rings = [closeRing(stroke.points)].filter(Boolean);
+  for (const hole of (stroke.holes || [])) { const r = closeRing(hole); if (r) rings.push(r); }
+  return rings;
 }
-function _pushPromotedStroke(sample, cls, ann) {
-  const points = (ann.rings && ann.rings[0]) ? ann.rings[0].map(p => ({ x: p.x, y: p.y })) : [];
-  if (!points.length) return;
-  const strokeObj = { id: ann.id, points };
+// Ring nesting assembly (outer+holes vs. disjoint siblings) lives in
+// annotations.js (assembleRingsIntoPieces / buildAnnotationsFromRings) so
+// this stroke-import path, the noodle-brush freehand draw path, and any
+// future multi-contour source all resolve nesting identically.
+function _importStrokeToAnnotation(sample, cls, stroke) {
+  const strokes = _getPosNegStrokes(sample);
+  const bucket = (cls === 'negative' ? strokes.strokes_negative : strokes.strokes_positive) || [];
+  const siblings = (stroke.group_id !== undefined)
+    ? bucket.filter(s => s.group_id === stroke.group_id)
+    : [stroke];
+  const rings = siblings.flatMap(_strokeToRings);
+  if (!rings.length) return null;
+  const anns = annotations.buildAnnotationsFromRings(sample, rings, { cls });
+  if (!anns.length) return null;
+  annotations.addAnnotationGroup(sample, 'library', anns);
+  return anns[0];
+}
+// Turn each promoted library annotation copy into exactly ONE draw+/draw-
+// stroke object (outer ring as `points`, any additional rings as `holes` on
+// that same stroke object) instead of flattening every ring into its own
+// sibling stroke \u2014 a single multi-ring/hole annotation should reappear as
+// one multi-contour positive/negative stroke, not several. Only genuinely
+// disjoint sibling pieces (separate annotations sharing one group_id)
+// become separate stroke objects, still tagged with that shared group_id so
+// draw.js/the Annotations tab continue to treat them as one logical action.
+function _pushPromotedStroke(sample, cls, copies, groupId) {
+  const copyList = Array.isArray(copies) ? copies : [copies];
+  const strokeObjs = [];
+  for (const ann of copyList) {
+    const rings = ann.rings || [];
+    if (!rings.length || !rings[0] || !rings[0].length) continue;
+    const strokeObj = { id: ann.id, points: rings[0].map(p => ({ x: p.x, y: p.y })), group_id: groupId };
+    const holes = rings.slice(1).filter(r => r && r.length);
+    if (holes.length) strokeObj.holes = holes.map(r => r.map(p => ({ x: p.x, y: p.y })));
+    strokeObjs.push(strokeObj);
+  }
+  if (!strokeObjs.length) return;
   if (sample === ACTIVE_SAMPLE) {
     const cur = draw.getStrokes();
-    const nextPos = cls === 'positive' ? [...cur.strokes_positive, strokeObj] : cur.strokes_positive;
-    const nextNeg = cls === 'negative' ? [...cur.strokes_negative, strokeObj] : cur.strokes_negative;
+    const nextPos = cls === 'positive' ? [...cur.strokes_positive, ...strokeObjs] : cur.strokes_positive;
+    const nextNeg = cls === 'negative' ? [...cur.strokes_negative, ...strokeObjs] : cur.strokes_negative;
     draw.setStrokes(nextPos, nextNeg);
     strokesBySample[sample] = { strokes_positive: nextPos, strokes_negative: nextNeg };
   } else {
     const bucket = strokesBySample[sample] || { strokes_positive: [], strokes_negative: [] };
-    if (cls === 'positive') bucket.strokes_positive = [...bucket.strokes_positive, strokeObj];
-    else bucket.strokes_negative = [...bucket.strokes_negative, strokeObj];
+    if (cls === 'positive') bucket.strokes_positive = [...bucket.strokes_positive, ...strokeObjs];
+    else bucket.strokes_negative = [...bucket.strokes_negative, ...strokeObjs];
     strokesBySample[sample] = bucket;
   }
   _refreshAnnotationBadges();

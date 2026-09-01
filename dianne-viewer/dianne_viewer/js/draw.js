@@ -216,6 +216,10 @@ function createDraw(container, viewport, settings) {
         out.brush_mode = 'noodle';
         if (s.groupId !== undefined) out.group_id = s.groupId;
       }
+      // Extra nested ring(s) belonging to this SAME stroke (e.g. a hole cut
+      // out of a promoted multi-ring library annotation) — kept as one
+      // logical stroke object rather than split into siblings.
+      if (Array.isArray(s.holes) && s.holes.length) out.holes = s.holes.map(r => r.map(p => ({ x: p.x, y: p.y })));
       return out;
     });
   }
@@ -453,6 +457,7 @@ function createDraw(container, viewport, settings) {
             brushMode: s.brush_mode || 'line',
             groupId:   s.group_id,
             points:    s.points.map(p => ({ x: p.x, y: p.y })),
+            holes:     Array.isArray(s.holes) ? s.holes.map(r => r.map(p => ({ x: p.x, y: p.y }))) : undefined,
           });
         }
       }
@@ -467,6 +472,7 @@ function createDraw(container, viewport, settings) {
             brushMode: s.brush_mode || 'line',
             groupId:   s.group_id,
             points:    s.points.map(p => ({ x: p.x, y: p.y })),
+            holes:     Array.isArray(s.holes) ? s.holes.map(r => r.map(p => ({ x: p.x, y: p.y }))) : undefined,
           });
         }
       }
@@ -492,17 +498,20 @@ function createDraw(container, viewport, settings) {
     let bestDist = TOLERANCE;
     const allStrokes = strokesPositive.concat(strokesNegative);
     for (const s of allStrokes) {
-      if (s.points.length < 2) continue;
-      const pts = s.points.map(p => viewport.toScreenSpace(p.x, p.y));
-      const n   = pts.length;
-      for (let i = 0; i < n - 1; i++) {
-        const d = _ptSegDist(vpX, vpY, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
-        if (d < bestDist) { bestDist = d; bestId = s.id; }
-      }
-      // For noodle polygons the points array is not explicitly closed — check wrap segment.
-      if (s.brushMode === 'noodle' && n >= 3) {
-        const d = _ptSegDist(vpX, vpY, pts[n - 1].x, pts[n - 1].y, pts[0].x, pts[0].y);
-        if (d < bestDist) { bestDist = d; bestId = s.id; }
+      const rings = [s.points, ...(s.holes || [])];
+      for (const ring of rings) {
+        if (!ring || ring.length < 2) continue;
+        const pts = ring.map(p => viewport.toScreenSpace(p.x, p.y));
+        const n   = pts.length;
+        for (let i = 0; i < n - 1; i++) {
+          const d = _ptSegDist(vpX, vpY, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+          if (d < bestDist) { bestDist = d; bestId = s.id; }
+        }
+        // For noodle polygons the points array is not explicitly closed — check wrap segment.
+        if (s.brushMode === 'noodle' && n >= 3) {
+          const d = _ptSegDist(vpX, vpY, pts[n - 1].x, pts[n - 1].y, pts[0].x, pts[0].y);
+          if (d < bestDist) { bestDist = d; bestId = s.id; }
+        }
       }
     }
     return bestId;
@@ -688,9 +697,29 @@ function createDraw(container, viewport, settings) {
         ctx.lineTo(sp.x, sp.y);
       }
       ctx.closePath();
+      // Extra hole ring(s) belonging to this same stroke (e.g. promoted from
+      // a multi-ring library annotation) share the outline style but must
+      // visually cut out via evenodd fill, same convention as the library's
+      // rings[0]=outer/rest=holes.
+      for (const hole of (stroke.holes || [])) {
+        if (!hole.length) continue;
+        const hp = viewport.toScreenSpace(hole[0].x, hole[0].y);
+        ctx.moveTo(hp.x, hp.y);
+        for (let i = 1; i < hole.length; i++) {
+          const sp = viewport.toScreenSpace(hole[i].x, hole[i].y);
+          ctx.lineTo(sp.x, sp.y);
+        }
+        ctx.closePath();
+      }
       ctx.strokeStyle = color;
       ctx.lineWidth   = lineWidth;
       ctx.globalAlpha = 0.9;
+      if (stroke.holes && stroke.holes.length) {
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.18;
+        ctx.fill('evenodd');
+        ctx.globalAlpha = 0.9;
+      }
       ctx.stroke();
       ctx.restore();
       return;

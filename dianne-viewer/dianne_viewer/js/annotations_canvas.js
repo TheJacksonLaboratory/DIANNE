@@ -76,10 +76,16 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     const sample = getActiveSample();
     if (!sample) return;
 
-    // library annotations
-    for (const ann of annotations.listAnnotations(sample, 'library')) {
+    // library annotations. A grouped annotation (several sibling pieces
+    // sharing group_id, e.g. disjoint noodle-brush contours from one
+    // imported stroke) is one logical shape, so selecting any one piece
+    // highlights every sibling.
+    const libAnns = annotations.listAnnotations(sample, 'library');
+    const selectedAnn = selectedId != null ? libAnns.find(a => a.id === selectedId) : null;
+    const selectedGroupId = selectedAnn ? selectedAnn.group_id : null;
+    for (const ann of libAnns) {
       if (!_classVisible(ann)) continue;
-      _drawAnnotation(ann, ann.id === selectedId);
+      _drawAnnotation(ann, selectedGroupId != null && ann.group_id === selectedGroupId);
     }
 
     // in-progress polygon tool
@@ -205,23 +211,30 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     }
     ctx.strokeStyle = isSelected ? '#ffd23f' : baseColor;
     ctx.lineWidth = isSelected ? 3 : 2;
+    // Always fill with evenodd (not just when selected) so hole rings
+    // (ring index > 0) visibly cut out — otherwise a hole is indistinguishable
+    // from an ordinary nested outline until the shape is selected.
+    ctx.fillStyle = isSelected ? 'rgba(255,210,63,0.15)' : _hexToRgba(baseColor, 0.18);
+    ctx.fill('evenodd');
     ctx.stroke();
-    if (isSelected) {
-      ctx.fillStyle = 'rgba(255,210,63,0.15)';
-      ctx.fill('evenodd');
-      if (tool === 'vertex_edit') {
-        for (let ri = 0; ri < ann.rings.length; ri++) {
-          for (const v of ann.rings[ri]) {
-            const p = _toVp(v);
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffd23f';
-            ctx.fill();
-          }
+    if (isSelected && tool === 'vertex_edit') {
+      for (let ri = 0; ri < ann.rings.length; ri++) {
+        for (const v of ann.rings[ri]) {
+          const p = _toVp(v);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffd23f';
+          ctx.fill();
         }
       }
     }
     ctx.restore();
+  }
+  function _hexToRgba(hex, alpha) {
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '');
+    if (!m) return 'rgba(83,217,255,' + alpha + ')';
+    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    return `rgba(${r},${g},${b},${alpha})`;
   }
 
   // ── hit testing (point-in-polygon w/ holes, screen-space tolerant) ─────
@@ -333,10 +346,15 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
         if (freehandPoints.length >= 2) {
           const smoothed = _smoothOpenPath(freehandPoints, brushSmoothing, Math.max(1, Math.round(brushSmoothing * 8)));
           const contours = _extractNoodleContours(smoothed, brushRadius);
-          for (const rings of contours) {
-            const ann = annotations.makeAnnotation({ sample, rings: [_maybeSimplify(rings)], cls: freehandCls });
-            annotations.addAnnotation(sample, 'library', ann);
-          }
+          // A single noodle stroke can trace several closed contour pieces
+          // (marching squares) that may be genuinely nested (holes) or
+          // merely disjoint blobs. Assemble them properly instead of always
+          // treating every extra contour as a flat sibling: nested rings
+          // become one outer+holes annotation, disjoint rings become
+          // separate sibling annotations sharing one group_id.
+          const rings = contours.map(_maybeSimplify);
+          const anns = annotations.buildAnnotationsFromRings(sample, rings, { cls: freehandCls });
+          if (anns.length) annotations.addAnnotationGroup(sample, 'library', anns);
         }
       } else if (freehandPoints.length >= 8) {
         const ann = annotations.makeAnnotation({ sample, rings: [_maybeSimplify(_closeRing(freehandPoints))], cls: freehandCls });
@@ -513,7 +531,13 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   function deleteSelected() {
     if (selectedId == null) return;
     const sample = getActiveSample();
-    if (sample) annotations.deleteAnnotation(sample, 'library', selectedId);
+    if (sample) {
+      const ann = annotations.findAnnotation(sample, 'library', selectedId);
+      // Delete the whole group_id group so every sibling piece of a
+      // multi-contour annotation is removed together, not just the piece
+      // that happened to be clicked.
+      annotations.deleteAnnotationGroup(sample, 'library', ann ? ann.group_id : selectedId);
+    }
     selectedId = null;
     redraw();
   }
@@ -537,11 +561,19 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   function getBrushRadius() { return brushRadius; }
   function panZoomTo(ann) {
     if (!ann || !ann.rings.length || !ann.rings[0].length) return;
+    // Fit the bounding box of every sibling sharing group_id, not just the
+    // clicked piece, so a multi-contour annotation is framed as a whole.
+    const sample = getActiveSample();
+    const pieces = sample ? annotations.listGroupSiblings(sample, 'library', ann.group_id) : [ann];
+    const ringsToFit = (pieces.length ? pieces : [ann]).flatMap(a => a.rings);
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of ann.rings[0]) {
-      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    for (const ring of ringsToFit) {
+      for (const p of ring) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
     }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return;
     const pad = Math.max(maxX - minX, maxY - minY) * 0.25 || 50;
     minX -= pad; minY -= pad; maxX += pad; maxY += pad;
     const cw = container.clientWidth, ch = container.clientHeight;

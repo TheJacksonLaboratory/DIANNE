@@ -176,6 +176,101 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     ann.perimeter = computePerimeterPx(ann.rings);
   }
 
+  // ── §6 ring nesting: assemble a flat bag of closed rings (e.g. several
+  // disjoint noodle-brush contour pieces, or several raw draw+/draw- stroke
+  // rings sharing one group_id) into proper outer+hole pieces, using
+  // even/odd nesting DEPTH (containment count) rather than a single-level
+  // "is this point inside that ring" test. This correctly distinguishes:
+  //  - depth 0 (not inside anything)              \u2192 new top-level outer ring
+  //  - depth 1 (inside exactly one other ring)     \u2192 hole of its parent
+  //  - depth 2 (inside a hole, i.e. an "island")    \u2192 its OWN new outer ring
+  // A naive single-level containment test would wrongly fold an island-in-
+  // a-hole into the outer ring as a second hole, merging unrelated solid
+  // regions and corrupting both fill and hit-testing. Shared by every
+  // caller that turns raw traced/drawn contours into ring-with-holes
+  // annotations (noodle-brush freehand draw, pos/neg stroke import, and any
+  // future multi-contour source) so the behavior is identical everywhere.
+  function _pointInRingPts(pt, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i].x, yi = ring[i].y, xj = ring[j].x, yj = ring[j].y;
+      const intersect = ((yi > pt.y) !== (yj > pt.y)) &&
+        (pt.x < (xj - xi) * (pt.y - yi) / ((yj - yi) || 1e-12) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+  // A single sample point (e.g. a centroid) is NOT reliable for concave or
+  // crescent-shaped noodle-brush contours: the plain vertex-average centroid
+  // of a "C"/banana-shaped ring can fall entirely outside that ring's own
+  // boundary, which can make two disjoint blobs look like they mutually
+  // contain each other (both get misclassified as holes, so neither
+  // qualifies as a top-level outer ring and the whole shape vanishes).
+  // Instead, containment is decided by a majority vote across several
+  // sampled vertices of the candidate inner ring: a genuine hole/island has
+  // (almost) ALL of its vertices inside the other ring, whereas an unrelated
+  // disjoint ring has none/very few.
+  function _ringInsideRing(inner, outer) {
+    if (!inner.length || !outer.length) return false;
+    const step = Math.max(1, Math.floor(inner.length / 12)); // sample up to ~12 points
+    let total = 0, insideCount = 0;
+    for (let i = 0; i < inner.length; i += step) {
+      total++;
+      if (_pointInRingPts(inner[i], outer)) insideCount++;
+    }
+    return total > 0 && insideCount / total > 0.5;
+  }
+  function assembleRingsIntoPieces(rings) {
+    const n = rings.length;
+    if (!n) return [];
+    const containers = rings.map(() => []); // containers[k] = indices of rings containing ring k
+    for (let k = 0; k < n; k++) {
+      for (let i = 0; i < n; i++) {
+        if (i !== k && _ringInsideRing(rings[k], rings[i])) containers[k].push(i);
+      }
+    }
+    const depth = containers.map(c => c.length);
+    function _immediateParent(k) {
+      // The immediate parent is the containing ring with the greatest depth
+      // itself (i.e. the smallest/innermost ring among those that contain k).
+      let best = -1, bestDepth = -1;
+      for (const i of containers[k]) if (depth[i] > bestDepth) { bestDepth = depth[i]; best = i; }
+      return best;
+    }
+    const pieces = [];
+    const pieceIdxByOuter = new Map();
+    for (let k = 0; k < n; k++) {
+      if (depth[k] % 2 === 0) { pieceIdxByOuter.set(k, pieces.length); pieces.push({ outer: rings[k], holes: [] }); }
+    }
+    for (let k = 0; k < n; k++) {
+      if (depth[k] % 2 === 1) {
+        const parent = _immediateParent(k);
+        const pieceIdx = pieceIdxByOuter.get(parent);
+        // Safety fallback: if the computed parent piece is somehow missing
+        // (shouldn't normally happen, but a ring must never silently vanish
+        // from the assembled result), fall back to treating it as its own
+        // top-level outer piece instead of dropping it.
+        if (pieceIdx !== undefined) pieces[pieceIdx].holes.push(rings[k]);
+        else pieces.push({ outer: rings[k], holes: [] });
+      }
+    }
+    return pieces;
+  }
+  /** Turn a flat bag of closed point-rings (e.g. from noodle-brush contour
+   *  extraction, or several raw draw+/draw- strokes sharing one group_id)
+   *  into properly-assembled annotation objects: rings that are genuinely
+   *  nested become a single outer+holes annotation, while disjoint rings
+   *  become separate sibling annotations sharing one group_id. Objects are
+   *  built (recomputeMetrics'd) but NOT added to the store \u2014 callers should
+   *  pass the result to addAnnotationGroup(). */
+  function buildAnnotationsFromRings(sample, rings, { cls, author, label } = {}) {
+    const pieces = assembleRingsIntoPieces(rings);
+    const anns = pieces.map(p => makeAnnotation({ sample, rings: [p.outer, ...p.holes], cls, author, label }));
+    if (anns.length > 1) { const gid = anns[0].group_id; for (const a of anns) a.group_id = gid; }
+    for (const a of anns) recomputeMetrics(a);
+    return anns;
+  }
+
   // ── §7 status / lock ────────────────────────────────────────────────────
   function isLocked(ann) { return ann.status === 'ready_for_review' || ann.status === 'reviewed'; }
 
@@ -230,6 +325,25 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   function listAnnotations(sample, cls) {
     return _bucket(sample)[cls] || [];
   }
+  /** All annotations in `cls` bucket sharing the same group_id (§6): several
+   *  ids can belong to one logical shape (e.g. disjoint noodle-brush contours
+   *  or an outer ring + separately-drawn holes), and undo/redo/export/copy/
+   *  promote must all treat the group as a single atomic annotation. */
+  function listGroupSiblings(sample, cls, groupId) {
+    return (_bucket(sample)[cls] || []).filter(a => a.group_id === groupId);
+  }
+  /** Partition a list of annotations into arrays-per-group_id, preserving
+   *  first-seen order. Used by bulk export/selection expansion. */
+  function groupAnnotationsByGroupId(anns) {
+    const order = [];
+    const groups = new Map();
+    for (const a of anns) {
+      const gid = a.group_id || a.id;
+      if (!groups.has(gid)) { groups.set(gid, []); order.push(gid); }
+      groups.get(gid).push(a);
+    }
+    return order.map(gid => groups.get(gid));
+  }
 
   // ── §6 geometry-only undo/redo ─────────────────────────────────────────
   function pushUndo(sample, op) {
@@ -258,17 +372,26 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   }
 
   // ── create / delete (geometry, undoable) ───────────────────────────────
-  function addAnnotation(sample, cls, ann) {
-    recomputeMetrics(ann);
+  /** Add one or more annotations as a single atomic (grouped) undo/redo op.
+   *  Callers that create several sibling rings (e.g. noodle-brush multi-
+   *  contour draws, or grouped promote/copy) should use this so a single
+   *  undo removes the whole group instead of one piece at a time. */
+  function addAnnotationGroup(sample, cls, anns) {
+    if (!anns || !anns.length) return [];
+    for (const ann of anns) recomputeMetrics(ann);
     const b = _bucket(sample);
-    b[cls].push(ann);
+    b[cls].push(...anns);
     markDirty(sample);
     pushUndo(sample, {
-      undo: () => { const i = b[cls].indexOf(ann); if (i >= 0) b[cls].splice(i, 1); },
-      redo: () => { b[cls].push(ann); },
+      undo: () => { for (const ann of anns) { const i = b[cls].indexOf(ann); if (i >= 0) b[cls].splice(i, 1); } },
+      redo: () => { b[cls].push(...anns); },
     });
-    logAndRecord(`Added ${cls} annotation "${ann.label}"`);
+    logAndRecord(anns.length === 1 ? `Added ${cls} annotation "${anns[0].label}"` : `Added ${anns.length} ${cls} annotations (group)`);
     _notify(sample);
+    return anns;
+  }
+  function addAnnotation(sample, cls, ann) {
+    addAnnotationGroup(sample, cls, [ann]);
     return ann;
   }
   function deleteAnnotation(sample, cls, id) {
@@ -283,6 +406,24 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
       redo: () => { const i = b[cls].indexOf(removed); if (i >= 0) b[cls].splice(i, 1); },
     });
     logAndRecord(`Deleted "${removed.label}"`);
+    _notify(sample);
+    return true;
+  }
+  /** Delete every annotation in `cls` sharing groupId, as one atomic
+   *  undo/redo op (mirrors draw.js's grouped undoLast for noodle strokes). */
+  function deleteAnnotationGroup(sample, cls, groupId) {
+    const b = _bucket(sample);
+    const entries = [];
+    (b[cls] || []).forEach((a, i) => { if (a.group_id === groupId) entries.push({ idx: i, ann: a }); });
+    if (!entries.length) return false;
+    for (const { ann } of entries) if (!guardGeometryEdit(sample, cls, ann.id)) return false;
+    for (let k = entries.length - 1; k >= 0; k--) b[cls].splice(entries[k].idx, 1);
+    markDirty(sample);
+    pushUndo(sample, {
+      undo: () => { for (const { idx, ann } of entries) b[cls].splice(idx, 0, ann); },
+      redo: () => { for (const { ann } of entries) { const i = b[cls].indexOf(ann); if (i >= 0) b[cls].splice(i, 1); } },
+    });
+    logAndRecord(entries.length === 1 ? `Deleted "${entries[0].ann.label}"` : `Deleted group (${entries.length} annotations)`);
     _notify(sample);
     return true;
   }
@@ -306,40 +447,61 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   // ── §5 promotion workflow (always an independent snapshot copy) ───────
   function _cloneRings(rings) { return rings.map(r => r.map(p => ({ x: p.x, y: p.y }))); }
 
+  /** Copy an annotation (and every sibling sharing its group_id, so a
+   *  multi-ring/multi-piece shape is copied as one unit) to positive/
+   *  negative. Returns the array of copies (length 1 for a plain, ungrouped
+   *  annotation). */
   function promoteToPosNeg(sample, id, targetCls) {
     if (targetCls !== 'positive' && targetCls !== 'negative') return null;
     const ann = findAnnotation(sample, 'library', id);
     if (!ann) return null;
-    const copy = makeAnnotation({
-      sample, rings: _cloneRings(ann.rings), label: ann.label, cls: ann.class, author: ann.author,
+    const siblings = listGroupSiblings(sample, 'library', ann.group_id);
+    const newGroupId = _nextId('grp');
+    const copies = siblings.map(src => {
+      const copy = makeAnnotation({
+        sample, rings: _cloneRings(src.rings), label: src.label, cls: src.class, author: src.author, groupId: newGroupId,
+      });
+      copy.derived_from = src.id;
+      return copy;
     });
-    copy.derived_from = ann.id;
-    addAnnotation(sample, targetCls, copy);
-    ann.promoted_copies.push({ id: copy.id, cls: targetCls });
+    addAnnotationGroup(sample, targetCls, copies);
+    siblings.forEach((src, i) => src.promoted_copies.push({ id: copies[i].id, cls: targetCls }));
     markDirty(sample);
-    logAndRecord(`Copied "${ann.label}" \u2192 ${targetCls}`);
+    logAndRecord(`Copied "${ann.label}" \u2192 ${targetCls}` + (copies.length > 1 ? ` (${copies.length} parts)` : ''));
     _notify(sample);
     // Bridge into the pre-existing draw+/draw- stroke system, which is the
     // actual positive/negative set consumed downstream by the Python kernel
     // (this module's own 'positive'/'negative' buckets only track the copy
     // for the Annotations tab / GeoJSON export, they are not the live feed).
-    if (typeof onPromotedToPosNeg === 'function') onPromotedToPosNeg(sample, targetCls, copy);
-    return copy;
+    // Passed as one batch (not per-copy) so the callback can flatten every
+    // ring (outer + holes, across every sibling piece) into the stroke
+    // system under a single shared group_id, instead of dropping hole rings
+    // or only pushing the first copy.
+    if (typeof onPromotedToPosNeg === 'function') onPromotedToPosNeg(sample, targetCls, copies, newGroupId);
+    return copies;
   }
 
+  /** Copy a positive/negative stroke-derived annotation (and every sibling
+   *  sharing its group_id) into the library as one grouped unit. Returns the
+   *  array of copies (length 1 for a plain, ungrouped annotation). */
   function promoteToLibrary(sample, sourceCls, id, label, cls) {
     const ann = findAnnotation(sample, sourceCls, id);
     if (!ann) return null;
-    const copy = makeAnnotation({
-      sample, rings: _cloneRings(ann.rings), label: label || ann.label, cls: cls || 'unclassified', author: ann.author,
+    const siblings = listGroupSiblings(sample, sourceCls, ann.group_id);
+    const newGroupId = _nextId('grp');
+    const copies = siblings.map(src => {
+      const copy = makeAnnotation({
+        sample, rings: _cloneRings(src.rings), label: label || src.label, cls: cls || 'unclassified', author: src.author, groupId: newGroupId,
+      });
+      copy.derived_from = src.id;  // provenance only; behaves as an independent library entry (§5)
+      return copy;
     });
-    copy.derived_from = ann.id;  // provenance only; behaves as an independent library entry (§5)
-    addAnnotation(sample, 'library', copy);
-    ann.promoted_copies.push({ id: copy.id, cls: 'library' });
+    addAnnotationGroup(sample, 'library', copies);
+    siblings.forEach((src, i) => src.promoted_copies.push({ id: copies[i].id, cls: 'library' }));
     markDirty(sample);
-    logAndRecord(`Saved ${sourceCls} contour "${ann.label}" to library`);
+    logAndRecord(`Saved ${sourceCls} contour "${ann.label}" to library` + (copies.length > 1 ? ` (${copies.length} parts)` : ''));
     _notify(sample);
-    return copy;
+    return copies;
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -649,7 +811,9 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   return {
     STATUS_VALUES,
     makeAnnotation, recomputeMetrics,
-    addAnnotation, deleteAnnotation, replaceGeometry, findAnnotation, listAnnotations,
+    assembleRingsIntoPieces, buildAnnotationsFromRings,
+    addAnnotation, addAnnotationGroup, deleteAnnotation, deleteAnnotationGroup,
+    replaceGeometry, findAnnotation, listAnnotations, listGroupSiblings, groupAnnotationsByGroupId,
     setStatus, editMetadata, isLocked, guardGeometryEdit,
     promoteToPosNeg, promoteToLibrary,
     setClassColor, getClassColor, getClassColors, knownClasses,
