@@ -30,6 +30,7 @@ from multiprocessing import shared_memory
 from sklearn.linear_model import LogisticRegression as LR
 from scipy.ndimage import generic_filter
 from scipy.spatial import KDTree
+from scipy.sparse import issparse
 from joblib import Parallel, delayed
 
 
@@ -239,6 +240,47 @@ def preparePatchesWSI(ad_obs, N=8, spacing=56 / 0.25, qth=0.05, sample_id=None, 
         print('Prepared patches:', df_temp_img_tiles['patch'].nunique())
     return df_temp_img_tiles
 
+def getPatchRepresentationParallel(ad, df_temp_img_tiles, qs, sample_id=None,
+                                step=100, n_jobs=-1, verbose=0):
+    """Parallel wrapper around getPatchRepresentation, batching over unique patches.
+
+    Parameters
+    ----------
+    ad : AnnData
+        AnnData object containing the imaging features.
+    df_temp_img_tiles : DataFrame
+        DataFrame with spatial coordinates and patch identifiers.
+    qs : list
+        List of quantiles to compute for each patch.
+    sample_id : str, optional
+        Sample identifier to prepend to the patch identifiers.
+    step : int, default 100
+        Number of unique patches processed per batch/job.
+    n_jobs : int, default -1
+        Number of parallel jobs (-1 = use all available cores).
+    verbose : int, default 0
+        Verbosity level passed to joblib.Parallel.
+
+    Returns
+    -------
+    df : DataFrame
+        Concatenated patch representation across all batches.
+    """
+    dfgb = df_temp_img_tiles.groupby('patch').size()
+    S = dfgb.shape[0]
+    batches = [dfgb.index[i:min(i + step, S)] for i in range(0, S, step)]
+    print(f"Processing {S} unique patches in {len(batches)} batches of up to {step} patches each.")
+
+    def _process_batch(bpatches):
+        wh = df_temp_img_tiles['patch'].isin(bpatches)
+        return getPatchRepresentation(
+            ad, df_temp_img_tiles.loc[wh], qs, sample_id=sample_id)
+
+    results = Parallel(n_jobs=n_jobs, verbose=verbose)(
+        delayed(_process_batch)(b) for b in batches)
+
+    return pd.concat(results, axis=0)
+
 def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
     """Get the patch SAMPLER representation for each tile in the image.
 
@@ -306,7 +348,7 @@ def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0
 
     qs = np.linspace(0.05, 0.95, 10, endpoint=True)
     patchesCDFs = pd.concat(
-        [getPatchRepresentation(ads[sample],
+        [getPatchRepresentationParallel(ads[sample],
                                 patchCoordinates.xs(sample, level='sample', axis=0),
                                 qs, sample_id=sample) for sample in tqdm(samples)],
         axis=0)
