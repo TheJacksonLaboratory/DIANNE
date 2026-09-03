@@ -329,7 +329,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     toNeg.addEventListener('click', e => { e.stopPropagation(); annotations.promoteToPosNeg(sample, ann.id, 'negative'); refresh(); });
     statusRow.appendChild(toPos); statusRow.appendChild(toNeg);
     const areaEl = document.createElement('span');
-    rounded_area = Math.round(ann.area * 100) / 100;
+    const rounded_area = Math.round(ann.area * 100) / 100;
     areaEl.textContent = annotations.formatArea(rounded_area, sample);
     areaEl.style.cssText = 'white-space:nowrap;flex-shrink:0;padding:2px 5px;border-radius:8px;background:#111;border:1px solid #333;color:#999;font:9px monospace;';
     statusRow.appendChild(areaEl);

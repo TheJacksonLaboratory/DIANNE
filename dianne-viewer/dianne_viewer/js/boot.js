@@ -259,6 +259,10 @@ function _refreshAfterDrawChange() {
   _refreshAnnotationBadges();
   if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
   if (typeof sampleRibbonApi !== 'undefined' && sampleRibbonApi) sampleRibbonApi.updateThumbOverlays();
+  // Drawing/undoing/deleting/clearing a draw+/draw- stroke changes the
+  // pos/neg counts in the Metadata tab's "Annotations" column too — keep it
+  // live instead of only updating on the next unrelated sort/filter/click.
+  if (_metadataPanel) _metadataPanel.refreshTable();
 }
 for (const _drawFn of ['onMouseUp', 'undoLast', 'deleteSelected', 'clear']) {
   const _orig = draw[_drawFn];
@@ -337,6 +341,7 @@ function _deletePosNegStroke(sample, cls, id) {
   }
   _refreshAnnotationBadges();
   if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+  if (_metadataPanel) _metadataPanel.refreshTable();
   sampleRibbonApi.updateThumbOverlays();
 }
 // "Copy → anno": import a draw+/draw- stroke into the annotation library as
@@ -410,6 +415,7 @@ function _pushPromotedStroke(sample, cls, copies, groupId) {
   }
   _refreshAnnotationBadges();
   if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
+  if (_metadataPanel) _metadataPanel.refreshTable();
   sampleRibbonApi.updateThumbOverlays();
 }
 
@@ -537,10 +543,18 @@ createFullscreen({
 
 // ── setActiveSample ────────────────────────────────────────────────────────
 let _metadataPanel = null;  // declared here to avoid TDZ when setActiveSample is called during ribbon init
+// Samples whose annotation/stroke data has actually been loaded into this
+// client's in-memory stores (vs. merely knowing its metadata). The Metadata
+// tab's per-sample annotation-coverage column must fall back to the
+// server-side /annotations/summary snapshot for every sample NOT in this
+// set, otherwise unvisited samples wrongly show up empty.
+const _visitedSamples = new Set([ACTIVE_SAMPLE]);
+let _annotationsSummaryBySample = {};
 function setActiveSample(sampleName) {
   if (!SAMPLE_META[sampleName]) return;
   const changed = sampleName !== ACTIVE_SAMPLE;
   if (changed) {
+    _visitedSamples.add(sampleName);
     strokesBySample[ACTIVE_SAMPLE] = draw.getStrokes();
     viewportStateBySample[ACTIVE_SAMPLE] = viewport.getTransform();
     if (typeof cells.getState === 'function')
@@ -565,6 +579,13 @@ function setActiveSample(sampleName) {
       annotationsCanvas.redraw();
       if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
       if (typeof sampleRibbonApi !== 'undefined') _refreshAnnotationBadges();
+      // The row-click handler that triggered this switch already re-rendered
+      // the Metadata table synchronously, before this async load had
+      // finished — so its "Annotations" column was computed from this
+      // sample's still-empty in-memory store. Re-render again now that the
+      // real data is in, instead of leaving that row stale until some other
+      // click/sort/filter happens to force a re-render.
+      if (_metadataPanel) _metadataPanel.refreshTable();
     });
 
     hoverInteraction.clearSample(sampleName);
@@ -666,12 +687,33 @@ _metadataPanel = createMetadataPanel({
     onImportPosNegToAnnotation: _importStrokeToAnnotation,
   }),
   getAnnotationSummary: (sampleName) => {
+    // A sample this client hasn't loaded yet this session has empty
+    // in-memory stores regardless of what's actually saved for it, so its
+    // row must fall back to the server-side /annotations/summary snapshot
+    // fetched once at boot instead of the (falsely empty) live counts.
+    if (!_visitedSamples.has(sampleName)) {
+      const s = _annotationsSummaryBySample[sampleName];
+      if (!s) return { text: '\u2014' };
+      const lib = s.library || 0, pos = s.positive_strokes || 0, neg = s.negative_strokes || 0;
+      if (!lib && !pos && !neg) return { text: '\u2014' };
+      return { text: `${lib} lib / ${pos} pos / ${neg} neg` };
+    }
     const anns = annotations.listAnnotations(sampleName, 'library');
     const { positive: posCount, negative: negCount } = _getPosNegCounts(sampleName);
     if (!anns.length && !posCount && !negCount) return { text: '\u2014' };
     return { text: `${anns.length} lib / ${posCount} pos / ${negCount} neg` };
   },
 });
+
+// One-time fetch of cross-sample annotation counts, so the Metadata tab's
+// overview table reflects every sample's true saved state immediately,
+// not just whichever samples happen to get visited during this session.
+fetch(BASE_URL + '/annotations/summary').then(r => r.json()).then(res => {
+  if (res && res.ok && res.summary) {
+    _annotationsSummaryBySample = res.summary;
+    if (_metadataPanel) _metadataPanel.refreshTable();
+  }
+}).catch(() => {});
 
 // Now that both exist, route every annotations.js mutation straight through
 // to the list/thumbnail/badges (fixes: undo/redo, boolean ops, vertex-edit,
@@ -681,6 +723,10 @@ _onAnnotationsChange = () => {
   sampleRibbonApi.updateThumbOverlays();
   if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
   _refreshAnnotationBadges();
+  // Keep the Metadata tab's "Annotations" column live too, not just the
+  // Annotations tab itself — otherwise an edit only shows up there once
+  // some unrelated sort/filter/click happens to force a re-render.
+  if (_metadataPanel) _metadataPanel.refreshTable();
 };
 
 // ── Modals ────────────────────────────────────────────────────────────────
@@ -772,6 +818,7 @@ annotations.loadSample(ACTIVE_SAMPLE).then(() => {
   if (_metadataPanel && _metadataPanel.getAnnotationsApi()) _metadataPanel.getAnnotationsApi().refresh();
   annotationsCanvas.redraw();
   _refreshAnnotationBadges();
+  if (_metadataPanel) _metadataPanel.refreshTable();
 });
 annotations.startAutosave(() => ACTIVE_SAMPLE, 60000);
 setInterval(_refreshAnnotationBadges, 5000);

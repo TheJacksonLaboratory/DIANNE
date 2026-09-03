@@ -290,6 +290,34 @@ class ViewerServer:
         self.annotations_by_sample[sample] = bucket
         return bucket
 
+    def _annotation_counts(self, sample):
+        """Per-sample library/positive/negative annotation counts, reading
+        from disk when this sample hasn't been touched yet this session
+        (an untouched sample still has real saved data on disk, just not in
+        the in-memory cache). Used by /annotations/summary for the Metadata
+        tab's cross-sample overview, which must not depend on which samples
+        the client happens to have visited already."""
+        bucket = self.annotations_by_sample.get(sample) or {}
+        if not any(bucket.get(k) for k in ('library', 'positive', 'negative')):
+            try:
+                bucket = self.load_annotations(sample)
+            except Exception:
+                bucket = bucket or {'library': [], 'positive': [], 'negative': []}
+        return {k: len(bucket.get(k) or []) for k in ('library', 'positive', 'negative')}
+
+    @staticmethod
+    def _stroke_group_count(strokes):
+        """Count distinct draw+/draw- annotations among raw stroke objects,
+        treating strokes sharing a group_id (e.g. several disjoint pieces of
+        one noodle-brush sweep) as one annotation, same convention as the
+        client's own _countGroups in boot.js."""
+        seen = set()
+        for s in (strokes or []):
+            if not isinstance(s, dict):
+                continue
+            seen.add(s.get('group_id', s.get('id')))
+        return len(seen)
+
     def _class_colors_path(self):
         return os.path.join(self.annotations_dir, 'class_colors.json')
 
@@ -776,6 +804,28 @@ class ViewerServer:
                     try:
                         bucket = srv.load_annotations(sample)
                         body = json.dumps({'ok': True, 'sample': sample, 'class_colors': srv.class_colors, **bucket}).encode()
+                        self._respond(200, body, 'application/json')
+                    except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                        self._respond(200, body, 'application/json')
+
+                elif parsed.path == '/annotations/summary':
+                    # Cross-sample annotation-coverage counts for the Metadata
+                    # tab's overview table (fed to the client once at boot).
+                    # Library counts are read from disk when a sample hasn't
+                    # been visited this session; pos/neg stroke counts reflect
+                    # whatever the server currently knows (there is no
+                    # session-independent persistence for draw+/draw- strokes
+                    # outside the opt-in named 'Save classifier' flow).
+                    try:
+                        summary = {}
+                        for sample in srv.images.keys():
+                            counts = srv._annotation_counts(sample)
+                            strokes = srv.strokes_by_sample.get(sample, {})
+                            counts['positive_strokes'] = srv._stroke_group_count(strokes.get('strokes_positive'))
+                            counts['negative_strokes'] = srv._stroke_group_count(strokes.get('strokes_negative'))
+                            summary[sample] = counts
+                        body = json.dumps({'ok': True, 'summary': summary}).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()

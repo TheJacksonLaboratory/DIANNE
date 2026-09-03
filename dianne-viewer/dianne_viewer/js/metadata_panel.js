@@ -652,5 +652,8 @@ function createMetadataPanel({
     syncActiveSample,
     switchToAnnotationsTab: () => _switchTab('annotations'),
     getAnnotationsApi: () => _annotationsApi,
+    // Re-render the Samples/Metadata table rows in place (e.g. once a
+    // cross-sample annotation summary arrives asynchronously after boot).
+    refreshTable: () => _renderRows(_filteredSamples),
   };
 }
