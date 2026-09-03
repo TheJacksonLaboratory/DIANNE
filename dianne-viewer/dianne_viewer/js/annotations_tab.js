@@ -9,9 +9,9 @@
  *
  * Exposes createAnnotationsTab({ container, annotations, annotationsCanvas,
  *   getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes,
- *   onDeletePosNegStroke, onImportPosNegToAnnotation }) → { refresh, onShow }
+ *   onDeletePosNegStroke, onImportPosNegToAnnotation, modalHelpers }) → { refresh, onShow }
  */
-function createAnnotationsTab({ container, annotations, annotationsCanvas, getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes, onDeletePosNegStroke, onImportPosNegToAnnotation }) {
+function createAnnotationsTab({ container, annotations, annotationsCanvas, getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes, onDeletePosNegStroke, onImportPosNegToAnnotation, modalHelpers }) {
   container.style.padding = '6px';
   container.style.gap = '6px';
   container.style.overflowY = 'auto';
@@ -84,6 +84,19 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   selectNoneBtn.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
   selectNoneBtn.addEventListener('click', () => { selectedIds.clear(); refresh(); });
   selectRow.appendChild(selectNoneBtn);
+  const resetColorsBtn = document.createElement('button');
+  resetColorsBtn.textContent = 'Reset colors';
+  resetColorsBtn.title = 'Reset every class color to its default';
+  resetColorsBtn.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
+  resetColorsBtn.addEventListener('click', async () => {
+    if (!modalHelpers) return;
+    const ok = await modalHelpers.showConfirm('Reset all class colors to their defaults? This clears your saved class-color file.');
+    if (!ok) return;
+    await annotations.resetClassColors(getActiveSample());
+    refresh();
+    annotationsCanvas.redraw();
+  });
+  selectRow.appendChild(resetColorsBtn);
 
   const bulkRow = document.createElement('div');
   bulkRow.style.cssText = 'display:none;gap:4px;flex-wrap:wrap;flex-shrink:0;';

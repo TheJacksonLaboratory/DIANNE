@@ -522,7 +522,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           load_fn=load_func,
           list_names_fn=list_names_func,
           secondary_images=secondary_sample_images,
-          annotations_dir=annotations_dir)
+          annotations_dir=annotations_dir,
+          username=current_user)
     # annotation_layers_json is built later; attach placeholder now, replace after build
     server._annotation_layers_json = '[]'
 

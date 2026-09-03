@@ -2,6 +2,7 @@ import gzip
 import json
 import os
 import queue
+import re
 import socket
 import threading
 from datetime import datetime, timezone
@@ -105,7 +106,7 @@ class ViewerServer:
                  xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
                  run_inference_fn=None, sample_sizes=None,
                  save_fn=None, load_fn=None, list_names_fn=None,
-                 secondary_images=None, annotations_dir=None):
+                 secondary_images=None, annotations_dir=None, username=None):
         if images is None:
             if image is None:
                 raise ValueError('ViewerServer requires image or images')
@@ -184,10 +185,14 @@ class ViewerServer:
             for sample in self.images.keys()
         }
         self.annotations_dir = os.environ.get('DIANNE_ANNOTATIONS_DIR') or annotations_dir or os.path.join(os.getcwd(), '.dianne_annotations')
-        self.history_log_path = os.path.join(self.annotations_dir, 'history.log')
+        # Identity recorded as author/last-editor on annotations, and used to
+        # namespace this user's class-colors file and history log (see
+        # _class_colors_path / _history_log_path_for_date below).
+        self.username = str(username) if username else 'Unknown'
         # Class colors are global (not per-slide, a class means the same thing
-        # across every sample), persisted to their own small JSON file
-        # alongside the per-sample GeoJSON annotation files.
+        # across every sample), persisted to their own small per-user JSON
+        # file alongside the per-sample GeoJSON annotation files, so
+        # different annotators keep independent color schemes.
         self.class_colors = self._load_class_colors_from_disk()
         self._tile_coords_fn  = None   # callable(sample) -> {'x': [...], 'y': [...]}
         self._tile_size       = None   # int, secondary-space pixels
@@ -318,8 +323,28 @@ class ViewerServer:
             seen.add(s.get('group_id', s.get('id')))
         return len(seen)
 
+    @staticmethod
+    def _safe_filename_component(value):
+        """Sanitize a string (username, date) for safe use as one path
+        component — collapses anything that isn't alnum/._- to a single
+        underscore so odd usernames can't escape annotations_dir or collide
+        with the field separators used in the file names below."""
+        safe = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(value))
+        return safe or 'unknown'
+
     def _class_colors_path(self):
-        return os.path.join(self.annotations_dir, 'class_colors.json')
+        # Namespaced per user (§ Reset colors) so different annotators keep
+        # independent color schemes and "Reset colors" only ever clears the
+        # current user's own file.
+        user = self._safe_filename_component(self.username)
+        return os.path.join(self.annotations_dir, f'{user}_class_colors.json')
+
+    def _history_log_path_for_date(self, date_str):
+        # One file per user per calendar day — every session for the same
+        # user on the same day appends to (extends) this same file.
+        user = self._safe_filename_component(self.username)
+        day = self._safe_filename_component(date_str)
+        return os.path.join(self.annotations_dir, f'{user}_{day}.log')
 
     def _load_class_colors_from_disk(self):
         path = self._class_colors_path()
@@ -341,14 +366,34 @@ class ViewerServer:
         with open(self._class_colors_path(), 'w', encoding='utf-8') as f:
             json.dump(self.class_colors, f)
 
+    def reset_class_colors(self):
+        """'Reset colors' button (§ class colors): clear the current user's
+        saved class-color file, if any, and the in-memory map. Colors are
+        namespaced per username, so this never touches another user's
+        saved colors."""
+        self.class_colors = {}
+        path = self._class_colors_path()
+        if os.path.exists(path):
+            os.remove(path)
+
     def append_history_log(self, entries):
-        """Append transient status-bar messages to the persistent session
-        history log file (task.md §9). `entries` is a list of {ts, message}."""
+        """Append transient status-bar messages to this user's persistent
+        history log (task.md §9) — one file per user per calendar day (UTC
+        date of each entry's own timestamp), so multiple sessions for the
+        same user on the same day extend the same file. `entries` is a list
+        of {ts, message}."""
+        if not entries:
+            return
         os.makedirs(self.annotations_dir, exist_ok=True)
-        with open(self.history_log_path, 'a', encoding='utf-8') as f:
-            for e in entries:
-                ts = e.get('ts') or datetime.now(timezone.utc).isoformat()
-                f.write(f"[{ts}] {e.get('message', '')}\n")
+        by_date = {}
+        for e in entries:
+            ts = e.get('ts') or datetime.now(timezone.utc).isoformat()
+            date_str = ts[:10] if len(ts) >= 10 else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            by_date.setdefault(date_str, []).append((ts, e.get('message', '')))
+        for date_str, lines in by_date.items():
+            with open(self._history_log_path_for_date(date_str), 'a', encoding='utf-8') as f:
+                for ts, message in lines:
+                    f.write(f"[{ts}] {message}\n")
 
     @property
     def base_url(self):
@@ -1101,6 +1146,17 @@ class ViewerServer:
                     entries = data.get('entries', []) if isinstance(data, dict) else []
                     try:
                         srv.append_history_log(entries)
+                        body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/annotations/reset_colors':
+                    # "Reset colors" button: clear the current user's saved
+                    # class-color file (namespaced per username).
+                    try:
+                        srv.reset_class_colors()
                         body = json.dumps({'ok': True}).encode()
                     except Exception as exc:
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()

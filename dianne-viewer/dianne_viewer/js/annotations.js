@@ -41,7 +41,8 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   // across every sample, so its color and the class list itself are shared).
   // Persisted alongside annotation data on every save/load (§ class colors
   // must save along with classes and all the other details).
-  const classColors = { positive: '#22f0ff', negative: '#ff5233' };
+  const DEFAULT_CLASS_COLORS = { positive: '#22f0ff', negative: '#ff5233' };
+  const classColors = { ...DEFAULT_CLASS_COLORS };
   /** `silent` skips markDirty/_notify (used for live preview while a native
    *  <input type=color> picker is still open — _notify fans out to a full
    *  Annotations-tab list rebuild, which would tear down the very <input>
@@ -58,6 +59,22 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   }
   function getClassColor(cls) { return classColors[cls]; }
   function getClassColors() { return { ...classColors }; }
+  /** "Reset colors" button (§ class colors): clears every custom class color
+   *  back to the built-in defaults, in memory and in the per-user
+   *  class_colors.json file on disk (each username gets its own file, so
+   *  this only ever affects the current user's saved colors). */
+  function resetClassColors(sample) {
+    for (const k of Object.keys(classColors)) delete classColors[k];
+    Object.assign(classColors, DEFAULT_CLASS_COLORS);
+    if (sample) markDirty(sample);
+    logAndRecord('Reset class colors to defaults');
+    _notify(sample);
+    return fetch(baseUrl + '/annotations/reset_colors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }).then(r => r.json()).catch(() => ({ ok: false }));
+  }
   function knownClasses(sample) {
     const set = new Set(Object.keys(classColors));
     if (sample) for (const a of listAnnotationsAllClasses(sample)) set.add(a.class);
@@ -868,7 +885,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     replaceGeometry, findAnnotation, listAnnotations, listGroupSiblings, groupAnnotationsByGroupId,
     setStatus, editMetadata, isLocked, guardGeometryEdit, requestUnlockForEdit,
     promoteToPosNeg, promoteToLibrary,
-    setClassColor, getClassColor, getClassColors, knownClasses,
+    setClassColor, getClassColor, getClassColors, resetClassColors, knownClasses,
     booleanOp, applyBooleanOp,
     moveVertex, insertVertex, deleteVertex, simplifyRing, simplifyAnnotation,
     rulerStart, rulerUpdate, rulerFinish, rulerClear, getRuler, rulerLengthPx,

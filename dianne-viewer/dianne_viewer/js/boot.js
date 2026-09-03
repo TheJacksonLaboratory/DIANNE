@@ -709,6 +709,7 @@ _metadataPanel = createMetadataPanel({
     getPosNegStrokes: _getPosNegStrokes,
     onDeletePosNegStroke: _deletePosNegStroke,
     onImportPosNegToAnnotation: _importStrokeToAnnotation,
+    modalHelpers,
   }),
   getAnnotationSummary: (sampleName) => {
     // A sample this client hasn't loaded yet this session has empty
