@@ -50,6 +50,7 @@ const root             = document.getElementById('iv-root');
 const statusLeft       = document.getElementById('iv-status-left');
 const statusCoord      = document.getElementById('iv-status-coord');
 const statusPerf       = document.getElementById('iv-status-perf');
+const statusUser       = document.getElementById('iv-status-user');
 const gaugePendFill    = document.getElementById('iv-gauge-pend-fill');
 const gaugePendTxt     = document.getElementById('iv-gauge-pend-txt');
 const gaugeRxFill      = document.getElementById('iv-gauge-rx-fill');
@@ -57,6 +58,8 @@ const gaugeRxTxt       = document.getElementById('iv-gauge-rx-txt');
 const samplesRibbon    = document.getElementById('iv-samples');
 
 function log(msg) { statusLeft.textContent = msg; }
+statusUser.textContent = '\u{1F464} ' + CURRENT_USER;
+statusUser.title = 'Annotations created/edited in this session are attributed to this user';
 
 // ── Status-bar monitors ───────────────────────────────────────────────────
 createNetworkGauges({ gaugePendFill, gaugePendTxt, gaugeRxFill, gaugeRxTxt });
