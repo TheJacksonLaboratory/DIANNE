@@ -301,7 +301,20 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     }
     if (tool === 'vertex_edit') {
       const near = _findNearestVertex(imgPt, { x: vpX, y: vpY });
-      if (near) { dragTarget = near; return; }
+      if (near) {
+        // Reviewed (locked) annotations need a confirm dialog before the
+        // drag is allowed to start (see requestUnlockForEdit in
+        // annotations.js); an unlocked annotation starts dragging right
+        // away. Fire-and-forget is fine here — if the user hasn't moved the
+        // mouse by the time the dialog resolves, the drag just starts from
+        // the vertex's current position on the next mousemove.
+        if (annotations.isLocked(near.ann)) {
+          annotations.requestUnlockForEdit(sample, 'library', near.ann.id).then(ok => { if (ok) dragTarget = near; });
+        } else {
+          dragTarget = near;
+        }
+        return;
+      }
       const hit = hitTest(imgPt);
       if (hit) { setSelected(hit.id); }
       return;

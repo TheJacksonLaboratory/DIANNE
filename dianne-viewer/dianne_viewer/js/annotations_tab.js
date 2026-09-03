@@ -205,10 +205,17 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     classInput.addEventListener('focus', () => _openClassDropdown());
     classInput.addEventListener('blur', () => { classDropdown.style.display = 'none'; });
     classInput.addEventListener('change', () => {
-      annotations.editMetadata(sample, 'library', ann.id, { class: classInput.value });
-      colorInput.title = 'Color for class "' + classInput.value + '"';
-      colorInput.value = annotations.getClassColor(classInput.value) || _defaultClassColor(classInput.value);
-      refresh();
+      const apply = () => {
+        annotations.editMetadata(sample, 'library', ann.id, { class: classInput.value });
+        colorInput.title = 'Color for class "' + classInput.value + '"';
+        colorInput.value = annotations.getClassColor(classInput.value) || _defaultClassColor(classInput.value);
+        refresh();
+      };
+      // Editing a reviewed annotation's metadata needs the same confirm
+      // dialog as a geometry edit (annotations_canvas.js); a canceled dialog
+      // just re-renders the row so the input snaps back to its saved value.
+      if (annotations.isLocked(ann)) annotations.requestUnlockForEdit(sample, 'library', ann.id).then(ok => ok ? apply() : refresh());
+      else apply();
     });
     classWrap.appendChild(classInput);
 
@@ -251,11 +258,21 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     colorInput.title = 'Color for class "' + ann.class + '"';
     colorInput.style.cssText = 'width:18px;height:18px;border:none;background:none;cursor:pointer;padding:0;';
     colorInput.addEventListener('click', e => e.stopPropagation());
+    // 'input' fires continuously while the native color popup is still open
+    // (e.g. every drag tick); update live (silent: no dirty/notify, so
+    // nothing rebuilds the Annotations list) so the swatch/canvas preview
+    // the color without tearing down the <input> the popup is anchored to
+    // — doing that would force-close the still-open native picker. 'change'
+    // fires once the popup actually closes, so it's safe to persist +
+    // refresh there.
     colorInput.addEventListener('input', () => {
-      annotations.setClassColor(sample, ann.class, colorInput.value);
+      annotations.setClassColor(sample, ann.class, colorInput.value, true);
       annotationsCanvas.redraw();
     });
-    colorInput.addEventListener('change', () => refresh());
+    colorInput.addEventListener('change', () => {
+      annotations.setClassColor(sample, ann.class, colorInput.value);
+      refresh();
+    });
     top.appendChild(colorInput);
     if (!annotations.getClassColor(ann.class)) annotations.setClassColor(sample, ann.class, colorInput.value);
 
@@ -268,8 +285,9 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     labelEl.style.cssText = 'flex:1;min-width:100px;background:#111;border:1px solid #333;border-radius:3px;color:#eee;font:10px monospace;padding:2px 4px;';
     labelEl.addEventListener('click', e => e.stopPropagation());
     labelEl.addEventListener('change', () => {
-      annotations.editMetadata(sample, 'library', ann.id, { label: labelEl.value });
-      refresh();
+      const apply = () => { annotations.editMetadata(sample, 'library', ann.id, { label: labelEl.value }); refresh(); };
+      if (annotations.isLocked(ann)) annotations.requestUnlockForEdit(sample, 'library', ann.id).then(ok => ok ? apply() : refresh());
+      else apply();
     });
     top.appendChild(labelEl);
 

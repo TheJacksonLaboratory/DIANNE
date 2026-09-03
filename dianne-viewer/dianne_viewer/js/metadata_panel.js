@@ -28,6 +28,7 @@ function createMetadataPanel({
   scrollRibbonToSample, // optional: called when switching to Samples tab to autoscroll ribbon
   buildAnnotationsPanel, // optional: (container) => api; builds the §3 "Annotations" tab content once
   getAnnotationSummary, // optional: (sampleName) => {text} read-only per-row annotation coverage summary (§3)
+  onTabChange, // optional: (tab) => void; called after every tab switch completes
 }) {
   // ── Layout constants (adjust here) ──────────────────────────────────────
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
@@ -36,6 +37,7 @@ function createMetadataPanel({
   const FILTER_BAR_VISIBLE_ROWS = 10;   // number of filter rows visible before the bar scrolls
   const PIE_MAX_LABELS = 10;   // max slices shown in the value-count pie chart tooltip
   const PIE_SIZE      = 140;   // px — diameter of the pie chart canvas
+  const RIBBON_COLUMN_WIDTH_ANNOTATIONS = '130px';  // width of the sample ribbon column next to the Annotations list
   const TOOLTIP_MAX_LABEL_CHARS = 25;  // max chars for key/value in sample hover tooltip
   const TOOLTIP_MAX_ROWS        = 20;   // max metadata rows shown in the hover tooltip before truncating
   // ── Determine if any sample has metadata ─────────────────────────────────
@@ -71,7 +73,15 @@ function createMetadataPanel({
   const ribbonWrap = document.createElement('div');
   ribbonWrap.style.cssText = 'flex:1 1 auto;overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:0;';
   while (samplesRibbon.firstChild) ribbonWrap.appendChild(samplesRibbon.firstChild);
-  samplesRibbon.appendChild(ribbonWrap);
+
+  // annotSplit lays ribbonWrap and annotPanel out side by side on the
+  // Annotations tab (ribbonWrap keeps its normal full-width look on the
+  // Samples tab since annotPanel is display:none there, so it's the only
+  // visible child and simply takes the whole row).
+  const annotSplit = document.createElement('div');
+  annotSplit.style.cssText = 'display:flex;flex-direction:row;gap:8px;flex:1 1 auto;min-height:0;width:100%;';
+  annotSplit.appendChild(ribbonWrap);
+  samplesRibbon.appendChild(annotSplit);
 
   // 2. Tab strip
   const tabStrip = document.createElement('div');
@@ -100,21 +110,21 @@ function createMetadataPanel({
   if (_hasAnyMeta) tabStrip.appendChild(tabMeta);
   tabStrip.appendChild(tabAnnotations);
 
-  // Prepend tab strip inside samplesRibbon (before ribbonWrap)
+  // Prepend tab strip inside samplesRibbon (before annotSplit)
   samplesRibbon.insertBefore(tabStrip, samplesRibbon.firstChild);
 
   // Count label — always visible between tabStrip and content
   const countLabel = document.createElement('div');
   countLabel.style.cssText = 'font:10px monospace;color:#666;text-align:right;padding:2px 6px 2px 0;flex-shrink:0;';
-  samplesRibbon.insertBefore(countLabel, ribbonWrap);
+  samplesRibbon.insertBefore(countLabel, annotSplit);
 
   function _updateCount() {
+    const n = _filteredSamples.length, total = SAMPLES.length;
     if (_activeTab === 'annotations') {
-      countLabel.textContent = ACTIVE_SAMPLE_REF();
+      countLabel.textContent = ACTIVE_SAMPLE_REF() + '  (' + n + ' / ' + total + ' samples)';
       countLabel.style.color = '#53d9ff';
       return;
     }
-    const n = _filteredSamples.length, total = SAMPLES.length;
     countLabel.textContent = n + ' / ' + total + ' samples';
     countLabel.style.color = n < total ? '#fa6' : '#666';
   }
@@ -129,13 +139,14 @@ function createMetadataPanel({
   samplesRibbon.appendChild(metaPanel);
 
   // ── Annotations panel container (task.md §3/§4) ────────────────────────
+  // Lives inside annotSplit, side by side with ribbonWrap, on the Annotations tab.
   const annotPanel = document.createElement('div');
   annotPanel.style.cssText = [
     'display:none','flex-direction:column','gap:6px',
     'width:100%','flex:1 1 auto','overflow:hidden','min-height:0',
     'box-sizing:border-box',
   ].join(';');
-  samplesRibbon.appendChild(annotPanel);
+  annotSplit.appendChild(annotPanel);
   let _annotationsApi = null;
   function _ensureAnnotationsPanelBuilt() {
     if (_annotationsApi || typeof buildAnnotationsPanel !== 'function') return;
@@ -155,11 +166,17 @@ function createMetadataPanel({
   let _activeTab = 'samples';
   function _switchTab(tab) {
     _activeTab = tab;
-    ribbonWrap.style.display = tab === 'samples' ? '' : 'none';
+    // The Annotations tab shows the sample ribbon side by side with the
+    // annotations list (same cards/thumbnails/click-to-switch/click-to-pan
+    // behavior as the Samples tab), so sample navigation stays available
+    // without leaving the tab.
+    annotSplit.style.display = (tab === 'samples' || tab === 'annotations') ? 'flex' : 'none';
+    ribbonWrap.style.display = 'flex';
     metaPanel.style.display = tab === 'metadata' ? 'flex' : 'none';
     annotPanel.style.display = tab === 'annotations' ? 'flex' : 'none';
     if (tab === 'samples') {
       samplesRibbon.setAttribute('style', _origRibbonStyle);
+      ribbonWrap.style.flex = '1 1 auto';
       _setTabStyles(tabSamples);
       if (scrollRibbonToSample) setTimeout(() => scrollRibbonToSample(ACTIVE_SAMPLE_REF()), 0);
     } else if (tab === 'metadata') {
@@ -169,14 +186,18 @@ function createMetadataPanel({
       _setTabStyles(tabMeta);
       setTimeout(() => syncActiveSample(), 0);
     } else if (tab === 'annotations') {
-      samplesRibbon.style.width = '420px';
-      samplesRibbon.style.minWidth = '340px';
-      samplesRibbon.style.maxWidth = '480px';
+      samplesRibbon.style.width = '760px';
+      samplesRibbon.style.minWidth = '600px';
+      samplesRibbon.style.maxWidth = '900px';
+      ribbonWrap.style.flex = '0 0 ' + RIBBON_COLUMN_WIDTH_ANNOTATIONS;
+      annotPanel.style.flex = '1 1 auto';
       _setTabStyles(tabAnnotations);
       _ensureAnnotationsPanelBuilt();
       if (_annotationsApi && typeof _annotationsApi.onShow === 'function') _annotationsApi.onShow();
+      if (scrollRibbonToSample) setTimeout(() => scrollRibbonToSample(ACTIVE_SAMPLE_REF()), 0);
     }
     _updateCount();
+    if (typeof onTabChange === 'function') onTabChange(tab);
   }
   tabSamples.addEventListener('click', () => _switchTab('samples'));
   tabMeta.addEventListener('click',    () => _switchTab('metadata'));

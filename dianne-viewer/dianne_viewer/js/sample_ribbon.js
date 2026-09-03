@@ -28,7 +28,8 @@ function createSampleRibbon({
   getAnnotationsForMinimap,  // optional: (sampleName) => [{rings, area}] visible library annotations (§10)
 }) {
   // per-sample thumbnail overlay canvases (keyed by sample name)
-  const thumbCanvases = {};
+  const thumbCanvases = {};  // top layer: current-viewport rect, active sample only, redrawn per pan/zoom frame
+  const annotCanvases = {};  // layer below: library-annotation preview, all samples, redrawn infrequently
   const annotBadges = {};  // §3: dirty/count badge elements, keyed by sample name
 
   function updateAnnotationBadges(getInfoFn) {
@@ -122,6 +123,9 @@ function createSampleRibbon({
     };
   }
 
+  // Rect overlay (thumbCanvases): the current-viewport indicator, redrawn on
+  // every pan/zoom (viewport.onChange) — cheap since only the active
+  // sample's canvas is ever (re)drawn, others are just cleared.
   function updateThumbOverlays() {
     for (const [sampleName, canvas] of Object.entries(thumbCanvases)) {
       const ctx2 = canvas.getContext('2d');
@@ -154,35 +158,80 @@ function createSampleRibbon({
       ctx2.strokeStyle = 'rgba(255,55,55,0.92)';
       ctx2.lineWidth = 1.5;
       ctx2.strokeRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
-
-      // §10: overlay library annotations — small ones as dots, large ones as
-      // simplified outlines, thresholded by screen-space size at minimap scale.
-      if (typeof getAnnotationsForMinimap === 'function') {
-        const DOT_THRESHOLD_PX = 5;  // outline vs dot cutoff, in minimap px
-        for (const ann of getAnnotationsForMinimap(sampleName)) {
-          if (!ann.rings || !ann.rings[0] || !ann.rings[0].length) continue;
-          const pts = ann.rings[0].map(p => _imgToThumbPx(p.x, p.y, m, thumbLevel, containerW));
-          let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
-          for (const p of pts) { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; if (p.y < miny) miny = p.y; if (p.y > maxy) maxy = p.y; }
-          const w = maxx - minx, h = maxy - miny;
-          ctx2.fillStyle = 'rgba(83,217,255,0.9)';
-          ctx2.strokeStyle = 'rgba(83,217,255,0.9)';
-          if (Math.max(w, h) < DOT_THRESHOLD_PX) {
-            ctx2.beginPath();
-            ctx2.arc((minx + maxx) / 2, (miny + maxy) / 2, 1.5, 0, Math.PI * 2);
-            ctx2.fill();
-          } else {
-            ctx2.lineWidth = 1;
-            ctx2.beginPath();
-            ctx2.moveTo(pts[0].x, pts[0].y);
-            for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
-            ctx2.closePath();
-            ctx2.stroke();
-          }
-        }
-      }
       ctx2.restore();
     }
+  }
+
+  // §10: library-annotation preview (annotCanvases, a separate layer under
+  // the rect canvas): small ones as dots, large ones as simplified outlines,
+  // thresholded by screen-space size at minimap scale. Drawn for EVERY
+  // sample, not just the active one — but kept on its own canvas and its own
+  // (infrequent) refresh path so it never has to redraw on every pan/zoom
+  // frame like the rect overlay does.
+  function _drawAnnotationPreview(sampleName) {
+    const canvas = annotCanvases[sampleName];
+    if (!canvas) return;
+    const ctx2 = canvas.getContext('2d');
+    ctx2.clearRect(0, 0, canvas.width, canvas.height);
+    if (typeof getAnnotationsForMinimap !== 'function') return;
+
+    const m = SAMPLE_META[sampleName];
+    const thumbLevel = Math.max(0, Number(m.n_levels) - 1);
+    const containerW = canvas.width;
+    const area = _thumbImageArea(m, thumbLevel, containerW);
+    const DOT_THRESHOLD_PX = 5;  // outline vs dot cutoff, in minimap px
+
+    ctx2.save();
+    ctx2.beginPath();
+    ctx2.rect(area.x0, area.y0, area.x1 - area.x0, area.y1 - area.y0);
+    ctx2.clip();
+    for (const ann of getAnnotationsForMinimap(sampleName)) {
+      if (!ann.rings || !ann.rings[0] || !ann.rings[0].length) continue;
+      const pts = ann.rings[0].map(p => _imgToThumbPx(p.x, p.y, m, thumbLevel, containerW));
+      let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+      for (const p of pts) { if (p.x < minx) minx = p.x; if (p.x > maxx) maxx = p.x; if (p.y < miny) miny = p.y; if (p.y > maxy) maxy = p.y; }
+      const w = maxx - minx, h = maxy - miny;
+      ctx2.fillStyle = 'rgba(83,217,255,0.9)';
+      ctx2.strokeStyle = 'rgba(83,217,255,0.9)';
+      if (Math.max(w, h) < DOT_THRESHOLD_PX) {
+        ctx2.beginPath();
+        ctx2.arc((minx + maxx) / 2, (miny + maxy) / 2, 1.5, 0, Math.PI * 2);
+        ctx2.fill();
+      } else {
+        ctx2.lineWidth = 1;
+        ctx2.beginPath();
+        ctx2.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx2.lineTo(pts[i].x, pts[i].y);
+        ctx2.closePath();
+        ctx2.stroke();
+      }
+    }
+    ctx2.restore();
+  }
+
+  function redrawAnnotationPreviews() {
+    for (const sampleName of Object.keys(annotCanvases)) _drawAnnotationPreview(sampleName);
+  }
+
+  // Force every thumbnail's canvases to match their current on-screen size
+  // and redraw both layers, bypassing ResizeObserver. Call this right after
+  // toggling the ribbon's visibility/width (e.g. on a tab switch) — a
+  // display:none → visible transition doesn't always get picked up by
+  // ResizeObserver in time for the next paint, which otherwise leaves the
+  // rect/annotation overlays stale (wrong size or just not drawn) until some
+  // later event (like switching tabs again) happens to trigger a resize.
+  function forceResizeAll() {
+    for (const [sampleName, canvas] of Object.entries(thumbCanvases)) {
+      const wrap = canvas.parentElement;
+      if (!wrap) continue;
+      const w = wrap.clientWidth;
+      if (w <= 0) continue;
+      const annotCanvas = annotCanvases[sampleName];
+      if (canvas.width !== w || canvas.height !== w) { canvas.width = w; canvas.height = w; }
+      if (annotCanvas && (annotCanvas.width !== w || annotCanvas.height !== w)) { annotCanvas.width = w; annotCanvas.height = w; }
+    }
+    updateThumbOverlays();
+    redrawAnnotationPreviews();
   }
 
   function buildSampleRibbon() {
@@ -255,11 +304,20 @@ function createSampleRibbon({
       thumbWrap.appendChild(img);
       if (thumbObserver) thumbObserver.observe(thumbWrap);
 
-      // Overlay canvas for viewport rectangle
+      // Overlay canvas for the library-annotation preview (all samples; sits
+      // below the viewport-rect canvas so each can be redrawn independently).
+      const annotCanvas = document.createElement('canvas');
+      annotCanvas.width  = 1;
+      annotCanvas.height = 1;
+      annotCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;';
+      thumbWrap.appendChild(annotCanvas);
+      annotCanvases[sampleName] = annotCanvas;
+
+      // Overlay canvas for the current-viewport rectangle (active sample only)
       const thumbCanvas = document.createElement('canvas');
       thumbCanvas.width  = 1;
       thumbCanvas.height = 1;
-      thumbCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;';
+      thumbCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;';
       thumbWrap.appendChild(thumbCanvas);
 
       const resizeThumbCanvas = () => {
@@ -267,7 +325,10 @@ function createSampleRibbon({
         if (w > 0 && (thumbCanvas.width !== w || thumbCanvas.height !== w)) {
           thumbCanvas.width  = w;
           thumbCanvas.height = w;
+          annotCanvas.width  = w;
+          annotCanvas.height = w;
           updateThumbOverlays();
+          _drawAnnotationPreview(sampleName);
         }
       };
       new ResizeObserver(resizeThumbCanvas).observe(thumbWrap);
@@ -405,5 +466,5 @@ function createSampleRibbon({
     if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  return { buildSampleRibbon, updateThumbOverlays, setVisibleSamples, scrollToSample, updateAnnotationBadges };
+  return { buildSampleRibbon, updateThumbOverlays, redrawAnnotationPreviews, forceResizeAll, setVisibleSamples, scrollToSample, updateAnnotationBadges };
 }

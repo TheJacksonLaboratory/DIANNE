@@ -24,8 +24,12 @@
  * (see bottom of file for the returned object shape).
  */
 
-function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromotedToPosNeg, onChange }) {
+function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromotedToPosNeg, onChange, currentUser, confirmEditReviewed }) {
   const STATUS_VALUES = ['draft', 'proposed', 'reviewed', 'edited'];
+  // Resolved once (server-side, via whoami) and injected as `currentUser`;
+  // falls back to 'Unknown' so every annotation always has an attributable
+  // author/editor even if that resolution failed.
+  function _currentUser() { return currentUser || 'Unknown'; }
   // Fired after any mutation (add/delete/edit/status/promote/undo/redo/load) so
   // callers can refresh the Annotations tab list, thumbnail overlay, and
   // sample badges without needing a tab switch to pick up the change.
@@ -38,9 +42,16 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   // Persisted alongside annotation data on every save/load (§ class colors
   // must save along with classes and all the other details).
   const classColors = { positive: '#22f0ff', negative: '#ff5233' };
-  function setClassColor(sample, cls, color) {
+  /** `silent` skips markDirty/_notify (used for live preview while a native
+   *  <input type=color> picker is still open — _notify fans out to a full
+   *  Annotations-tab list rebuild, which would tear down the very <input>
+   *  element the browser's color popup is anchored to and force-close it
+   *  mid-pick; callers should follow up with a non-silent call once the
+   *  picker actually closes, e.g. on the input's 'change' event). */
+  function setClassColor(sample, cls, color, silent) {
     if (!cls) return false;
     classColors[cls] = color;
+    if (silent) return true;
     if (sample) markDirty(sample);
     _notify(sample);
     return true;
@@ -152,6 +163,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   function makeAnnotation({ sample, rings, label, cls, author, magnification, groupId }) {
     const now = new Date().toISOString();
     const id = _nextId('ann');
+    const createdBy = author || _currentUser();
     return {
       id,
       group_id: groupId || id,
@@ -159,7 +171,8 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
       class: cls || 'unclassified',
       status: 'draft',
       locked: false,
-      author: author || 'unknown',
+      author: createdBy,        // first author — who created this annotation, immutable after creation
+      last_editor: createdBy,   // most recent author — who last modified it (may equal `author`)
       created_at: now,
       updated_at: now,
       slide_id: sample,
@@ -279,6 +292,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     if (!ann || STATUS_VALUES.indexOf(status) < 0) return false;
     ann.status = status;
     ann.locked = isLocked(ann);
+    ann.last_editor = _currentUser();
     ann.updated_at = new Date().toISOString();
     markDirty(sample);
     logAndRecord(`Status changed: "${ann.label}" \u2192 ${status}`);
@@ -302,6 +316,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
       ann.status = 'edited';
       ann.locked = false;
     }
+    ann.last_editor = _currentUser();
     ann.updated_at = new Date().toISOString();
     markDirty(sample);
     _notify(sample);
@@ -315,6 +330,34 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
       return false;
     }
     return true;
+  }
+
+  /** UI entry point for "user is about to edit a reviewed (locked)
+   *  annotation": if it isn't locked, resolves true immediately with no
+   *  dialog; if it is, shows the same-style confirm dialog (via the
+   *  `confirmEditReviewed` callback \u2014 Esc/Cancel rejects, Enter/OK confirms,
+   *  per modals.js's showConfirm) and, only on confirmation, flips the
+   *  annotation to 'edited'/unlocked (recording who did it) so the caller's
+   *  subsequent edit (geometry or metadata) then passes guardGeometryEdit /
+   *  editMetadata's own lock check normally. Callers should await this
+   *  before starting an edit interaction (e.g. a vertex drag) rather than
+   *  attempting the edit and checking for failure. */
+  function requestUnlockForEdit(sample, cls, id) {
+    const ann = findAnnotation(sample, cls, id);
+    if (!ann) return Promise.resolve(false);
+    if (!isLocked(ann)) return Promise.resolve(true);
+    if (typeof confirmEditReviewed !== 'function') return Promise.resolve(false);
+    return Promise.resolve(confirmEditReviewed(ann)).then(ok => {
+      if (!ok) return false;
+      ann.status = 'edited';
+      ann.locked = false;
+      ann.last_editor = _currentUser();
+      ann.updated_at = new Date().toISOString();
+      markDirty(sample);
+      logAndRecord(`"${ann.label}" unlocked for editing (was reviewed) \u2192 edited`);
+      _notify(sample);
+      return true;
+    });
   }
 
   // ── lookup helpers ──────────────────────────────────────────────────────
@@ -434,6 +477,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     const oldRings = ann.rings;
     ann.rings = newRings;
     recomputeMetrics(ann);
+    ann.last_editor = _currentUser();
     ann.updated_at = new Date().toISOString();
     markDirty(sample);
     pushUndo(sample, {
@@ -462,6 +506,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
         sample, rings: _cloneRings(src.rings), label: src.label, cls: src.class, author: src.author, groupId: newGroupId,
       });
       copy.derived_from = src.id;
+      copy.last_editor = _currentUser();  // author is preserved from src for provenance; the copy itself was just made by the current user
       return copy;
     });
     addAnnotationGroup(sample, targetCls, copies);
@@ -494,6 +539,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
         sample, rings: _cloneRings(src.rings), label: label || src.label, cls: cls || 'unclassified', author: src.author, groupId: newGroupId,
       });
       copy.derived_from = src.id;  // provenance only; behaves as an independent library entry (§5)
+      copy.last_editor = _currentUser();  // author is preserved from src for provenance; the copy itself was just made by the current user
       return copy;
     });
     addAnnotationGroup(sample, 'library', copies);
@@ -625,6 +671,8 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     const oldPt = { ...ann.rings[ringIdx][vertIdx] };
     ann.rings[ringIdx][vertIdx] = newPt;
     recomputeMetrics(ann);
+    ann.last_editor = _currentUser();
+    ann.updated_at = new Date().toISOString();
     markDirty(sample);
     pushUndo(sample, {
       undo: () => { ann.rings[ringIdx][vertIdx] = oldPt; recomputeMetrics(ann); },
@@ -639,6 +687,8 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     if (!ann || !ann.rings[ringIdx]) return false;
     ann.rings[ringIdx].splice(afterVertIdx + 1, 0, newPt);
     recomputeMetrics(ann);
+    ann.last_editor = _currentUser();
+    ann.updated_at = new Date().toISOString();
     markDirty(sample);
     pushUndo(sample, {
       undo: () => { ann.rings[ringIdx].splice(afterVertIdx + 1, 1); recomputeMetrics(ann); },
@@ -653,6 +703,8 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     if (!ann || !ann.rings[ringIdx] || ann.rings[ringIdx].length <= 3) return false;
     const [removed] = ann.rings[ringIdx].splice(vertIdx, 1);
     recomputeMetrics(ann);
+    ann.last_editor = _currentUser();
+    ann.updated_at = new Date().toISOString();
     markDirty(sample);
     pushUndo(sample, {
       undo: () => { ann.rings[ringIdx].splice(vertIdx, 0, removed); recomputeMetrics(ann); },
@@ -814,7 +866,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     assembleRingsIntoPieces, buildAnnotationsFromRings,
     addAnnotation, addAnnotationGroup, deleteAnnotation, deleteAnnotationGroup,
     replaceGeometry, findAnnotation, listAnnotations, listGroupSiblings, groupAnnotationsByGroupId,
-    setStatus, editMetadata, isLocked, guardGeometryEdit,
+    setStatus, editMetadata, isLocked, guardGeometryEdit, requestUnlockForEdit,
     promoteToPosNeg, promoteToLibrary,
     setClassColor, getClassColor, getClassColors, knownClasses,
     booleanOp, applyBooleanOp,

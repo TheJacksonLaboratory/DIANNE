@@ -38,6 +38,7 @@ const MPP                      = __MPP__;  // µm per image pixel; null if not p
 const _STOP_URL                = __STOP_URL__;
 const HAS_MATRICES             = __HAS_MATRICES__;
 const ADJUST_PRIMARY_MATRICES  = __ADJUST_PRIMARY_MATRICES__;
+const CURRENT_USER             = __CURRENT_USER__; // resolved once server-side (whoami, or 'Unknown')
 
 // ── Mutable session state ─────────────────────────────────────────────────
 let ACTIVE_SAMPLE = SAMPLES[0];
@@ -283,10 +284,17 @@ function _getMppForSample(sample) {
 // on every mutation (add/delete/edit/status/promote/undo/redo) instead of
 // only when the user switches tabs or samples.
 let _onAnnotationsChange = null;
+// Created here (rather than down in the "Modals" section below) because
+// createAnnotations() needs it immediately, to show the reviewed-annotation
+// edit-confirmation dialog in the same style as every other app dialog.
+const modalHelpers = createModalHelpers();
 const annotations = createAnnotations({
   viewport, log,
   getMppForSample: _getMppForSample,
   baseUrl: BASE_URL,
+  currentUser: CURRENT_USER,
+  confirmEditReviewed: (ann) => modalHelpers.showConfirm(
+    `"${ann.label || ann.class}" has been reviewed. Editing it will change its status to "edited". Continue?`),
   onPromotedToPosNeg: (sample, cls, copies, groupId) => _pushPromotedStroke(sample, cls, copies, groupId),
   onChange: (sample) => { if (typeof _onAnnotationsChange === 'function') _onAnnotationsChange(sample); },
 });
@@ -660,6 +668,12 @@ function _refreshAnnotationBadges() {
     dirty: annotations.isDirty(s),
     count: annotations.listAnnotations(s, 'library').length,
   }));
+  // Keep the per-thumbnail annotation-preview dots/outlines in sync too.
+  // This piggybacks on the same (infrequent: on mutation + 5s poll) cadence
+  // as the badges above, rather than the high-frequency viewport pan/zoom
+  // path, since it redraws every sample's minimap preview, not just the
+  // active one.
+  sampleRibbonApi.redrawAnnotationPreviews();
 }
 _refreshAnnotationBadges();
 
@@ -673,6 +687,13 @@ _metadataPanel = createMetadataPanel({
   onFilterChange: (samples) => sampleRibbonApi.setVisibleSamples(samples),
   onSampleSelect: (name) => sampleRibbonApi.scrollToSample(name),
   scrollRibbonToSample: (name) => sampleRibbonApi.scrollToSample(name),
+  // Force the thumbnail rect/annotation-preview canvases to the ribbon's
+  // new on-screen size right after a tab switch reveals/resizes it, rather
+  // than waiting on ResizeObserver (which can lag a frame behind a
+  // display:none -> visible transition and leave the overlays stale).
+  onTabChange: (tab) => {
+    if (tab === 'samples' || tab === 'annotations') requestAnimationFrame(() => sampleRibbonApi.forceResizeAll());
+  },
   buildAnnotationsPanel: (annotContainer) => createAnnotationsTab({
     container: annotContainer,
     annotations,
@@ -728,9 +749,6 @@ _onAnnotationsChange = () => {
   // some unrelated sort/filter/click happens to force a re-render.
   if (_metadataPanel) _metadataPanel.refreshTable();
 };
-
-// ── Modals ────────────────────────────────────────────────────────────────
-const modalHelpers = createModalHelpers();
 
 // ── Scale bar ─────────────────────────────────────────────────────────────
 createScaleBar(root, viewport, MPP);

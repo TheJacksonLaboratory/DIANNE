@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 from IPython.display import display, HTML, Javascript
 import ipywidgets as widgets
@@ -31,6 +32,24 @@ def _render(template: str, **values: str) -> str:
             raise KeyError(f'template is missing placeholder {token}')
         template = template.replace(token, val)
     return template
+
+
+def _resolve_username(username):
+    """Resolve the annotator identity recorded as author/last-editor.
+
+    ``username='auto'`` (the default) runs ``whoami`` once, at viewer
+    startup, so every annotation created/edited in this session can be
+    attributed. Falls back to 'Unknown' if that fails (e.g. no shell
+    available) or returns nothing. Any other value is used as-is.
+    """
+    if username and username != 'auto':
+        return str(username)
+    try:
+        result = subprocess.run(['whoami'], capture_output=True, text=True, timeout=5)
+        name = result.stdout.strip()
+        return name if result.returncode == 0 and name else 'Unknown'
+    except Exception:
+        return 'Unknown'
 
 
 # Configurable: milliseconds of loading-bar animation per cell in the inference sample.
@@ -156,7 +175,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   draw_on_secondary=False, visium_ads=None,
                   sample_mapping=None, fullscreen_on_load=True,
                   sample_metadata=None, fs=None, s3=None, s3_bucket=None,
-                  adjust_primary_matrices=True, save_path=None):
+                  adjust_primary_matrices=True, save_path=None, username='auto'):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -235,6 +254,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         persisted (in a ``.dianne_annotations`` subfolder). Defaults to
         ``'./'`` — the notebook's own directory. Overridden by the
         ``DIANNE_ANNOTATIONS_DIR`` environment variable if set.
+    username : str, optional
+        Identity recorded as the author/last-editor of annotations created
+        or modified in this session. Defaults to ``'auto'``, which runs
+        ``whoami`` once at viewer startup (falling back to ``'Unknown'`` if
+        that fails). Pass an explicit string to override.
     Returns
     -------
     clicks  : list of dicts  {img_x, img_y, vp_x, vp_y, zoom}
@@ -286,6 +310,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     if not _save_root.is_absolute():
       _save_root = Path.cwd() / _save_root
     annotations_dir = str((_save_root / '.dianne_annotations').resolve())
+
+    current_user = _resolve_username(username)
 
     chosen_sample = sample_list[0]
     import time as _time
@@ -666,6 +692,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       stop_url             = json.dumps(_stop_url),
       has_matrices         = 'true' if has_matrices else 'false',
       adjust_primary_matrices = 'true' if adjust_primary_matrices else 'false',
+      current_user         = json.dumps(current_user),
     )
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 
