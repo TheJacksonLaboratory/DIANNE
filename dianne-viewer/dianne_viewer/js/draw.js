@@ -212,10 +212,11 @@ function createDraw(container, viewport, settings) {
   function _cloneStrokes(strokes) {
     return strokes.map(s => {
       const out = { id: s.id, points: s.points };
-      if (s.brushMode === 'noodle') {
-        out.brush_mode = 'noodle';
-        if (s.groupId !== undefined) out.group_id = s.groupId;
-      }
+      if (s.brushMode === 'noodle') out.brush_mode = 'noodle';
+      // group_id links sibling stroke objects into one logical multi-piece
+      // shape (e.g. several disjoint promoted-copy pieces, or several
+      // noodle-brush contours) — applies regardless of brush mode.
+      if (s.groupId !== undefined) out.group_id = s.groupId;
       // Extra nested ring(s) belonging to this SAME stroke (e.g. a hole cut
       // out of a promoted multi-ring library annotation) — kept as one
       // logical stroke object rather than split into siblings.
@@ -745,6 +746,28 @@ function createDraw(container, viewport, settings) {
     for (let i = 1; i < stroke.points.length; i++) {
       const sp = viewport.toScreenSpace(stroke.points[i].x, stroke.points[i].y);
       ctx.lineTo(sp.x, sp.y);
+    }
+    // Extra hole ring(s) belonging to this same stroke (e.g. promoted from a
+    // multi-ring/multi-contour library annotation) — cut out via evenodd
+    // fill, same convention as the library's rings[0]=outer/rest=holes and
+    // the noodle-completed branch above. A plain freehand line stroke never
+    // has holes, so this leaves that rendering path unchanged.
+    if (stroke.holes && stroke.holes.length) {
+      ctx.closePath();
+      for (const hole of stroke.holes) {
+        if (!hole.length) continue;
+        const hp = viewport.toScreenSpace(hole[0].x, hole[0].y);
+        ctx.moveTo(hp.x, hp.y);
+        for (let i = 1; i < hole.length; i++) {
+          const sp = viewport.toScreenSpace(hole[i].x, hole[i].y);
+          ctx.lineTo(sp.x, sp.y);
+        }
+        ctx.closePath();
+      }
+      ctx.fillStyle = strokeColor;
+      ctx.globalAlpha = 0.18;
+      ctx.fill('evenodd');
+      ctx.globalAlpha = 0.9;
     }
     ctx.stroke();
   }
