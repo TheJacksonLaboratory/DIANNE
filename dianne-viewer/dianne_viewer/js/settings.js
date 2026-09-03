@@ -3,7 +3,11 @@
  *
  * Gear button (⚙) + floating settings panel, appended to the overlay-controls
  * bar. Persists values to localStorage between sessions and notifies registered
- * listeners on every change.
+ * listeners on every change. Also synced server-side, to
+ * .<username>-dianne-settings.json in the notebook's working directory,
+ * whenever the panel is closed — `persistedSettings` (loaded once at server
+ * startup from that same file) seeds a fresh browser's initial values before
+ * this browser's own localStorage overrides are applied.
  *
  * Exposes:
  *   settings.get(key)       → current value
@@ -11,7 +15,7 @@
  *   settings.onChange(fn)   → register callback  fn(key, val)
  *                             key === null signals a full reset
  */
-function createSettings(toolbarEl, rootEl, defaults) {
+function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings) {
   const LS_KEY = 'ivViewerSettings';
 
   const DEFAULTS = Object.assign({
@@ -36,6 +40,14 @@ function createSettings(toolbarEl, rootEl, defaults) {
 
   // Load persisted values; only accept keys/types that exist in DEFAULTS.
   let vals = Object.assign({}, DEFAULTS);
+  // Server-synced snapshot (from .<username>-dianne-settings.json) applies
+  // first, so a fresh browser for this user starts from their last-synced
+  // state; this browser's own localStorage (if any) then overrides it below.
+  if (persistedSettings && typeof persistedSettings === 'object') {
+    for (const k of Object.keys(DEFAULTS)) {
+      if (k in persistedSettings && typeof persistedSettings[k] === typeof DEFAULTS[k]) vals[k] = persistedSettings[k];
+    }
+  }
   try {
     const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (saved && typeof saved === 'object') {
@@ -44,6 +56,17 @@ function createSettings(toolbarEl, rootEl, defaults) {
       }
     }
   } catch (e) {}
+
+  // Sync the current values to the server-side per-user settings file
+  // whenever the Settings panel is closed (§ export user settings).
+  function _syncToServer() {
+    if (!baseUrl) return;
+    fetch(baseUrl + '/settings/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings: vals }),
+    }).catch(() => {});
+  }
 
   const listeners = [];
 
@@ -220,7 +243,7 @@ function createSettings(toolbarEl, rootEl, defaults) {
       'background:transparent', 'border:none', 'color:#777',
       'cursor:pointer', 'font-size:14px', 'padding:0 2px', 'line-height:1',
     ].join(';');
-    closeX.addEventListener('click', () => { panel.style.display = 'none'; });
+    closeX.addEventListener('click', () => { panel.style.display = 'none'; _syncToServer(); });
     titleRow.appendChild(titleSpan);
     titleRow.appendChild(closeX);
     panel.appendChild(titleRow);
@@ -415,7 +438,7 @@ function createSettings(toolbarEl, rootEl, defaults) {
 
   document.addEventListener('click', e => {
     if (panel.style.display === 'none') return;
-    if (!panel.contains(e.target) && e.target !== gearBtn) panel.style.display = 'none';
+    if (!panel.contains(e.target) && e.target !== gearBtn) { panel.style.display = 'none'; _syncToServer(); }
   });
 
   return { get, set, onChange };

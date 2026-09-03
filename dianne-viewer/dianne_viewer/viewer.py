@@ -527,6 +527,10 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     # annotation_layers_json is built later; attach placeholder now, replace after build
     server._annotation_layers_json = '[]'
 
+    # This user's last-synced Settings-panel snapshot, if any (see
+    # ViewerServer.load_user_settings / the '/settings/save' route).
+    persisted_settings = server.load_user_settings()
+
     # ── store per-sample alignment matrices on server for /align endpoint ─────
     server._align_matrices = dict(sample_secondary_matrix)   # {sample: matrix_dict|None}
     server._adjust_primary_matrices = bool(adjust_primary_matrices)
@@ -694,6 +698,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       has_matrices         = 'true' if has_matrices else 'false',
       adjust_primary_matrices = 'true' if adjust_primary_matrices else 'false',
       current_user         = json.dumps(current_user),
+      persisted_settings   = json.dumps(persisted_settings),
     )
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 

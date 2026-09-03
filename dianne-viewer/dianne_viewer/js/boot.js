@@ -39,6 +39,7 @@ const _STOP_URL                = __STOP_URL__;
 const HAS_MATRICES             = __HAS_MATRICES__;
 const ADJUST_PRIMARY_MATRICES  = __ADJUST_PRIMARY_MATRICES__;
 const CURRENT_USER             = __CURRENT_USER__; // resolved once server-side (whoami, or 'Unknown')
+const PERSISTED_SETTINGS       = __PERSISTED_SETTINGS__; // loaded once server-side from .<user>-dianne-settings.json, if present
 
 // ── Mutable session state ─────────────────────────────────────────────────
 let ACTIVE_SAMPLE = SAMPLES[0];
@@ -161,7 +162,7 @@ if (IS_MULTICHANNEL) { overlayControls.style.right = '104px'; }
 const settings = createSettings(overlayControls, root, {
   inferMsPerCell: INFERENCE_MS_PER_CELL,
   maxCellsBoundaries: MAX_CELLS,
-});
+}, BASE_URL, PERSISTED_SETTINGS);
 
 // ── Secondary image layer (created after viewport+settings; inserted before tileLayer) ─
 // _overlayCtrlApi must be declared before createSecondaryLayer because its constructor

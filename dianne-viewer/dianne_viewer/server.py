@@ -349,6 +349,37 @@ class ViewerServer:
         day = self._safe_filename_component(date_str)
         return os.path.join(self.annotations_dir, f'{user}_{day}.log')
 
+    def _user_settings_path(self):
+        # Lives in the notebook's cwd (not annotations_dir) per user request:
+        # a per-user Settings-panel snapshot, synced whenever that panel is
+        # closed, so a fresh browser/session for the same user starts from
+        # their last-synced viewer preferences.
+        user = self._safe_filename_component(self.username)
+        return os.path.join(os.getcwd(), f'.{user}-dianne-settings.json')
+
+    def load_user_settings(self):
+        """Read this user's persisted settings snapshot, if any (loaded once
+        at viewer startup and injected into the page, mirroring class_colors'
+        own load-on-init pattern)."""
+        path = self._user_settings_path()
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def save_user_settings(self, settings_dict):
+        """'/settings/save' route: overwrite this user's settings snapshot
+        with the full current Settings-panel state, sent whenever the panel
+        is closed."""
+        if not isinstance(settings_dict, dict):
+            return
+        with open(self._user_settings_path(), 'w', encoding='utf-8') as f:
+            json.dump(settings_dict, f)
+
     def _load_class_colors_from_disk(self):
         path = self._class_colors_path()
         if not os.path.exists(path):
@@ -1163,6 +1194,17 @@ class ViewerServer:
                     entries = data.get('entries', []) if isinstance(data, dict) else []
                     try:
                         srv.append_history_log(entries)
+                        body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/settings/save':
+                    # Settings panel close: persist the full current settings
+                    # to this user's .<username>-dianne-settings.json.
+                    try:
+                        srv.save_user_settings(data.get('settings') if isinstance(data, dict) else None)
                         body = json.dumps({'ok': True}).encode()
                     except Exception as exc:
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
