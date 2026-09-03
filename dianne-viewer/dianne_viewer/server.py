@@ -11,6 +11,9 @@ from urllib.parse import urlparse, parse_qs
 import multiprocessing
 import cv2
 import numpy as np
+from dianne_utils.mask import extractContoursForQuPath
+
+from .contours import make_prob_mask_from_points
 
 # Standard H&E stain vectors (Ruifrok & Johnston), rows = stains, cols = RGB
 _HE_MATRIX = np.array([
@@ -375,6 +378,20 @@ class ViewerServer:
         path = self._class_colors_path()
         if os.path.exists(path):
             os.remove(path)
+
+    def generate_contours(self, xi, yi, pi, delta, cutoff, full_width, full_height,
+                           downfactor=16, min_area=10**6, sigma=75, annotation_name='Positive'):
+        """"Show contours" / "Add" buttons: turn the already-computed inference
+        probability overlay (the xi/yi/pi points + delta the client already has
+        from /run_inference, the same points drawn as the on-screen heatmap)
+        into contour polygons. full_width/full_height are the primary image's
+        full-resolution dimensions, supplied by the client from META (avoids
+        re-deriving them server-side from the image object)."""
+        downsampled_map, fshape = make_prob_mask_from_points(
+            xi, yi, pi, (full_height, full_width), delta, downfactor=downfactor)
+        return extractContoursForQuPath(
+            downsampled_map, fshape, cutoff=cutoff, min_area=min_area,
+            downfactor=downfactor, sigma=sigma, annotation_name=annotation_name)
 
     def append_history_log(self, entries):
         """Append transient status-bar messages to this user's persistent
@@ -1159,6 +1176,29 @@ class ViewerServer:
                         srv.reset_class_colors()
                         body = json.dumps({'ok': True}).encode()
                     except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/annotations/contours':
+                    # "Show contours" / "Add" buttons: extract contour polygons
+                    # from the already-computed inference overlay (no re-running
+                    # inference — see ViewerServer.generate_contours).
+                    try:
+                        geojson = srv.generate_contours(
+                            xi=data.get('xi') or [],
+                            yi=data.get('yi') or [],
+                            pi=data.get('pi') or [],
+                            delta=float(data.get('delta', 448)),
+                            cutoff=float(data.get('cutoff', 0.5)),
+                            sigma=float(data.get('sigma', 75)),
+                            min_area=float(data.get('min_area', 10**6)),
+                            full_width=int(data.get('full_width')),
+                            full_height=int(data.get('full_height')),
+                        )
+                        body = json.dumps({'ok': True, 'geojson': geojson}).encode()
+                    except Exception as exc:
+                        import traceback; traceback.print_exc()
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
                     self._respond(200, body, 'application/json')
                     return

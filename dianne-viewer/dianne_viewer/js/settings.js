@@ -29,6 +29,9 @@ function createSettings(toolbarEl, rootEl, defaults) {
     contourSimplifyPx  : 1.5,        // simplification tolerance, in *screen* px (scale-independent)
     contourSimplifyOnExport : false, // additionally re-simplify at GeoJSON export time
     contourSimplifyExportPx : 50,    // export tolerance, in *image*-space px (not screen-scaled)
+    probContourThreshold : 0.5,      // "show contours"/"Add" probability cutoff (0-1)
+    probContourSigma     : 75,       // Gaussian blur sigma before thresholding, full-res image px
+    probContourMinArea   : 1000000,  // minimum contour area to keep, full-res image px²
   }, defaults || {});
 
   // Load persisted values; only accept keys/types that exist in DEFAULTS.
@@ -303,6 +306,29 @@ function createSettings(toolbarEl, rootEl, defaults) {
       'Tune to match actual inference wall-clock speed.\n' +
       'Example: 5 000 cells × 0.15 ms = 0.75 s'));
     panel.appendChild(_makeHint('Matches server-side INFERENCE_MS_PER_CELL'));
+
+    // ── Probability contours ("show contours" eye button / "Add" button) ───────
+    panel.appendChild(_makeSectionHeader('Probability Contours'));
+
+    panel.appendChild(_makeRow(
+      'Probability threshold',
+      _makeSlider({ key: 'probContourThreshold', min: 0, max: 1, step: 0.01,
+        format: v => v.toFixed(2) }),
+      'Probability cutoff (0-1) for extracting contours from the inference\n' +
+      'heatmap, used by both the eye (show) and Add buttons next to Prob. Opacity.'));
+
+    panel.appendChild(_makeRow(
+      'Blur sigma (image px)',
+      _makeSlider({ key: 'probContourSigma', min: 0, max: 500, step: 1,
+        format: v => String(Math.round(v)) }),
+      'Gaussian blur applied to the probability mask (full-resolution image px)\n' +
+      'before thresholding. Higher = smoother, more merged contours.'));
+
+    panel.appendChild(_makeRow(
+      'Min area (image px²)',
+      _makeNumber({ key: 'probContourMinArea', min: 0, max: 1e9, step: 1000 }),
+      'Contours smaller than this area (full-resolution image px²) are\n' +
+      'discarded as noise. Default 1,000,000 px² (~ 1000×1000 px).'));
 
     // ── Patch overlay ──────────────────────────────────────────────────────────
     panel.appendChild(_makeSectionHeader('Patch Overlay'));

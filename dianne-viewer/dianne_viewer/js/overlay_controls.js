@@ -15,6 +15,7 @@
  *     HAS_RUN_INFERENCE,
  *     drawSecondaryLayer,
  *     setActiveSampleFn,
+ *     annotations,
  *   })
  *   → {
  *       resizePredLayer, drawPredLayer,
@@ -22,6 +23,7 @@
  *       updateOpacitySliderVisibility,
  *       showLoader, hideLoader,
  *       runInference,
+ *       drawContourLayer, clearContours,
  *     }
  *
  * Also attaches window.ivSetOverlayPoints, window.ivClearOverlayPoints,
@@ -39,6 +41,7 @@ function createOverlayControls({
   setActiveSampleFn,
   strokesBySample,
   buildServerStrokesPayload,
+  annotations,
 }) {
   // ── primary / secondary opacity sliders ────────────────────────────────────
   const _primaryOpacityWrap   = overlayControls.querySelector('#iv-primary-opacity-wrap');
@@ -81,6 +84,14 @@ function createOverlayControls({
   const predCtx = predLayer.getContext('2d');
   let predPoints = [];
 
+  // ── contour preview layer ("show contours" eye button) ─────────────────────
+  const contourLayer = document.createElement('canvas');
+  contourLayer.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:1;';
+  root.appendChild(contourLayer);
+  const contourCtx = contourLayer.getContext('2d');
+  let contourGeoJSON = null;   // last-fetched contours (image-px space), or null
+  let contoursVisible = false;
+
   let predStyle = {
     alpha: 0.55,
     delta: 28,
@@ -95,7 +106,10 @@ function createOverlayControls({
   function resizePredLayer() {
     predLayer.width  = root.clientWidth;
     predLayer.height = root.clientHeight;
+    contourLayer.width  = root.clientWidth;
+    contourLayer.height = root.clientHeight;
     drawPredLayer();
+    drawContourLayer();
   }
 
   function clamp01(v) {
@@ -169,6 +183,130 @@ function createOverlayControls({
       predCtx.fillStyle = probColor(p, alpha);
       predCtx.fillRect(left, top, width, height);
     }
+  }
+
+  // ── contour extraction ("show contours" eye button / "Add" button) ─────────
+  // Both buttons act on the already-computed inference overlay (predPoints +
+  // predStyle.delta, already in primary image-pixel space — see runInference
+  // below) rather than re-running inference: the server rebuilds a downsampled
+  // probability mask directly from those points (dianne_viewer.contours.
+  // make_prob_mask_from_points) and extracts contours from it via
+  // dianne_utils.mask.extractContoursForQuPath. Threshold/sigma/min-area are
+  // user-tunable in the Settings panel (probContourThreshold/Sigma/MinArea).
+  const contourShowBtn = overlayControls.querySelector('#iv-contour-show');
+  const contourAddBtn  = overlayControls.querySelector('#iv-contour-add');
+
+  function drawContourLayer() {
+    contourCtx.clearRect(0, 0, contourLayer.width, contourLayer.height);
+    if (!contoursVisible || !contourGeoJSON) return;
+    contourCtx.lineWidth = 2;
+    contourCtx.strokeStyle = '#00ff88';
+    for (const feat of (contourGeoJSON.features || [])) {
+      const rings = feat.geometry && feat.geometry.coordinates;
+      if (!rings) continue;
+      for (const ring of rings) {
+        if (!ring || ring.length < 2) continue;
+        contourCtx.beginPath();
+        ring.forEach((c, i) => {
+          const s = viewport.toScreenSpace(c[0], c[1]);
+          if (i === 0) contourCtx.moveTo(s.x, s.y); else contourCtx.lineTo(s.x, s.y);
+        });
+        contourCtx.stroke();
+      }
+    }
+  }
+
+  function clearContours() {
+    contourGeoJSON = null;
+    contoursVisible = false;
+    if (contourShowBtn) contourShowBtn.style.opacity = '0.6';
+    drawContourLayer();
+  }
+
+  async function _fetchContours() {
+    if (!predPoints.length) { log('Run inference first to generate contours.'); return null; }
+    const sample = ACTIVE_SAMPLE_REF();
+    const meta = SAMPLE_META[sample];
+    const level0 = meta && meta.levels && meta.levels[0];
+    if (!level0) { log('Missing image dimensions for contour extraction.'); return null; }
+    try {
+      const resp = await fetch(BASE_URL + '/annotations/contours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          xi: predPoints.map(pt => pt.xi),
+          yi: predPoints.map(pt => pt.yi),
+          pi: predPoints.map(pt => pt.pi),
+          delta: predStyle.delta,
+          cutoff: clamp01(settings.get('probContourThreshold')),
+          sigma: settings.get('probContourSigma'),
+          min_area: settings.get('probContourMinArea'),
+          full_width: level0.width,
+          full_height: level0.height,
+        }),
+      });
+      const result = await resp.json();
+      if (!result.ok) { log('Contour extraction error: ' + (result.error || 'unknown')); return null; }
+      contourGeoJSON = result.geojson;
+      return contourGeoJSON;
+    } catch (err) {
+      log('Contour extraction request failed: ' + err);
+      return null;
+    }
+  }
+
+  // Live-refresh the preview if it's currently shown and the user tweaks
+  // threshold/sigma/min-area (or resets settings) in the Settings panel.
+  settings.onChange((key) => {
+    if (!contoursVisible) return;
+    if (key !== null && key !== 'probContourThreshold' && key !== 'probContourSigma' && key !== 'probContourMinArea') return;
+    _fetchContours().then(geojson => { if (geojson) drawContourLayer(); });
+  });
+
+  if (contourShowBtn) {
+    contourShowBtn.style.opacity = '0.6';
+    contourShowBtn.addEventListener('click', async () => {
+      if (contoursVisible) {
+        contoursVisible = false;
+        contourShowBtn.style.opacity = '0.6';
+        drawContourLayer();
+        return;
+      }
+      const geojson = await _fetchContours();
+      if (!geojson) return;
+      contoursVisible = true;
+      contourShowBtn.style.opacity = '1';
+      drawContourLayer();
+      const n = (geojson.features || []).length;
+      log('Showing ' + n + ' contour' + (n === 1 ? '' : 's') + ' at threshold ' + settings.get('probContourThreshold'));
+    });
+  }
+
+  if (contourAddBtn) {
+    contourAddBtn.addEventListener('click', async () => {
+      const geojson = contourGeoJSON || await _fetchContours();
+      if (!geojson) return;
+      const sample = ACTIVE_SAMPLE_REF();
+      // One annotation per GeoJSON feature (each feature's own rings are
+      // already correctly outer+holes, per region, from the server's contour
+      // hierarchy) — built directly via makeAnnotation rather than
+      // buildAnnotationsFromRings, which would otherwise assign every region
+      // a shared group_id (since it groups whenever it returns >1 piece),
+      // making unrelated regions delete together as if they were one shape.
+      const anns = [];
+      for (const feat of (geojson.features || [])) {
+        const coords = feat.geometry && feat.geometry.coordinates;
+        if (!coords) continue;
+        const rings = coords.filter(r => r && r.length >= 3).map(ring => ring.map(c => ({ x: c[0], y: c[1] })));
+        if (!rings.length) continue;
+        const ann = annotations.makeAnnotation({ sample, rings, cls: 'positive' });
+        annotations.recomputeMetrics(ann);
+        anns.push(ann);
+      }
+      if (!anns.length) { log('No contours to add.'); return; }
+      annotations.addAnnotationGroup(sample, 'library', anns);
+      log('Added ' + anns.length + ' draft annotation' + (anns.length === 1 ? '' : 's') + ' from contours.');
+    });
   }
 
   // ── inference loading overlay ──────────────────────────────────────────────
@@ -332,5 +470,7 @@ function createOverlayControls({
     hideLoader,
     runInference,
     clearPredPoints: () => { predPoints = []; },
+    drawContourLayer,
+    clearContours,
   };
 }

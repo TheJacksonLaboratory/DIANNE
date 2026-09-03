@@ -107,6 +107,8 @@ overlayControls.innerHTML = [
   '  <span>Secondary</span>',
   '  <input id="iv-secondary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
   '</span>',
+  '<button id="iv-contour-show" title="Show contours from inferred probabilities (threshold/sigma/min-area in Settings)" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">\u{1F441}</button>',
+  '<button id="iv-contour-add" title="Create draft annotations from contours" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">Add</button>',
   '<span title="Overlay transparency">Prob. Opacity</span>',
   '<input id="iv-alpha" type="range" min="0" max="1" step="0.01" value="0.55" style="width:90px;">',
   '<span title="Low probability color">Low prob.</span>',
@@ -542,6 +544,7 @@ _overlayCtrlApi = createOverlayControls({
   setActiveSampleFn: (s) => setActiveSample(s),
   strokesBySample,
   buildServerStrokesPayload: _buildServerStrokesPayload,
+  annotations,
 });
 window.addEventListener('resize', _overlayCtrlApi.resizePredLayer);
 _overlayCtrlApi.resizePredLayer();
@@ -631,6 +634,7 @@ function setActiveSample(sampleName) {
     if (toolbar && typeof toolbar.setMonoActive === 'function')
       toolbar.setMonoActive(!!(SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
     _overlayCtrlApi.clearPredPoints();
+    _overlayCtrlApi.clearContours();
     _overlayCtrlApi.drawPredLayer();
     secLayer.drawSecondaryLayer(viewport.getTransform());
     _overlayCtrlApi.updateOpacitySliderVisibility();
@@ -814,6 +818,7 @@ window.ivFlushStrokes = function() {
 viewport.onChange(t => {
   secLayer.drawSecondaryLayer(t);
   _overlayCtrlApi.drawPredLayer();
+  _overlayCtrlApi.drawContourLayer();
   sampleRibbonApi.updateThumbOverlays();
   const lvl  = META.levels;
   const sens = settings ? settings.get('levelSensitivity') : 1.0;
