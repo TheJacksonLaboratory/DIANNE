@@ -47,8 +47,12 @@ class SpatialIndex {
   /**
    * Nearest item within maxDist world units.
    * Returns `data` of the nearest item, or null if none within maxDist.
+   * @param {(data: any) => boolean} [predicate]  When given, items for which
+   *        it returns false are skipped (e.g. a hidden category/gene) —
+   *        the search keeps looking for the next-nearest match instead of
+   *        just failing, so a hidden item never blocks hover on a visible one.
    */
-  nearest(x, y, maxDist) {
+  nearest(x, y, maxDist, predicate) {
     const r    = Math.ceil(maxDist / this._cs);
     const gx0  = Math.floor(x / this._cs);
     const gy0  = Math.floor(y / this._cs);
@@ -60,6 +64,7 @@ class SpatialIndex {
         const bucket = this._grid.get(this._key(gx0 + dx, gy0 + dy));
         if (!bucket) continue;
         for (const item of bucket) {
+          if (predicate && !predicate(item.data)) continue;
           const d2 = (item.x - x) * (item.x - x) + (item.y - y) * (item.y - y);
           if (d2 < bestD2) { bestD2 = d2; best = item.data; }
         }
@@ -111,6 +116,13 @@ function createHoverInteraction(container, viewport, baseUrl) {
   let currentSample  = null;
   let drawRef        = null;
   let hasTranscripts = false;
+
+  // Predicates (set by cells.js / transcripts.js) that report whether a hit
+  // item is currently drawn — a category/gene can be toggled off without
+  // touching this index, so hit-testing must re-check visibility on every
+  // hover instead of trusting stale index membership.
+  let _cellVisibleFn = null;
+  let _txVisibleFn   = null;
 
   // ── Tooltip (floating, never redraws canvas) ──────────────────────────────
   // Remove any leftover tooltip from a previous viewer instance in this page.
@@ -484,7 +496,7 @@ function createHoverInteraction(container, viewport, baseUrl) {
     }
 
     // Priority 2 — nearest cell
-    const cell = cellIndex.nearest(imgX, imgY, hitR);
+    const cell = cellIndex.nearest(imgX, imgY, hitR, _cellVisibleFn);
     if (cell) {
       const cat = (cell.category != null) ? String(cell.category) : '';
       _showTooltip(vpX, vpY,
@@ -496,7 +508,7 @@ function createHoverInteraction(container, viewport, baseUrl) {
 
     // Priority 3 — nearest transcript (only when transcripts layer is active)
     if (hasTranscripts && txIndex.size > 0) {
-      const tx = txIndex.nearest(imgX, imgY, hitR * 1.6);
+      const tx = txIndex.nearest(imgX, imgY, hitR * 1.6, _txVisibleFn);
       if (tx) {
         _showTooltip(vpX, vpY,
           `<b style="color:#f0c060;">${tx.gene}</b>`);
@@ -626,6 +638,8 @@ function createHoverInteraction(container, viewport, baseUrl) {
   // ── Public API ─────────────────────────────────────────────────────────────
   function setDrawRef(d) { drawRef = d; }
   function setHasTranscripts(v) { hasTranscripts = !!v; }
+  function setCellVisibilityFilter(fn) { _cellVisibleFn = fn || null; }
+  function setTranscriptVisibilityFilter(fn) { _txVisibleFn = fn || null; }
 
   /**
    * Called by cells.js after each tile is fetched.
@@ -688,7 +702,7 @@ function createHoverInteraction(container, viewport, baseUrl) {
     const contour = _getContourAt(imgX, imgY);
     if (contour) { _showContourPanel(contour); return; }
 
-    const cell = cellIndex.nearest(imgX, imgY, hitR);
+    const cell = cellIndex.nearest(imgX, imgY, hitR, _cellVisibleFn);
     if (cell) { _showCellPanel(cell); return; }
 
     _closeSidebar();
@@ -700,11 +714,14 @@ function createHoverInteraction(container, viewport, baseUrl) {
   return {
     setDrawRef,
     setHasTranscripts,
+    setCellVisibilityFilter,
+    setTranscriptVisibilityFilter,
     addCells,
     addTranscripts,
     clearSample,
     onMouseMove,
     onMouseClick,
     onMouseLeave,
+    hideTooltip: _hideTooltip,
   };
 }

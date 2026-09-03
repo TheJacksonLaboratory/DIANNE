@@ -15,6 +15,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
   let currentImageMeta = imageMeta;
   let currentTranscriptMeta = transcriptMeta;
   let enabled = !!(currentTranscriptMeta && currentTranscriptMeta.genes && currentTranscriptMeta.genes.length);
+  let isVisible = true;
 
   const layer = document.createElement('canvas');
   layer.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:2;';
@@ -79,6 +80,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     clearCache();
     _renderList();
     updateButton();
+    _hideHoverTooltip();
     update(viewport.getTransform());
   });
   sizeRow.appendChild(noneBtn);
@@ -292,6 +294,7 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
       else selectedGenes.delete(gene);
       updateButton();
       _renderList();
+      if (!checkbox.checked) _hideHoverTooltip();
       update(viewport.getTransform());
     });
 
@@ -356,12 +359,29 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     updateButton();
   }
 
+  function _hideHoverTooltip() {
+    // Any change here can invalidate a tooltip currently shown for a
+    // transcript that is no longer drawn (hover.js's spatial index isn't
+    // touched, so it would otherwise keep pointing at hidden points until
+    // the next mousemove).
+    if (hoverCallbacks && typeof hoverCallbacks.hideTooltip === 'function') {
+      hoverCallbacks.hideTooltip();
+    }
+  }
+
   function setVisible(visible) {
-    const on = visible && enabled;
+    isVisible = visible;
+    const on = isVisible && enabled;
     layer.style.display = on ? '' : 'none';
     controls.style.display = on ? 'flex' : 'none';
     if (!on) panel.style.display = 'none';
+    _hideHoverTooltip();
     draw(viewport.getTransform());
+  }
+
+  /** Whether transcript `pt` (a {gene, x, y, ...} point) is currently drawn. */
+  function isTranscriptVisible(pt) {
+    return isVisible && enabled && selectedGenes.has(pt.gene);
   }
 
   function setContext(sample, imageMetaNext, transcriptMetaNext, stateToRestore) {
@@ -476,5 +496,6 @@ function createXeTranscripts(container, baseUrl, imageMeta, transcriptMeta, view
     setVisible,
     setContext,
     getState,
+    isTranscriptVisible,
   };
 }

@@ -49,6 +49,10 @@ function createFullscreen({ overlayControls, resizePredLayer }) {
     fsBtn.innerHTML = '<span style="font-size:12px">⤫</span>';
     resizePredLayer();
     document.addEventListener('keydown', onFsKeyDown);
+    // This toggle is a CSS/DOM trick, not the native Fullscreen API, so the
+    // browser's own 'fullscreenchange' never fires. Dispatch it manually so
+    // listeners that rely on it (e.g. hover.js hiding its ghost tooltip) fire.
+    document.dispatchEvent(new Event('fullscreenchange'));
   }
 
   function exitFs() {
@@ -62,6 +66,7 @@ function createFullscreen({ overlayControls, resizePredLayer }) {
     fsBtn.innerHTML = '<span style="font-size:12px">⛶</span>';
     resizePredLayer();
     document.removeEventListener('keydown', onFsKeyDown);
+    document.dispatchEvent(new Event('fullscreenchange'));
   }
 
   let active = false;

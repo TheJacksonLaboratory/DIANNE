@@ -214,6 +214,11 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     return (cell.category != null) ? String(cell.category) : 'All';
   }
 
+  /** Whether `cell` is currently drawn (layer on, sample enabled, category checked). */
+  function isCellVisible(cell) {
+    return isVisible && enabled && selectedCategories.has(resolveCategory(cell));
+  }
+
   function drawDot(vpX, vpY, radius, color) {
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -360,6 +365,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
         _applyCategoryColorsFromLayer();
         selectedCategories.clear();
         rebuildCategoryPanel();
+        _hideHoverTooltip();
         requestDraw();
       });
       layerRow.appendChild(layerLabel);
@@ -408,7 +414,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
       noneBtn.style.cssText = btnStyle;
       noneBtn.addEventListener('click', () => {
         selectedCategories.clear();
-        rebuildCategoryPanel(); updateButton(); requestDraw();
+        rebuildCategoryPanel(); updateButton(); _hideHoverTooltip(); requestDraw();
       });
 
       allRow.appendChild(allBtn);
@@ -428,6 +434,7 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
         if (checkbox.checked) selectedCategories.add(cat);
         else selectedCategories.delete(cat);
         updateButton();
+        if (!checkbox.checked) _hideHoverTooltip();
         requestDraw();
       });
 
@@ -458,12 +465,22 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     updateButton();
   }
 
+  function _hideHoverTooltip() {
+    // Any change here can invalidate a tooltip currently shown for a cell
+    // that is no longer drawn (hover.js's spatial index isn't touched, so it
+    // would otherwise keep pointing at hidden cells until the next mousemove).
+    if (hoverCallbacks && typeof hoverCallbacks.hideTooltip === 'function') {
+      hoverCallbacks.hideTooltip();
+    }
+  }
+
   function setVisible(v) {
     isVisible = v;
     const on = isVisible && enabled;
     layer.style.display = on ? '' : 'none';
     controls.style.display = on ? 'flex' : 'none';
     if (!on) panel.style.display = 'none';
+    _hideHoverTooltip();
     requestDraw();
   }
 
@@ -527,5 +544,6 @@ function createXeCells(container, baseUrl, imageMeta, cellsMeta, viewport, log, 
     getState,
     getVisible: () => isVisible,
     getSelectedCategories: () => [...selectedCategories],
+    isCellVisible,
   };
 }

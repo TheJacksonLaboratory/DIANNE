@@ -229,10 +229,12 @@ hoverInteraction.setHasTranscripts(!!(SAMPLE_XENIUM_META[ACTIVE_SAMPLE] &&
 const _hoverCellCallbacks = {
   onCellsLoaded: (cells, sample, tileKey) => hoverInteraction.addCells(cells, sample, tileKey),
   onSampleChanged: (sample) => {},
+  hideTooltip: () => hoverInteraction.hideTooltip(),
 };
 const _hoverTxCallbacks = {
   onTranscriptsLoaded: (pts, sample, tileKey) => hoverInteraction.addTranscripts(pts, sample, tileKey),
   onSampleChanged: (sample) => {},
+  hideTooltip: () => hoverInteraction.hideTooltip(),
 };
 
 const transcripts = createXeTranscripts(
@@ -244,6 +246,12 @@ const cells = createXeCells(
   viewport, log, rightControlsRow, ACTIVE_SAMPLE, settings,
   ANNOTATION_LAYERS, _hoverCellCallbacks
 );
+// Hit-testing must re-check live visibility on every hover — a category/gene
+// toggle doesn't touch hover.js's spatial index, so without this a hidden
+// cell/transcript would keep winning nearest-hit and re-showing its tooltip
+// on the next mousemove ("ghost" tooltip for something no longer drawn).
+hoverInteraction.setCellVisibilityFilter(cell => cells.isCellVisible(cell));
+hoverInteraction.setTranscriptVisibilityFilter(pt => transcripts.isTranscriptVisible(pt));
 const patches = HAS_TILE_COORDS
   ? createPatchOverlay(root, viewport, settings)
   : null;
