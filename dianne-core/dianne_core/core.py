@@ -268,18 +268,22 @@ def getPatchRepresentationParallel(ad, df_temp_img_tiles, qs, sample_id=None,
     """
     dfgb = df_temp_img_tiles.groupby('patch').size()
     S = dfgb.shape[0]
-    batches = [dfgb.index[i:min(i + step, S)] for i in range(0, S, step)]
-    print(f"Processing {S} unique patches in {len(batches)} batches of up to {step} patches each.")
+    if S > 2 * step:
+        batches = [dfgb.index[i:min(i + step, S)] for i in range(0, S, step)]
+        print(f"Processing {S} unique patches in {len(batches)} batches of up to {step} patches each.")
 
-    def _process_batch(bpatches):
-        wh = df_temp_img_tiles['patch'].isin(bpatches)
-        return getPatchRepresentation(
-            ad, df_temp_img_tiles.loc[wh], qs, sample_id=sample_id)
+        def _process_batch(bpatches):
+            wh = df_temp_img_tiles['patch'].isin(bpatches)
+            return getPatchRepresentation(
+                ad, df_temp_img_tiles.loc[wh], qs, sample_id=sample_id)
 
-    results = Parallel(n_jobs=n_jobs, verbose=verbose)(
-        delayed(_process_batch)(b) for b in batches)
+        results = Parallel(n_jobs=n_jobs, verbose=verbose)(
+            delayed(_process_batch)(b) for b in batches)
 
-    return pd.concat(results, axis=0)
+        return pd.concat(results, axis=0)
+    else:
+        return getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=sample_id)
+
 
 def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
     """Get the patch SAMPLER representation for each tile in the image.
