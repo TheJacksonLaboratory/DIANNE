@@ -140,8 +140,9 @@ function createHoverInteraction(container, viewport, baseUrl) {
   document.body.appendChild(tooltip);
 
   // Hide tooltip on fullscreen change (e.g. custom ⛶ toggle) and tab switch.
+  // Note: 'iv-fullscreenchange' (not the real 'fullscreenchange') — see fullscreen.js.
   const _hideOnFsChange = () => _hideTooltip();
-  document.addEventListener('fullscreenchange', _hideOnFsChange);
+  document.addEventListener('iv-fullscreenchange', _hideOnFsChange);
   document.addEventListener('visibilitychange', _hideOnFsChange);
   // Hide on any scroll/wheel inside the container (viewport shift invalidates position).
   container.addEventListener('wheel',  _hideOnFsChange, { passive: true });
