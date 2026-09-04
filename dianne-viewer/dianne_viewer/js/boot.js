@@ -108,7 +108,7 @@ overlayControls.innerHTML = [
   '  <span>Secondary</span>',
   '  <input id="iv-secondary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
   '</span>',
-  '<button id="iv-contour-show" title="Show contours from inferred probabilities (threshold/sigma/min-area in Settings)" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">\u{1F441}</button>',
+  '<button id="iv-contour-show" title="Show contours from inferred probabilities (threshold/sigma/min-area in Settings)" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">\u{1F440}</button>',
   '<button id="iv-contour-add" title="Create draft annotations from contours" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">Add</button>',
   '<span title="Overlay transparency">Prob. Opacity</span>',
   '<input id="iv-alpha" type="range" min="0" max="1" step="0.01" value="0.55" style="width:90px;">',

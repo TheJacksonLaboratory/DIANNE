@@ -305,6 +305,13 @@ function createOverlayControls({
       }
       if (!anns.length) { log('No contours to add.'); return; }
       annotations.addAnnotationGroup(sample, 'library', anns);
+      // Turn off the temporary contour preview now that the same shapes
+      // exist as real draft annotations, so the two don't overlay.
+      if (contoursVisible) {
+        contoursVisible = false;
+        if (contourShowBtn) contourShowBtn.style.opacity = '0.6';
+        drawContourLayer();
+      }
       log('Added ' + anns.length + ' draft annotation' + (anns.length === 1 ? '' : 's') + ' from contours.');
     });
   }
