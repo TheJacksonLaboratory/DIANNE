@@ -16,9 +16,16 @@
  *   draw.setColor(css)
  *   draw.getColor()
  *   draw.setWidth(px)
+ *   draw.selectStroke(id) / hasSelection() / clearSelection() / deleteSelected()
+ *   draw.panZoomTo(id)      → center viewport on one stroke's bounding box
+ *
+ * createDraw's optional 4th arg `onSelect(id, kind)` (kind: 'positive'|
+ * 'negative'|null) fires on every selection change (select or clear), so a
+ * caller (boot.js) can keep the Annotations tab's list-row highlight in sync
+ * with canvas-driven selection (e.g. dblclick-to-select a contour).
  */
 
-function createDraw(container, viewport, settings) {
+function createDraw(container, viewport, settings, onSelect) {
   const MIN_STROKE_POINTS = 15;
 
   // ── state (must be declared before resizeCanvas calls redraw) ─────────────
@@ -796,9 +803,22 @@ function createDraw(container, viewport, settings) {
 
   // ── contour selection public API ───────────────────────────────────────────
   function hitTestStroke(vpX, vpY) { return _hitTest(vpX, vpY); }
-  function selectStroke(id)        { selectedId = id; redraw(); }
+  // 'positive' | 'negative' | null — which bucket a stroke id belongs to, so
+  // callers notified via onSelect (the Annotations tab, wired in boot.js)
+  // know which list row to highlight without re-deriving it themselves.
+  function _kindOfStroke(id) {
+    for (const s of strokesPositive) if (s.id === id) return 'positive';
+    for (const s of strokesNegative) if (s.id === id) return 'negative';
+    return null;
+  }
+  // Mirrors annotations_canvas.js's own _notifySelect: fires on every
+  // selection change (select or clear) so a canvas-driven selection (dblclick
+  // while panning) and a list-row-driven selection both keep the Annotations
+  // tab's highlight in sync through this one path.
+  function _notifySelect(id) { if (typeof onSelect === 'function') onSelect(id, id !== null ? _kindOfStroke(id) : null); }
+  function selectStroke(id)        { selectedId = id; redraw(); _notifySelect(id); }
   function hasSelection()          { return selectedId !== null; }
-  function clearSelection()        { selectedId = null; redraw(); }
+  function clearSelection()        { selectedId = null; redraw(); _notifySelect(null); }
   function deleteSelected() {
     if (selectedId === null) return;
     const id = selectedId;
@@ -810,6 +830,30 @@ function createDraw(container, viewport, settings) {
       if (strokesNegative[i].id === id) { strokesNegative.splice(i, 1); break; }
     }
     redraw();
+    _notifySelect(null);
+  }
+  // Center/fit the viewport on one stroke's bounding box (outer points +
+  // any holes), mirroring annotations_canvas.js's panZoomTo so list-row
+  // navigation behaves identically for library annotations and +/- strokes.
+  function panZoomTo(id) {
+    const stroke = _findStrokeById(id);
+    if (!stroke || !stroke.points || !stroke.points.length) return;
+    const ringsToFit = [stroke.points, ...(stroke.holes || [])];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const ring of ringsToFit) {
+      for (const p of ring) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return;
+    const pad = Math.max(maxX - minX, maxY - minY) * 0.25 || 50;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    const cw = container.clientWidth, ch = container.clientHeight;
+    const scale = Math.max(0.01, Math.min(2.0, Math.min(cw / (maxX - minX), ch / (maxY - minY))));
+    const ox = cw / 2 - ((minX + maxX) / 2) * scale;
+    const oy = ch / 2 - ((minY + maxY) / 2) * scale;
+    viewport.setTransform(scale, ox, oy);
   }
 
   return {
@@ -839,6 +883,7 @@ function createDraw(container, viewport, settings) {
     hasSelection,
     clearSelection,
     deleteSelected,
+    panZoomTo,
     enterManualAlignMode,
     exitManualAlignMode,
     setManualAlignAnchor1,

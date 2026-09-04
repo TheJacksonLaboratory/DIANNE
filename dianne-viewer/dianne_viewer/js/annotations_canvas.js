@@ -24,7 +24,7 @@
  * same on-screen fidelity is kept regardless of the zoom level the contour
  * was drawn at.
  */
-function createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log }) {
+function createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log, onSelect }) {
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:3;';
   container.appendChild(canvas);
@@ -538,9 +538,16 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     cursorVisible = false;
     redraw();
   }
-  function setSelected(id) { selectedId = id; redraw(); }
+  // Notifies the Annotations tab (via boot.js wiring) so a canvas-driven
+  // selection (single click with an annot_* tool active, or a dblclick while
+  // panning) highlights the matching list row too, not just the canvas
+  // outline — the same hook fires for a list-row-driven selection since that
+  // goes through setSelected as well, keeping both directions in sync
+  // through one code path instead of two.
+  function _notifySelect(id) { if (typeof onSelect === 'function') onSelect(id); }
+  function setSelected(id) { selectedId = id; redraw(); _notifySelect(id); }
   function hasSelection() { return selectedId != null; }
-  function clearSelection() { selectedId = null; redraw(); }
+  function clearSelection() { selectedId = null; redraw(); _notifySelect(null); }
   function deleteSelected() {
     if (selectedId == null) return;
     const sample = getActiveSample();
@@ -553,6 +560,7 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     }
     selectedId = null;
     redraw();
+    _notifySelect(null);
   }
   function setVisibility(id, visible) {
     if (visible) hiddenIds.delete(id); else hiddenIds.add(id);

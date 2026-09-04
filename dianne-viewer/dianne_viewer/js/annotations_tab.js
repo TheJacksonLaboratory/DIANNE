@@ -9,9 +9,16 @@
  *
  * Exposes createAnnotationsTab({ container, annotations, annotationsCanvas,
  *   getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes,
- *   onDeletePosNegStroke, onImportPosNegToAnnotation, modalHelpers }) → { refresh, onShow }
+ *   onDeletePosNegStroke, onImportPosNegToAnnotation, onSelectPosNegStroke,
+ *   modalHelpers }) → { refresh, onShow, selectRow }
+ *
+ * selectRow(kind, id) — 'library'|'positive'|'negative', or (null, null) to
+ * clear — highlights the matching row yellow and scrolls it into view.
+ * Called by boot.js whenever a canvas-driven selection (list click, or
+ * dblclick-to-select a contour) changes, so the list and canvas always agree
+ * on which annotation/stroke is selected regardless of which side drove it.
  */
-function createAnnotationsTab({ container, annotations, annotationsCanvas, getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes, onDeletePosNegStroke, onImportPosNegToAnnotation, modalHelpers }) {
+function createAnnotationsTab({ container, annotations, annotationsCanvas, getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes, onDeletePosNegStroke, onImportPosNegToAnnotation, onSelectPosNegStroke, modalHelpers }) {
   container.style.padding = '6px';
   container.style.gap = '6px';
   container.style.overflowY = 'auto';
@@ -25,6 +32,15 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   let filterClass = '';
   let filterStatus = '';
   let selectedIds = new Set();
+
+  // ── single-row selection highlight (distinct from the multi-select
+  // checkboxes above, which drive bulk actions) — tracks whichever row was
+  // last selected from either direction (list click, or dblclick-to-select
+  // a contour on the canvas) so exactly one row shows the yellow highlight.
+  let selectedKind = null; // 'library' | 'positive' | 'negative' | null
+  let selectedRowId = null;
+  const ROW_BORDER_SELECTED = '2px solid #ffd23f';
+  const ROW_BG_SELECTED = '#332b0f';
 
   // Deterministic per-class default color (used until the user overrides it
   // with the per-row color swatch), so classes are visually distinguishable
@@ -109,9 +125,11 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     bulkRow.appendChild(b);
     return b;
   }
-  _mkBulkBtn('Delete', () => {
+  _mkBulkBtn('Delete', async () => {
+    if (!modalHelpers) return;
     const sample = getActiveSample();
-    if (!confirm(`Delete ${selectedIds.size} selected annotation(s)?`)) return;
+    const ok = await modalHelpers.showConfirm(`Delete ${selectedIds.size} selected annotation(s)?`);
+    if (!ok) return;
     // Expand to whole groups (§6): deleting one piece of a multi-ring/hole
     // shape must remove every sibling sharing its group_id.
     const seenGroups = new Set();
@@ -177,9 +195,12 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
   // ── row rendering ───────────────────────────────────────────────────────
   function _rowEl(ann, sample) {
+    const isSelected = selectedKind === 'library' && String(selectedRowId) === String(ann.id);
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;flex-direction:column;gap:2px;padding:5px 6px;border:1px solid #333;border-radius:5px;background:#191919;cursor:pointer;';
+    row.style.cssText = 'display:flex;flex-direction:column;gap:2px;padding:5px 6px;border-radius:5px;cursor:pointer;' +
+      `border:${isSelected ? ROW_BORDER_SELECTED : '1px solid #333'};background:${isSelected ? ROW_BG_SELECTED : '#191919'};`;
     row.dataset.annId = ann.id;
+    row.dataset.kind = 'library';
     row.addEventListener('contextmenu', e => e.preventDefault());
 
     const top = document.createElement('div');
@@ -405,9 +426,16 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   // they must render/act as ONE row instead of one row per raw stroke.
   function _strokeRowEl(strokes, cls, sample) {
     const primary = strokes[0];
+    const isSelected = selectedKind === cls && String(selectedRowId) === String(primary.id);
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid #333;border-radius:5px;background:#151515;';
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:5px;cursor:pointer;' +
+      `border:${isSelected ? ROW_BORDER_SELECTED : '1px solid #333'};background:${isSelected ? ROW_BG_SELECTED : '#151515'};`;
+    row.dataset.annId = String(primary.id);
+    row.dataset.kind = cls;
     row.addEventListener('contextmenu', e => e.preventDefault());
+    row.addEventListener('click', () => {
+      if (typeof onSelectPosNegStroke === 'function') onSelectPosNegStroke(cls, primary.id);
+    });
     const dot = document.createElement('span');
     dot.textContent = '\u25cf';
     dot.style.color = cls === 'negative' ? '#ff5233' : '#22f0ff';
@@ -491,5 +519,19 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     _syncBulkRow();
   }
 
-  return { refresh, onShow: refresh };
+  // Called by boot.js (via draw.js's / annotations_canvas.js's onSelect
+  // hooks) whenever the canvas-side selection changes, and also fires back
+  // for a selection the list itself triggered (row click → canvas select →
+  // onSelect → here), which keeps this as the single place that updates the
+  // highlight state instead of duplicating it in every row's click handler.
+  function selectAnnotationRow(kind, id) {
+    selectedKind = id != null ? (kind || null) : null;
+    selectedRowId = id != null ? id : null;
+    refresh();
+    if (id == null) return;
+    const rowEl = Array.from(listEl.children).find(el => el.dataset.kind === kind && el.dataset.annId === String(id));
+    if (rowEl) rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  return { refresh, onShow: refresh, selectRow: selectAnnotationRow };
 }

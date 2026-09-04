@@ -260,7 +260,25 @@ const visiumOverlay = HAS_VISIUM
   ? createVisiumOverlay(root, viewport, VISIUM_GENES_BY_SAMPLE)
   : null;
 if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
-const draw = createDraw(root, viewport, settings);
+// Keeps the Annotations tab's list-row highlight in sync with whichever
+// canvas layer (draw.js's +/- strokes, or annotations_canvas.js's library
+// annotations) currently holds a selection — wired below as the onSelect
+// callback for both, so a selection driven from either the list (row click)
+// or a canvas dblclick ends up highlighting the same row. _metadataPanel is
+// declared further below (with `let`, initialized to null) — safe to
+// reference here since this only runs later, on an actual selection.
+function _syncAnnotationsTabSelection(kind, id) {
+  const api = _metadataPanel && _metadataPanel.getAnnotationsApi && _metadataPanel.getAnnotationsApi();
+  if (api && typeof api.selectRow === 'function') api.selectRow(kind, id);
+}
+// Selecting a stroke clears any active library-annotation selection on the
+// other canvas layer, so only one yellow highlight (list + canvas) is ever
+// shown at a time; annotationsCanvas is declared with `const` further below
+// but, same as above, this callback only runs on a later user interaction.
+const draw = createDraw(root, viewport, settings, (id, kind) => {
+  if (id != null) annotationsCanvas.clearSelection();
+  _syncAnnotationsTabSelection(kind, id);
+});
 hoverInteraction.setDrawRef(draw);
 
 // Keep the Annotations tab list / badges / thumbnail overlays in sync with
@@ -317,6 +335,10 @@ const annotationsCanvas = createAnnotationsCanvas({
   getActiveSample: () => ACTIVE_SAMPLE,
   settings,
   log,
+  onSelect: (id) => {
+    if (id != null) draw.clearSelection();
+    _syncAnnotationsTabSelection('library', id);
+  },
 });
 
 // ── per-sample stroke storage ──────────────────────────────────────────────
@@ -722,6 +744,12 @@ _metadataPanel = createMetadataPanel({
     getPosNegStrokes: _getPosNegStrokes,
     onDeletePosNegStroke: _deletePosNegStroke,
     onImportPosNegToAnnotation: _importStrokeToAnnotation,
+    // draw.selectStroke's own onSelect hook (wired above) already clears any
+    // active library-annotation selection and syncs this tab's highlight.
+    onSelectPosNegStroke: (cls, id) => {
+      draw.selectStroke(id);
+      draw.panZoomTo(id);
+    },
     modalHelpers,
   }),
   getAnnotationSummary: (sampleName) => {
