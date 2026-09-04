@@ -118,14 +118,22 @@ def extractContoursForQuPath(downsampled_map, fshape, cutoff=0.5, min_area=100, 
         while c != -1: kids.append(c); c = hier[c][0]
         return kids
 
+    def area(idx):
+        c = contours[idx].astype(np.float32) * downfactor * scalefactor
+        return cv2.contourArea(c)
+
     features = []
     def build(i):
         c = contours[i].astype(np.float32) * downfactor * scalefactor
         c[:,:,0] = np.clip(c[:,:,0], 0, fshape[1]-1)
         c[:,:,1] = np.clip(c[:,:,1], 0, fshape[0]-1)
         if cv2.contourArea(c.astype(np.float32)) < min_area: return
-        rings = [ring(contours[i])] + [ring(contours[h]) for h in children(i)]
-        [build(g) for h in children(i) for g in children(h)]
+        kids = children(i)
+        # Holes below min_area are noise (small blur/threshold speckle), not
+        # real gaps in tissue — drop them same as tiny outer contours, else
+        # they end up as unfilterable pinhole "holes" in the polygon.
+        rings = [ring(contours[i])] + [ring(contours[h]) for h in kids if area(h) >= min_area]
+        [build(g) for h in kids for g in children(h)]
         features.append({
             "type": "Feature",
             "id": str(len(features)),
