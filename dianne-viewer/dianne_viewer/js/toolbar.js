@@ -160,6 +160,108 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     });
     annotRow.appendChild(exportBtn);
 
+    // ── Import external GeoJSON: reads a Polygon/MultiPolygon FeatureCollection
+    // (e.g. QuPath export, or this tool's own export) and adds one library
+    // annotation per polygon. Class/label/notes are pulled from whatever
+    // property names the source file happens to use; a feature with no
+    // recognizable class falls back to 'imported' rather than 'unclassified'
+    // so imported shapes stay visually/searchably distinct from freehand-drawn
+    // ones with no class assigned yet.
+    const importInput = document.createElement('input');
+    importInput.type = 'file';
+    importInput.accept = '.geojson,.json,application/geo+json,application/json';
+    importInput.style.display = 'none';
+    annotRow.appendChild(importInput);
+
+    const importBtn = document.createElement('button');
+    importBtn.textContent = '⤒ GeoJSON';
+    importBtn.title = 'Import external GeoJSON annotations into the library';
+    importBtn.style.cssText = _btnCss + ';font-size:11px;';
+    importBtn.addEventListener('click', () => importInput.click());
+    annotRow.appendChild(importBtn);
+
+    function _importClassFromProps(props) {
+      if (!props) return 'imported';
+      if (typeof props.class === 'string' && props.class) return props.class;
+      const c = props.classification;
+      if (typeof c === 'string' && c) return c;
+      if (c && typeof c === 'object' && typeof c.name === 'string' && c.name) return c.name;
+      return 'imported';
+    }
+    function _importLabelFromProps(props) {
+      return (props && (props.label || props.name || props.title)) || '';
+    }
+    function _importNotesFromProps(props) {
+      return (props && (props.notes || props.description || props.comment)) || '';
+    }
+    function _importRingsFromPolygonCoords(coords) {
+      return (coords || []).filter(r => r && r.length >= 3).map(ring => ring.map(c => ({ x: c[0], y: c[1] })));
+    }
+    // Normalizes any top-level GeoJSON shape (FeatureCollection / Feature /
+    // GeometryCollection / bare geometry) into a flat array of Features, so
+    // whichever variant an external tool happens to export still imports.
+    function _featuresFromGeoJSON(gj) {
+      if (!gj || !gj.type) return [];
+      if (gj.type === 'FeatureCollection') return gj.features || [];
+      if (gj.type === 'Feature') return [gj];
+      if (gj.type === 'GeometryCollection') return (gj.geometries || []).map(g => ({ type: 'Feature', geometry: g, properties: {} }));
+      return [{ type: 'Feature', geometry: gj, properties: {} }];
+    }
+
+    importInput.addEventListener('change', () => {
+      const file = importInput.files && importInput.files[0];
+      importInput.value = ''; // allow re-importing the same file later
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let gj;
+        try {
+          gj = JSON.parse(reader.result);
+        } catch (e) {
+          _ann.logAndRecord(`Import GeoJSON: "${file.name}" is not valid JSON.`);
+          return;
+        }
+        const sample = annotationsOptions.getActiveSample();
+        const anns = [];
+        let skipped = 0;
+        let grpCounter = 0;
+        for (const feat of _featuresFromGeoJSON(gj)) {
+          const geom = feat && feat.geometry;
+          if (!geom) { skipped++; continue; }
+          let polygons;
+          if (geom.type === 'Polygon') polygons = [geom.coordinates];
+          else if (geom.type === 'MultiPolygon') polygons = geom.coordinates || [];
+          else { skipped++; continue; }
+          const props = feat.properties || {};
+          const cls = _importClassFromProps(props);
+          const label = _importLabelFromProps(props);
+          const notes = _importNotesFromProps(props);
+          // Multiple polygons within one MultiPolygon feature are one logical
+          // shape — share a group_id so they undo/delete together, same
+          // convention as any other multi-piece annotation (§6).
+          const groupId = polygons.length > 1 ? ('grp_import_' + (grpCounter++) + '_' + Date.now().toString(36)) : undefined;
+          for (const polyCoords of polygons) {
+            const rings = _importRingsFromPolygonCoords(polyCoords);
+            if (!rings.length) { skipped++; continue; }
+            const ann = _ann.makeAnnotation({ sample, rings, cls, label, groupId });
+            if (notes) ann.notes = notes;
+            _ann.recomputeMetrics(ann);
+            anns.push(ann);
+          }
+        }
+        if (!anns.length) {
+          _ann.logAndRecord(`Import GeoJSON: no importable Polygon/MultiPolygon features found in "${file.name}".`);
+          return;
+        }
+        _ann.addAnnotationGroup(sample, 'library', anns);
+        _ann.logAndRecord(
+          `Imported ${anns.length} annotation${anns.length === 1 ? '' : 's'} from "${file.name}"` +
+          (skipped ? ` (${skipped} feature${skipped === 1 ? '' : 's'} skipped)` : '') + '.'
+        );
+      };
+      reader.readAsText(file);
+    });
+
     // ── Row 1c: brush controls for annot_draw/draw+/draw- (same controls as
     // the main toolbar's draw+/draw-: brush-mode toggle, width/disk-radius
     // slider, smoothing slider) — hidden unless one of those tools is active.
