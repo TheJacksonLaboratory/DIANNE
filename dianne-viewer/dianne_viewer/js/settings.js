@@ -151,7 +151,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
     return d;
   }
 
-  function _makeSlider({ key, min, max, step, format }) {
+  function _makeSlider({ key, min, max, step, format, commitOnly }) {
     const wrap = document.createElement('div');
     wrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;';
     const slider = document.createElement('input');
@@ -165,11 +165,17 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
     badge.style.cssText = 'min-width:42px;text-align:right;color:#8cf;font-size:11px;white-space:nowrap;';
     const fmt = format || (v => String(Math.round(v)));
     badge.textContent = fmt(Number(vals[key]));
+    // commitOnly: just update the badge while dragging (cheap, local feedback)
+    // and only call set() — which notifies listeners and can trigger expensive
+    // recomputes — once the slider is released ('change'), not on every 'input'.
     slider.addEventListener('input', () => {
       const v = Number(slider.value);
       badge.textContent = fmt(v);
-      set(key, v);
+      if (!commitOnly) set(key, v);
     });
+    if (commitOnly) {
+      slider.addEventListener('change', () => set(key, Number(slider.value)));
+    }
     wrap.appendChild(slider);
     wrap.appendChild(badge);
     return wrap;
@@ -336,14 +342,14 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
     panel.appendChild(_makeRow(
       'Probability threshold',
       _makeSlider({ key: 'probContourThreshold', min: 0, max: 1, step: 0.01,
-        format: v => v.toFixed(2) }),
+        format: v => v.toFixed(2), commitOnly: true }),
       'Probability cutoff (0-1) for extracting contours from the inference\n' +
       'heatmap, used by both the eye (show) and Add buttons next to Prob. Opacity.'));
 
     panel.appendChild(_makeRow(
       'Blur sigma (image px)',
       _makeSlider({ key: 'probContourSigma', min: 0, max: 500, step: 1,
-        format: v => String(Math.round(v)) }),
+        format: v => String(Math.round(v)), commitOnly: true }),
       'Gaussian blur applied to the probability mask (full-resolution image px)\n' +
       'before thresholding. Higher = smoother, more merged contours.'));
 
