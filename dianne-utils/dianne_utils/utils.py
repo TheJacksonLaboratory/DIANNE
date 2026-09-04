@@ -212,8 +212,9 @@ def reshape_strokes(strokes):
 def getTilesInContour(contours, df_grid, tile_size=224, body_overlap=0.25, debug=False, patch_size=8):
     """Get a dict mapping patch index to a list of tile_ids from df_grid whose corresponding
     tiles overlap with the contour by at least body_overlap fraction.
-    Tiles are grouped into spatially contiguous patches of patch_size**2 tiles arranged in a
-    patch_size x patch_size grid. Only complete patches (all patch_size**2 tiles present) are returned.
+    Tiles are grouped into spatially contiguous patches, aiming for patch_size**2 tiles per
+    patch arranged in a patch_size x patch_size grid; patches left undersized after merging
+    are kept as-is, except a single leftover 1-tile patch, which is dropped (see below).
 
     Parameters:
     contours:     List of Nx2 arrays of (x, y) points. First contour is the outer boundary;
@@ -221,12 +222,14 @@ def getTilesInContour(contours, df_grid, tile_size=224, body_overlap=0.25, debug
     df_grid:      DataFrame with columns 'x' and 'y' for tile center coordinates, indexed by tile_id.
     tile_size:    Size of the square tile in pixels (default 224).
     body_overlap: Minimum fraction of tile area covered by contour to include a tile (default 0.25).
-    patch_size:   Side length of each patch in tiles; each patch contains patch_size**2 tiles (default 8).
+    patch_size:   Side length of each patch in tiles; each patch contains up to patch_size**2 tiles (default 8).
 
     Returns:
-    dict: { patch_index (int): [tile_id, ...] } where each list has exactly patch_size**2 tile_ids,
-          arranged in row-major order (top-left to bottom-right within the patch).
-          Returns {} on failure.
+    dict: { patch_index (int): [tile_id, ...] } arranged in row-major order (top-left to
+          bottom-right within the patch). A patch with only 1 tile is never returned: its
+          per-quantile representation would be a constant ("flat CDF"), which later blows up
+          (division by a zero range) in the PCMA augmentation step. Returns {} on failure or
+          if no patch has >= 2 tiles.
     """
     try:
         cs = [np.asarray(c, dtype=np.int32) for c in (contours if isinstance(contours, list) else [contours])]
@@ -291,6 +294,16 @@ def getTilesInContour(contours, df_grid, tile_size=224, body_overlap=0.25, debug
                 if best is None: continue
                 cells[best].extend(cells.pop(sk)); merged_any = True
             if not merged_any: break
+
+        # Each tile contributes exactly one row to getPatchRepresentation's per-patch
+        # quantile, so a 1-tile patch has n=1 and every quantile level collapses to
+        # the same constant value -> a flat "CDF" that blows up later (division by a
+        # zero range) when the classifier pipeline differentiates it into a PDF.
+        # Drop only that degenerate leftover, not anything short of full patch_size**2
+        # (the merge loop above doesn't produce exactly-T-sized cells anyway).
+        cells = {k: v for k, v in cells.items() if len(v) >= 2}
+        if debug and not cells:
+            print(f"getTilesInContour: no usable patches (need >= 2 tiles per patch, got {len(df_hits)} tile(s) total)")
 
         return {i: df_hits.loc[ids, ['x','y']].sort_values(['y','x']).index.tolist()
                 for i, (_, ids) in enumerate(sorted(cells.items()))}
@@ -399,6 +412,12 @@ def getClassifierForFromStrokes(strokes_by_sample, patchCoordinates, tile_size, 
         dataPS = preparePatchesFromStrokes(strokes, sample_coords, tile_size=tile_size,
                                            body_overlap=body_overlap, patch_size=patch_size, debug=False)
 
+        if not dataPS['positive'] and not dataPS['negative']:
+            # e.g. every stroke on this sample was too small to yield a usable
+            # (>= 2-tile) patch. Nothing to build here; skip rather than fall
+            # through to an empty-index concat below.
+            continue
+
         if showPatches:
             visualizePatches(dataPS, sample_coords, tile_size=tile_size, fontsize=6)
 
@@ -433,6 +452,19 @@ def getClassifierForFromStrokes(strokes_by_sample, patchCoordinates, tile_size, 
 
     patchesCDFsMod = pd.concat(all_patchesCDFsMod)
     annotations = all_annotations
+
+    # has_any_pos/has_any_neg above only checked raw stroke presence; strokes
+    # that were too small (e.g. 1-tile) to yield a usable patch are dropped by
+    # preparePatchesFromStrokes, so recheck against the classes that actually
+    # survived before handing off to trainClassifier — with only one class (or
+    # none) present, LR.fit()/the PCMA augmentation step are not defined.
+    annotation_classes = set(annotations.values())
+    if 'positive' not in annotation_classes:
+        print("No usable positive patches (annotated strokes were too small).")
+        return None, None, None
+    if 'negative' not in annotation_classes:
+        print("No usable negative patches (annotated strokes were too small).")
+        return None, None, None
 
     # print(patchesCDFsMod)
     # print(annotations)
