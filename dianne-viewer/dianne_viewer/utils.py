@@ -164,7 +164,7 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
 
 def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_size=8, PCMA_alpha=0.8, multiplier=2,
                 body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv', classifierPaths=None, load_features=False,
-                sample_metadata=None, mpp=None, save_path=None, username='auto'):
+                sample_metadata=None, mpp=None, save_path=None, username='auto', erode=False):
 
     """Views KOMP STQ data using the DIANNE viewer.
     Similar to viewSTQ, but specifically for KOMP data. It loads the necessary parameters and prepares the patches for viewing.
@@ -186,7 +186,7 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
         print(f'Prepared {patchesCDFs.shape[0]} patches')
         sizes = {s: ads[s].shape[0] for s in samples}
         runfn = makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, tile_size=tile_size, patch_size=patch_size,
-                                 PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier)
+                                 PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode)
         savefn = makeSaveFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, tile_size=tile_size,
                                    patch_size=patch_size, body_overlap=body_overlap, classifierPaths=classifierPaths)
         loadfn = makeLoadFn(classifierPaths)
