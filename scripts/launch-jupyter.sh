@@ -1,5 +1,7 @@
 # Clear err_jupyter.err before starting if it exists
 [ -f err_jupyter.err ] && > err_jupyter.err
+# If file err_jupyter.err does not exist, create it with the current user-only (and root) permissions
+[ ! -f err_jupyter.err ] && touch err_jupyter.err && chmod 600 err_jupyter.err
 sbatch run-jupyter-notebook.sb
 
 for i in $(seq 1 60); do
