@@ -890,9 +890,12 @@ window.addEventListener('beforeunload', () => { annotations.saveIfDirty(ACTIVE_S
 
 // ── route annotation-tool mouse/keyboard events (polygon/freehand/vertex/ruler) ──
 const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'ruler'];
+function _isUiEventTarget(target) {
+  return Boolean(target && target.closest && target.closest('[data-iv-ui="true"]'));
+}
 root.addEventListener('mousedown', e => {
   const tool = toolbar.getActiveTool();
-  if (ANNOT_MOUSE_TOOLS.includes(tool)) {
+  if (ANNOT_MOUSE_TOOLS.includes(tool) && !_isUiEventTarget(e.target)) {
     const r = root.getBoundingClientRect();
     annotationsCanvas.onMouseDown(e.clientX - r.left, e.clientY - r.top);
   }
