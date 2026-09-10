@@ -32,7 +32,8 @@ function createMetadataPanel({
 }) {
   // ── Layout constants (adjust here) ──────────────────────────────────────
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
-  const COL_MAX_WIDTH  = 1280;   // px — maximum width of each metadata column
+  const COL_MAX_WIDTH  = 320;   // px — maximum width of each metadata column
+  const ROW_BORDER_COLOR = '#3a3a3a';  // row separator line color in the main table (not tooltip/hover)
   const FILTER_ROW_HEIGHT      = 28;   // px — fixed height of each filter row (keeps rows from squishing with many keys)
   const FILTER_BAR_VISIBLE_ROWS = 10;   // number of filter rows visible before the bar scrolls
   const PIE_MAX_LABELS = 10;   // max slices shown in the value-count pie chart tooltip
@@ -605,8 +606,8 @@ function createMetadataPanel({
       const tdSample = document.createElement('td');
       tdSample.textContent = sampleName;
       tdSample.style.cssText = [
-        'padding:3px 8px','white-space:nowrap','color:' + (isActive ? '#53d9ff' : '#ddd'),
-        'border-bottom:1px solid #222',
+        'padding:3px 8px','white-space:normal','word-break:break-word','color:' + (isActive ? '#53d9ff' : '#ddd'),
+        'border-bottom:1px solid ' + ROW_BORDER_COLOR,
         'min-width:' + COL_MIN_WIDTH + 'px','max-width:' + COL_MAX_WIDTH + 'px',
       ].join(';');
       tr.appendChild(tdSample);
@@ -615,7 +616,7 @@ function createMetadataPanel({
       const tdAnnot = document.createElement('td');
       const info = (typeof getAnnotationSummary === 'function') ? (getAnnotationSummary(sampleName) || {}) : {};
       tdAnnot.textContent = info.text || '—';
-      tdAnnot.style.cssText = 'padding:3px 8px;color:#8cf;border-bottom:1px solid #222;white-space:nowrap;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
+      tdAnnot.style.cssText = 'padding:3px 8px;color:#8cf;border-bottom:1px solid ' + ROW_BORDER_COLOR + ';white-space:normal;word-break:break-word;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
       tr.appendChild(tdAnnot);
 
       const m = SAMPLE_METADATA[sampleName] || {};
@@ -623,7 +624,7 @@ function createMetadataPanel({
         const td = document.createElement('td');
         const val = Object.prototype.hasOwnProperty.call(m, k) ? m[k] : '';
         td.textContent = val === null || val === undefined ? '' : String(val);
-        td.style.cssText = 'padding:3px 8px;color:' + (isActive ? '#c8eaff' : '#aaa') + ';border-bottom:1px solid #222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
+        td.style.cssText = 'padding:3px 8px;color:' + (isActive ? '#c8eaff' : '#aaa') + ';border-bottom:1px solid ' + ROW_BORDER_COLOR + ';white-space:normal;word-break:break-word;min-width:' + COL_MIN_WIDTH + 'px;max-width:' + COL_MAX_WIDTH + 'px;';
         tr.appendChild(td);
       }
 
