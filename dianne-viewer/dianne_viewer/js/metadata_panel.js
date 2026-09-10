@@ -32,7 +32,7 @@ function createMetadataPanel({
 }) {
   // ── Layout constants (adjust here) ──────────────────────────────────────
   const COL_MIN_WIDTH  = 80;   // px — minimum width of each metadata column in the table
-  const COL_MAX_WIDTH  = 280;   // px — maximum width of each metadata column
+  const COL_MAX_WIDTH  = 1280;   // px — maximum width of each metadata column
   const FILTER_ROW_HEIGHT      = 28;   // px — fixed height of each filter row (keeps rows from squishing with many keys)
   const FILTER_BAR_VISIBLE_ROWS = 10;   // number of filter rows visible before the bar scrolls
   const PIE_MAX_LABELS = 10;   // max slices shown in the value-count pie chart tooltip
