@@ -1,6 +1,7 @@
 
 import os
 import pandas as pd
+import numpy as np
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -173,6 +174,9 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
 
     imgs = {s: iname for s in samples if os.path.isfile((iname:=f'{dataPath}/{s}/image.ome.tiff')) and is_pyramidal(iname)}
     samples = [s for s in samples if s in imgs.keys()]
+
+    if not os.path.isfile(idm):
+        pd.DataFrame(np.eye(3)).to_csv(idm, index=False, header=False)
 
     ts, mpp, tile_size = loadSTQParams(dataPath + samples[0], F)
     if load_features:

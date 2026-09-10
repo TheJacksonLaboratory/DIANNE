@@ -267,7 +267,13 @@ class ViewerServer:
         if negative is not None:
             bucket['negative'] = negative
 
-        os.makedirs(self.annotations_dir, exist_ok=True)
+        old_umask = os.umask(0)
+        try:
+            os.makedirs(self.annotations_dir, mode=0o775, exist_ok=True)
+        finally:
+            os.umask(old_umask)
+        os.chmod(self.annotations_dir, 0o2775)
+
         features = []
         for cls in ('library', 'positive', 'negative'):
             for ann in bucket.get(cls, []):
@@ -276,6 +282,7 @@ class ViewerServer:
         payload = json.dumps(fc).encode('utf-8')
         with gzip.open(self._sample_annotations_path(sample), 'wb') as f:
             f.write(payload)
+        os.chmod(self._sample_annotations_path(sample), 0o664)
         return True
 
     def load_annotations(self, sample):
