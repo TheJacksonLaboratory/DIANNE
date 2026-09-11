@@ -103,11 +103,13 @@ class ViewerServer:
             GET  /xenium_cells?level=&row=&col=  → cells JSON
       POST /click         → {img_x, img_y, vp_x, vp_y, zoom}
             POST /strokes       → {strokes_positive:[...], strokes_negative:[...]}
+            POST /run_inference → tile-level classifier train + inference
+            POST /run_subtile_inference → same, but GPU subtile-level inference
     """
 
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
                  xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
-                 run_inference_fn=None, sample_sizes=None,
+                 run_inference_fn=None, run_subtile_inference_fn=None, sample_sizes=None,
                  save_fn=None, load_fn=None, list_names_fn=None,
                  secondary_images=None, annotations_dir=None, username=None):
         if images is None:
@@ -149,6 +151,7 @@ class ViewerServer:
             except socket.gaierror:
                 self.host = '127.0.0.1'
         self.run_inference_fn = run_inference_fn
+        self.run_subtile_inference_fn = run_subtile_inference_fn
         self.sample_sizes = {
             str(k): int(v)
             for k, v in sample_sizes.items()
@@ -158,7 +161,8 @@ class ViewerServer:
         # Numba / Intel TBB must always be called from the same thread to avoid
         # "Attempted to fork from a non-main thread" warnings.  A single worker
         # thread is created here (before the HTTP server starts) and all
-        # /run_inference requests are serialised through it via a queue.
+        # /run_inference and /run_subtile_inference requests are serialised
+        # through it via a queue (each queue item carries which fn to call).
         self._inference_queue = queue.Queue(maxsize=1)
         self._inference_worker = threading.Thread(
             target=self._inference_loop, daemon=True, name='dianne-inference-worker'
@@ -216,14 +220,14 @@ class ViewerServer:
         self._stopped = False  # set True as soon as /stop is received or stop() is called
 
     def _inference_loop(self):
-        """Long-lived worker: picks up (fn_kwargs, result_event, result_box) tuples."""
+        """Long-lived worker: picks up (fn, fn_kwargs, result_event, result_box) tuples."""
         while True:
             item = self._inference_queue.get()
             if item is None:   # sentinel → shut down
                 break
-            fn_kwargs, result_event, result_box = item
+            fn, fn_kwargs, result_event, result_box = item
             try:
-                result_box['result'] = self.run_inference_fn(**fn_kwargs)
+                result_box['result'] = fn(**fn_kwargs)
             except Exception as exc:
                 result_box['error'] = exc
             finally:
@@ -1267,6 +1271,7 @@ class ViewerServer:
                     result_box   = {}
                     try:
                         srv._inference_queue.put_nowait((
+                            srv.run_inference_fn,
                             {'strokes_by_sample': srv.strokes_by_sample,
                              'active_sample': active_sample},
                             result_event,
@@ -1293,6 +1298,64 @@ class ViewerServer:
                         pi = [float(v) for v in result['pi']]
                         style = {
                             'delta':     float(result.get('delta', 448)),
+                            'alpha':     float(result.get('alpha', 0.5)),
+                            'colorLow':  str(result.get('color_low',  '#FFA500')),
+                            'colorHigh': str(result.get('color_high', '#0000FF')),
+                        }
+                        payload = {'ok': True, 'sample': sample_out,
+                                   'overlay': {'xi': xi, 'yi': yi, 'pi': pi, 'style': style}}
+                        body = json.dumps(payload).encode()
+                        self._respond(200, body, 'application/json')
+                    except Exception as exc:
+                        import traceback
+                        traceback.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                        self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/run_subtile_inference':
+                    # Same protocol as /run_inference (flush strokes client-side first,
+                    # then this trains/reuses the tile-level classifier and runs the
+                    # finer-grained GPU subtile pass — see dianne_utils.utils.makeSubtileRunFn).
+                    if srv.run_subtile_inference_fn is None:
+                        body = json.dumps({'ok': False, 'error': 'run_subtile_inference not configured'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    active_sample = (
+                        data.get('active_sample', srv.chosen_sample)
+                        if isinstance(data, dict) else srv.chosen_sample
+                    )
+                    result_event = threading.Event()
+                    result_box   = {}
+                    try:
+                        srv._inference_queue.put_nowait((
+                            srv.run_subtile_inference_fn,
+                            {'strokes_by_sample': srv.strokes_by_sample,
+                             'active_sample': active_sample},
+                            result_event,
+                            result_box,
+                        ))
+                    except queue.Full:
+                        body = json.dumps({'ok': False, 'error': 'inference already running'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    result_event.wait()  # block HTTP handler thread until done
+                    if 'error' in result_box:
+                        import traceback as _tb
+                        _tb.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(result_box['error'])}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        result = result_box['result']
+                        if not isinstance(result, dict):
+                            raise ValueError('run_subtile_inference_fn must return a dict')
+                        sample_out = result.get('sample', active_sample)
+                        xi = [float(v) for v in result['xi']]
+                        yi = [float(v) for v in result['yi']]
+                        pi = [float(v) for v in result['pi']]
+                        style = {
+                            'delta':     float(result.get('delta', 32)),
                             'alpha':     float(result.get('alpha', 0.5)),
                             'colorLow':  str(result.get('color_low',  '#FFA500')),
                             'colorHigh': str(result.get('color_high', '#0000FF')),

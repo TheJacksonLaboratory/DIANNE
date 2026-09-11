@@ -1,18 +1,27 @@
 
 import os
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dianne_utils.utils import loadDataAndPreparePatches, loadSTQParams
-from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
+from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSubtileRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
 from .viewer import create_viewer
 import matplotlib.colors as mcolors
 import pickle
 
 import tifffile
 import zarr
+
+def _resolved_annotations_dir(save_path):
+    """Mirror viewer.create_viewer's own annotations_dir resolution exactly, so a
+    caller building a subtile run fn (makeSubtileRunFn, before create_viewer has
+    even run) writes its feature cache to the same directory the running viewer
+    will actually use — a mismatch here silently caches to the wrong place."""
+    _save_root = Path(save_path) if save_path else Path('.')
+    return str((_save_root / '.dianne_annotations').resolve())
 
 def is_pyramidal(path):
     store = tifffile.imread(path, aszarr=True)
@@ -120,8 +129,17 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         sizes = {s: ads[s].shape[0] for s in valid_samples}
         print(f'Prepared {patchesCDFs.shape[0]} patches')
 
-        runfn = makeRunFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, tile_size=tile_size, 
+        runfn = makeRunFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, tile_size=tile_size,
                         patch_size=patch_size, PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode)
+
+        # Subtile inference (GPU) reuses the same tile-level classifier training,
+        # so it's only meaningful for the ctranspath feature model it's derived from.
+        # Note: it always reads the base single-tile (F=1) CTransPath grid — the
+        # CTransPath model's own 224px tile crop is independent of this pipeline's
+        # F (which only scales the *coarser* tile_size used for classifier training).
+        subtile_runfn = makeSubtileRunFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, imgs,
+                        PCMA_alpha=PCMA_alpha, tile_size=tile_size, patch_size=patch_size,
+                        model=model, annotations_dir=_resolved_annotations_dir(save_path)) if model == 'ctranspath' else None
 
         if classifierPaths is not None:
             savefn = makeSaveFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, 
@@ -143,7 +161,8 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         else:
             sample_metadata_ = None
 
-        return create_viewer(valid_samples, imgs, height=height, run_inference_fn=runfn, sample_sizes=sizes,
+        return create_viewer(valid_samples, imgs, height=height, run_inference_fn=runfn,
+                                        run_subtile_inference_fn=subtile_runfn, sample_sizes=sizes,
                                         save_func=savefn, load_func=loadfn, list_names_func=listfn,
                                         sample_metadata=sample_metadata_, mpp=mpp, save_path=save_path, username=username)[1]
 
@@ -191,12 +210,20 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
         sizes = {s: ads[s].shape[0] for s in samples}
         runfn = makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, tile_size=tile_size, patch_size=patch_size,
                                  PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode)
+        # Subtile inference (GPU) reuses the same tile-level classifier training,
+        # so it's only meaningful for the ctranspath feature model it's derived from.
+        # Note: it always reads the base single-tile (F=1) CTransPath grid — the
+        # CTransPath model's own 224px tile crop is independent of this pipeline's
+        # F (which only scales the *coarser* tile_size used for classifier training).
+        subtile_runfn = makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs,
+                                 PCMA_alpha=PCMA_alpha, tile_size=tile_size, patch_size=patch_size,
+                                 model=model, annotations_dir=_resolved_annotations_dir(save_path)) if model == 'ctranspath' else None
         savefn = makeSaveFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, tile_size=tile_size,
                                    patch_size=patch_size, body_overlap=body_overlap, classifierPaths=classifierPaths)
         loadfn = makeLoadFn(classifierPaths)
         listfn = makeListFn(classifierPaths)
     else:
-        runfn, savefn, loadfn, listfn, sizes = None, None, None, None, None
+        runfn, subtile_runfn, savefn, loadfn, listfn, sizes = None, None, None, None, None, None
     
     matrices = {s: idm for s in samples}
     bundle_paths = {s:f'{dataPath}{s}' for s  in samples}
@@ -212,7 +239,8 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
     uannotations = sorted(set(a for sample in all_annotations.keys() for a in all_annotations[sample].unique())) 
     annotationsPalette = {a: mcolors.to_hex(color) for i, a in enumerate(uannotations)}
     
-    drawings = create_viewer(samples, imgs, height="800px", run_inference_fn=runfn, sample_sizes=sizes,
+    drawings = create_viewer(samples, imgs, height="800px", run_inference_fn=runfn,
+                                    run_subtile_inference_fn=subtile_runfn, sample_sizes=sizes,
                                     xenium_mpp=mpp, max_cells=max_cells, matrices=matrices, xenium_bundle_paths=bundle_paths,
                                     annotations=all_annotations, category_colors=annotationsPalette,
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn,

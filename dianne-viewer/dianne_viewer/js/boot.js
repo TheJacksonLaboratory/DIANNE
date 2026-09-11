@@ -16,6 +16,8 @@ const SAMPLE_META              = __SAMPLE_META__;
 const SAMPLE_XENIUM_META       = __SAMPLE_XENIUM_META__;
 const SAMPLE_CELLS_META        = __SAMPLE_CELLS_META__;
 const HAS_RUN_INFERENCE        = __HAS_RUN_INFERENCE__;
+const HAS_RUN_SUBTILE_INFERENCE = __HAS_RUN_SUBTILE_INFERENCE__;
+const HAS_CUDA                 = __HAS_CUDA__;
 const HAS_SAVE                 = __HAS_SAVE__;
 const HAS_LOAD                 = __HAS_LOAD__;
 const SAMPLE_SIZES             = __SAMPLE_SIZES__;
@@ -162,7 +164,7 @@ if (IS_MULTICHANNEL) { overlayControls.style.right = '104px'; }
 const settings = createSettings(overlayControls, root, {
   inferMsPerCell: INFERENCE_MS_PER_CELL,
   maxCellsBoundaries: MAX_CELLS,
-}, BASE_URL, PERSISTED_SETTINGS);
+}, BASE_URL, PERSISTED_SETTINGS, HAS_CUDA);
 
 // ── Secondary image layer (created after viewport+settings; inserted before tileLayer) ─
 // _overlayCtrlApi must be declared before createSecondaryLayer because its constructor
@@ -466,6 +468,7 @@ function _pushPromotedStroke(sample, cls, copies, groupId) {
 // ── Toolbar ────────────────────────────────────────────────────────────────
 const toolbar = createToolbar(root, viewport, draw, BASE_URL,
   HAS_RUN_INFERENCE ? { onRun: (btn) => _overlayCtrlApi.runInference(btn) } : null,
+  HAS_RUN_SUBTILE_INFERENCE ? { onRun: (btn) => _overlayCtrlApi.runSubtileInference(btn) } : null,
   (HAS_SAVE || HAS_LOAD) ? {
     onSave: HAS_SAVE ? async function(name, btn) {
       if (btn) { btn.disabled = true; }
@@ -571,6 +574,7 @@ _overlayCtrlApi = createOverlayControls({
   SAMPLE_SIZES, settings,
   tileLayer, secondaryCanvas: secLayer.secondaryCanvas,
   HAS_RUN_INFERENCE,
+  HAS_RUN_SUBTILE_INFERENCE,
   drawSecondaryLayer: (t) => secLayer.drawSecondaryLayer(t),
   setActiveSampleFn: (s) => setActiveSample(s),
   strokesBySample,

@@ -15,7 +15,7 @@
  *   settings.onChange(fn)   → register callback  fn(key, val)
  *                             key === null signals a full reset
  */
-function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings) {
+function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings, hasCuda) {
   const LS_KEY = 'ivViewerSettings';
 
   const DEFAULTS = Object.assign({
@@ -36,7 +36,10 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
     probContourThreshold : 0.5,      // "show contours"/"Add" probability cutoff (0-1)
     probContourSigma     : 75,       // Gaussian blur sigma before thresholding, full-res image px
     probContourMinArea   : 1000000,  // minimum contour area to keep, full-res image px²
+    enableSubtileInference : false, // show the "Run subtile" toolbar button (requires CUDA)
   }, defaults || {});
+
+  const _hasCuda = !!hasCuda;
 
   // Load persisted values; only accept keys/types that exist in DEFAULTS.
   let vals = Object.assign({}, DEFAULTS);
@@ -56,6 +59,9 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
       }
     }
   } catch (e) {}
+  // A previously-persisted 'true' from a CUDA-capable server must not silently
+  // "enable" the button on a server without CUDA — clamp regardless of source.
+  if (!_hasCuda) vals.enableSubtileInference = false;
 
   // Sync the current values to the server-side per-user settings file
   // whenever the Settings panel is closed (§ export user settings).
@@ -73,6 +79,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
   function get(key) { return vals[key]; }
 
   function set(key, value) {
+    if (key === 'enableSubtileInference' && !_hasCuda) value = false;
     vals[key] = value;
     try { localStorage.setItem(LS_KEY, JSON.stringify(vals)); } catch (e) {}
     for (const fn of listeners) fn(key, value);
@@ -201,11 +208,12 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
     return inp;
   }
 
-  function _makeCheckbox({ key }) {
+  function _makeCheckbox({ key, disabled }) {
     const inp = document.createElement('input');
     inp.type = 'checkbox';
     inp.checked = !!vals[key];
-    inp.style.cssText = 'cursor:pointer;';
+    inp.disabled = !!disabled;
+    inp.style.cssText = disabled ? 'cursor:not-allowed;opacity:0.5;' : 'cursor:pointer;';
     inp.addEventListener('change', () => set(key, inp.checked));
     return inp;
   }
@@ -335,6 +343,18 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings)
       'Tune to match actual inference wall-clock speed.\n' +
       'Example: 5 000 cells × 0.15 ms = 0.75 s'));
     panel.appendChild(_makeHint('Matches server-side INFERENCE_MS_PER_CELL'));
+
+    // ── Subtile inference ("Run subtile" toolbar button) ────────────────────────
+    panel.appendChild(_makeSectionHeader('Subtile Inference'));
+
+    panel.appendChild(_makeRow(
+      'Enable subtile inference',
+      _makeCheckbox({ key: 'enableSubtileInference', disabled: !_hasCuda }),
+      _hasCuda
+        ? 'Shows a "Run subtile" toolbar button that trains the usual tile-level\n' +
+          'classifier, then runs a finer-grained GPU inference pass per subtile.'
+        : 'Requires CUDA (GPU) on the server process — unavailable here.'));
+    if (!_hasCuda) panel.appendChild(_makeHint('Disabled: no CUDA device available on the server.'));
 
     // ── Probability contours ("show contours" eye button / "Add" button) ───────
     panel.appendChild(_makeSectionHeader('Probability Contours'));

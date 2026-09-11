@@ -165,11 +165,21 @@ def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
     return None
 
 
+def _detect_cuda():
+    """Best-effort torch.cuda.is_available() check, without requiring torch
+    to be installed (many viewer use cases never touch GPU inference)."""
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
 def create_viewer(samples, images, width="100%", height="700px", host=None, port=None,
                   xenium_mpp=0.2125, category_colors=None, max_cells=2000,
                   mpp=None,
                   xenium_bundle_paths=None, matrices=None, annotations=None,
-                  run_inference_fn=None, sample_sizes=None,
+                  run_inference_fn=None, run_subtile_inference_fn=None, sample_sizes=None,
                   save_func=None, load_func=None, list_names_func=None,
                   secondary_images=None, secondary_matrices=None,
                   draw_on_secondary=False, visium_ads=None,
@@ -211,6 +221,12 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         The callable must return a dict with at least keys ``xi``, ``yi``, ``pi``
         (equal-length iterables of image-space coords and probabilities) and may
         include ``sample``, ``delta``, ``alpha``, ``color_low``, ``color_high``.
+    run_subtile_inference_fn : optional Python callable
+        Same calling convention/return shape as ``run_inference_fn``, but for the
+        finer-grained GPU subtile inference pass (see dianne_utils.utils.makeSubtileRunFn).
+        When provided, a "Run subtile" toolbar button becomes available, gated by the
+        "Enable subtile inference" Settings-panel checkbox (itself only enable-able
+        when the server process has CUDA available).
     sample_sizes : optional dict[sample] -> int
         Number of cells per sample, used to time the loading animation
         (see ``INFERENCE_MS_PER_CELL`` in this module).  If omitted the
@@ -517,6 +533,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           xenium_by_sample=xenium_by_sample,
           xenium_cells_by_sample=xenium_cells_by_sample,
           run_inference_fn=run_inference_fn,
+          run_subtile_inference_fn=run_subtile_inference_fn,
           sample_sizes=sample_sizes,
           save_fn=save_func,
           load_fn=load_func,
@@ -662,6 +679,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
     _ts = _time.monotonic()
     has_matrices = bool(matrices) or bool(secondary_matrices)
+    has_cuda = _detect_cuda()
 
     html = _render(
       _read_html('shell.html'),
@@ -675,6 +693,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       sample_cells_meta    = sample_cells_meta_json,
       meta                 = meta_json,
       has_run_inference    = 'true' if run_inference_fn is not None else 'false',
+      has_run_subtile_inference = 'true' if run_subtile_inference_fn is not None else 'false',
+      has_cuda             = 'true' if has_cuda else 'false',
       has_save             = 'true' if save_func is not None else 'false',
       has_load             = 'true' if (load_func is not None and list_names_func is not None) else 'false',
       sample_sizes         = json.dumps(sample_sizes or {}),

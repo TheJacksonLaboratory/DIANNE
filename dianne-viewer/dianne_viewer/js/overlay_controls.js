@@ -22,7 +22,7 @@
  *       getSecondaryFetchEnabled, getSecondaryOpacity,
  *       updateOpacitySliderVisibility,
  *       showLoader, hideLoader,
- *       runInference,
+ *       runInference, runSubtileInference,
  *       drawContourLayer, clearContours,
  *     }
  *
@@ -37,6 +37,7 @@ function createOverlayControls({
   SAMPLE_SIZES, settings,
   tileLayer, secondaryCanvas,
   HAS_RUN_INFERENCE,
+  HAS_RUN_SUBTILE_INFERENCE,
   drawSecondaryLayer,
   setActiveSampleFn,
   strokesBySample,
@@ -379,8 +380,7 @@ function createOverlayControls({
              y: mat.m10 * x + mat.m11 * y + mat.ty };
   }
 
-  async function runInference(runBtn) {
-    if (!HAS_RUN_INFERENCE) return;
+  async function _runInferenceRequest(endpoint, runBtn) {
     const ACTIVE_SAMPLE = ACTIVE_SAMPLE_REF();
     // 1. Flush current strokes to server (converting to secondary space if needed)
     strokesBySample[ACTIVE_SAMPLE] = toolbar.draw.getStrokes();
@@ -405,7 +405,7 @@ function createOverlayControls({
     showLoader(durationMs);
     log('Running inference on ' + ACTIVE_SAMPLE + '…');
     try {
-      const resp = await fetch(BASE_URL + '/run_inference', {
+      const resp = await fetch(BASE_URL + endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active_sample: ACTIVE_SAMPLE }),
@@ -446,6 +446,20 @@ function createOverlayControls({
     }
   }
 
+  function runInference(runBtn) {
+    if (!HAS_RUN_INFERENCE) return;
+    return _runInferenceRequest('/run_inference', runBtn);
+  }
+
+  // Same overlay/contour pipeline as runInference — only the server-side
+  // classifier training + inference granularity differs (see
+  // dianne_utils.utils.makeSubtileRunFn / the "Run subtile" toolbar button,
+  // gated by the "Enable subtile inference" Settings-panel checkbox).
+  function runSubtileInference(runBtn) {
+    if (!HAS_RUN_SUBTILE_INFERENCE) return;
+    return _runInferenceRequest('/run_subtile_inference', runBtn);
+  }
+
   // ── window API ─────────────────────────────────────────────────────────────
   window.ivSetOverlayPoints = function(points, style) {
     predPoints = Array.isArray(points) ? points : [];
@@ -476,6 +490,7 @@ function createOverlayControls({
     showLoader,
     hideLoader,
     runInference,
+    runSubtileInference,
     clearPredPoints: () => { predPoints = []; },
     drawContourLayer,
     clearContours,

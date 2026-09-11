@@ -904,6 +904,107 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_job
 
     return _runfn
 
+def _load_subtile_grid(img_path, F=1, model='ctranspath'):
+    """Load the tile grid (array_row/array_col + full-res pixel position) needed by
+    the subtile feature-extraction/inference pipeline, inferring its path from the
+    WSI image path the same way it's inferred in the __main__ blocks of
+    dianne_utils.ctranspath and dianne_utils.subtilegpu."""
+    grid_path = os.path.join(os.path.dirname(img_path), 'features', f'false-{F}-{model}_features.tsv.gz')
+    return pd.read_csv(grid_path, index_col=0)
+
+def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alpha=0.8,
+                     tile_size=448, patch_size=8, body_overlap=0.25, F=1, model='ctranspath',
+                     annotations_dir=None, ctranspath_ts=224, ctranspath_num_workers=16,
+                     ctranspath_batch_size=512, radius=2, subgrid=(7, 7), val_range=2.0):
+    """Return a run_subtile_inference_fn compatible with
+    ``viewer.create_viewer(run_subtile_inference_fn=...)``.
+
+    Trains the classifier the same way makeRunFn does (tile-level
+    getClassifierForFromStrokes), but instead of tile-level inference
+    (inferProbFast), it runs a finer-grained GPU pass
+    (dianne_utils.subtilegpu.inferSubtileFromFeatures) over per-slide
+    CTransPath subtile features. Those features are cached to
+    ``<annotations_dir>/<sample>-<F>-<model>_features.parquet`` the first
+    time a sample is requested (dianne_utils.ctranspath.extract) and reused
+    on every subsequent call.
+
+    Parameters mirror makeRunFn where they overlap; additional ones:
+    imgs : dict[sample -> path to image.ome.tiff]
+    annotations_dir : str, optional
+        Feature cache directory. Should be passed as the *same resolved*
+        annotations directory ``viewer.create_viewer`` will use (i.e.
+        ``str((Path(save_path or '.') / '.dianne_annotations').resolve())``)
+        so the cache actually lands where the running viewer (and the user
+        inspecting the directory) expects it — a mismatch here means the
+        cache silently writes to the wrong place and looks like it's not
+        working at all. Falls back to ``./.dianne_annotations`` (cwd-relative,
+        NOT resolved) only when the caller has no ``save_path`` to give.
+    """
+    # Same precedence as ViewerServer.__init__: the env var, if set, always wins
+    # (both here and server-side), so the two stay consistent even then.
+    annotations_dir = os.environ.get('DIANNE_ANNOTATIONS_DIR') or annotations_dir \
+        or os.path.join(os.getcwd(), '.dianne_annotations')
+
+    def _features_cache_path(sample):
+        return os.path.join(annotations_dir, f'{sample}-{F}-{model}_features.parquet')
+
+    def _ensure_features(sample, df_grid):
+        cache_path = _features_cache_path(sample)
+        if os.path.isfile(cache_path):
+            print(f'[subtile] using cached features: {cache_path}')
+            return pd.read_parquet(cache_path)
+        print(f'[subtile] no cached features at {cache_path}; extracting...')
+        from .ctranspath import extract as _ctranspath_extract
+        df = _ctranspath_extract(df_grid[['pxl_row_in_wsi', 'pxl_col_in_wsi']], imgs[sample],
+                                 ts=ctranspath_ts, num_workers=ctranspath_num_workers,
+                                 batch_size=ctranspath_batch_size)
+        try:
+            os.makedirs(annotations_dir, exist_ok=True)
+            df.to_parquet(cache_path)
+            print(f'[subtile] cached features to {cache_path}')
+        except Exception as exc:
+            # Caching is an optimization, not a correctness requirement — a
+            # failure here (permissions, missing parquet engine, ...) must not
+            # break inference, but must not be silent either (this is exactly
+            # the kind of failure that otherwise looks like "caching doesn't
+            # work" with no visible explanation).
+            print(f'[subtile] WARNING: failed to cache features to {cache_path}: {exc}')
+        return df
+
+    def _runfn(*, strokes_by_sample, active_sample):
+        from .subtilegpu import inferSubtileFromFeatures, cleanupClassifier
+
+        clf, _, _ = getClassifierForFromStrokes(
+            strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size,
+            ads, samples, qs, augFunc=PCMA, alpha=PCMA_alpha, seed=0)
+        if clf is None:
+            return
+        clf = cleanupClassifier(clf)
+
+        df_grid = _load_subtile_grid(imgs[active_sample], F=F, model=model)
+        df_features = _ensure_features(active_sample, df_grid)
+
+        y, x, p = inferSubtileFromFeatures(
+            df_features, df_grid[['array_row', 'array_col']], clf,
+            radius=radius, qs=qs, subgrid=subgrid, val_range=val_range)
+
+        # min pxl_row/col_in_wsi is the *center* of the top-left tile; its top-left
+        # corner (where fine index 0 starts) is ctranspath_ts/2 above/left of that.
+        # Subtile (x, y) is then a cell index into that tile-aligned pixel grid, and
+        # its pixel center is (index + 0.5) * subtile_size past the tile's corner —
+        # the usual cell-center convention for a strided/pooled feature grid.
+        shy, shx = df_grid[['pxl_row_in_wsi', 'pxl_col_in_wsi']].min(axis=0).values
+        sub_r, sub_c = subgrid
+        delta_y, delta_x = ctranspath_ts / sub_r, ctranspath_ts / sub_c
+
+        return dict(sample=active_sample,
+                    xi=((x.astype(np.float64) + 0.5) * delta_x + shx - ctranspath_ts / 2).tolist(),
+                    yi=((y.astype(np.float64) + 0.5) * delta_y + shy - ctranspath_ts / 2).tolist(),
+                    pi=p.astype(np.float64).tolist(),
+                    delta=delta_x, alpha=0.5, color_low='#FFA500', color_high='#0000FF')
+
+    return _runfn
+
 def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctranspath-1.h5ad', samplesToSTQnames=None, L=None, ts=56, mpp=0.25, N=8):
 
     if samplesToSTQnames is None:

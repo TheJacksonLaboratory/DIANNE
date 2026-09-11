@@ -14,7 +14,7 @@
  *   Row 3* — Width [slider]
  *   Row 4* — Smoothing [slider]
  *   Row 5  — flush ⬇ | visibility 👀 | tiles
- *   Row 6  — save 💾 | load 📂 | inference ▶   (only if any are enabled)
+ *   Row 6  — save 💾 | load 📂 | inference ▶ | Run subtile   (only if any are enabled)
  *   Row 7† — [2D Options] [genes]
  *
  *   *  Only visible while a draw tool is active.
@@ -25,7 +25,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions, annotationsOptions) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, runSubtileInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions, annotationsOptions) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -626,6 +626,34 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       if (!runBtn.disabled) runInferenceOptions.onRun(runBtn);
     });
     _saveRow.appendChild(runBtn);
+  }
+
+  // Run subtile inference button (optional; only built when the server has a
+  // run_subtile_inference_fn configured). Its visibility (not just its
+  // presence) also depends on the "Enable subtile inference" Settings-panel
+  // checkbox, which itself can only be turned on when CUDA is available — see
+  // settings.js — so it's kept in sync with settings.onChange rather than
+  // decided once at toolbar-build time.
+  if (runSubtileInferenceOptions && typeof runSubtileInferenceOptions.onRun === 'function') {
+    const subtileRunBtn = document.createElement('button');
+    subtileRunBtn.title = 'Train classifier & run subtile inference on active sample (GPU)';
+    subtileRunBtn.textContent = 'Run subtile';
+    subtileRunBtn.dataset.demoId = 'run-subtile-inference-btn';
+    subtileRunBtn.style.cssText = _btnCss + ';font-size:11px;white-space:nowrap;';
+    subtileRunBtn.addEventListener('click', () => {
+      if (!subtileRunBtn.disabled) runSubtileInferenceOptions.onRun(subtileRunBtn);
+    });
+    _saveRow.appendChild(subtileRunBtn);
+
+    function _syncSubtileRunBtnVisibility() {
+      subtileRunBtn.style.display = (settings && settings.get('enableSubtileInference')) ? '' : 'none';
+    }
+    _syncSubtileRunBtnVisibility();
+    if (settings) {
+      settings.onChange((key) => {
+        if (key === null || key === 'enableSubtileInference') _syncSubtileRunBtnVisibility();
+      });
+    }
   }
 
   // ── Append row 6 if it has any buttons ──────────────────────────────────────
