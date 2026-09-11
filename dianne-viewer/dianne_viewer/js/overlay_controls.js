@@ -159,6 +159,11 @@ function createOverlayControls({
     drawPredLayer();
   });
 
+  // Points below this probability are skipped entirely (not just drawn very
+  // faint) — keeps the low-confidence majority of tiles/subtiles from
+  // washing out the overlay with low-alpha noise.
+  const MIN_HEATMAP_PROB = 0.25;
+
   function drawPredLayer() {
     predCtx.clearRect(0, 0, predLayer.width, predLayer.height);
     const delta = Math.max(1, Number(predStyle.delta) || 1);
@@ -170,6 +175,7 @@ function createOverlayControls({
       const y = Number(pt.yi);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       const p = clamp01(pt.pi);
+      if (p < MIN_HEATMAP_PROB) continue;
 
       const s0 = viewport.toScreenSpace(x - half, y - half);
       const s1 = viewport.toScreenSpace(x + half, y + half);
