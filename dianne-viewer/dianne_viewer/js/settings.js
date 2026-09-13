@@ -113,6 +113,11 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     'border-radius:8px', 'border:1px solid #3a3a3a',
     'box-shadow:0 6px 28px rgba(0,0,0,0.88)',
     'font:12px monospace', 'display:none',
+    // rootEl gets cursor:none while a draw tool is active (custom crosshair
+    // cursor drawn on the canvas instead) — without an explicit override the
+    // panel inherits that and the real cursor stays invisible while hovering
+    // over settings, so force it back to normal here.
+    'cursor:auto',
   ].join(';');
   // Prevent scrolling inside the panel from triggering viewer zoom.
   panel.addEventListener('wheel', e => e.stopPropagation());
