@@ -56,6 +56,10 @@ def make_prob_mask_from_points(xi, yi, pi, full_shape, delta, downfactor=16):
         x2 = min(downsampled_map.shape[1], x_ds + halfsize)
         y1 = max(0, y_ds - halfsize)
         y2 = min(downsampled_map.shape[0], y_ds + halfsize)
-        downsampled_map[y1:y2, x1:x2] = int(p * 255)
+        # p can arrive slightly outside [0, 1] (float noise from the model,
+        # or an out-of-range client value) — clamp before casting, since an
+        # unclamped negative value overflows the uint8 mask (OverflowError).
+        p_clamped = min(1.0, max(0.0, float(p)))
+        downsampled_map[y1:y2, x1:x2] = int(round(p_clamped * 255))
 
     return downsampled_map, fshape

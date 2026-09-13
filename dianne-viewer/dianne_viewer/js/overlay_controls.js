@@ -440,6 +440,11 @@ function createOverlayControls({
     const durationMs = nCells * settings.get('inferMsPerCell');
     console.log('Running inference on sample "' + ACTIVE_SAMPLE + '" with ' + nCells + ' cells; showing loader for ~' + durationMs.toFixed(0) + ' ms');
     if (runBtn) { runBtn.disabled = true; runBtn.style.opacity = '0.5'; runBtn.style.boxShadow = 'none'; }
+    // The about-to-run heatmap will replace predPoints, so any temporary
+    // contour preview (drawn from the *old* predPoints via the "eyes"
+    // button) would no longer match — turn it off rather than leave a
+    // stale overlay next to the new heatmap.
+    clearContours();
     showLoader(durationMs);
     log('Running inference on ' + ACTIVE_SAMPLE + '…');
     try {
