@@ -7,6 +7,10 @@ __pycache__/
 *.so
 *.sif
 
+identity-matrix.csv
+*settings.json
+CLAUDE.md
+
 *.parquet
 .dianne_annotations/
 
