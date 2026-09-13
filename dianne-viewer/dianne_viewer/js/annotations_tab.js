@@ -87,7 +87,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   // row, so the user can select/deselect every currently-listed annotation
   // for deletion/export without clicking each checkbox individually.
   const selectRow = document.createElement('div');
-  selectRow.style.cssText = 'display:flex;gap:4px;flex-shrink:0;';
+  selectRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;align-items:center;flex-shrink:0;';
   container.appendChild(selectRow);
   let currentAnnIds = [];
   const selectAllBtn = document.createElement('button');
@@ -100,6 +100,68 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   selectNoneBtn.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
   selectNoneBtn.addEventListener('click', () => { selectedIds.clear(); refresh(); });
   selectRow.appendChild(selectNoneBtn);
+
+  // Bulk-select helpers scoped to a status or class, so a user working
+  // through review (or wanting to bulk-recolor/promote/delete one class)
+  // can multi-select without hand-picking every checkbox. Each press
+  // replaces the current checked set (deselects everything first) rather
+  // than adding to it, so pressing one of these is a clean "select exactly
+  // this group", not a cumulative filter.
+  function _selectByPredicate(predicate) {
+    const sample = getActiveSample();
+    if (!sample) return;
+    selectedIds.clear();
+    for (const a of annotations.listAnnotations(sample, 'library')) {
+      if (predicate(a)) selectedIds.add(a.id);
+    }
+    refresh();
+  }
+  const statusButtons = {};  // status -> button, so _syncBulkRow can enable/disable each
+  function _mkSelectByStatusBtn(status) {
+    const b = document.createElement('button');
+    b.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    b.title = 'Check every "' + status + '" annotation';
+    b.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
+    b.addEventListener('click', () => _selectByPredicate(a => a.status === status));
+    selectRow.appendChild(b);
+    statusButtons[status] = b;
+  }
+  for (const status of ['reviewed', 'proposed', 'edited', 'draft']) _mkSelectByStatusBtn(status);
+
+  const classSelect = document.createElement('select');
+  classSelect.title = 'Check every annotation of the chosen class';
+  classSelect.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 2px;max-width:104px;';
+  classSelect.addEventListener('change', () => {
+    if (!classSelect.value) return;
+    _selectByPredicate(a => a.class === classSelect.value);
+    classSelect.value = '';  // reset to placeholder so it can be reused as a fresh trigger
+  });
+  selectRow.appendChild(classSelect);
+  // Distinct classes actually present among this sample's library
+  // annotations — deliberately not annotations.knownClasses(sample), which
+  // also includes classes with zero current annotations (e.g. offered by
+  // the per-row class autocomplete/color-reset), and would let this
+  // dropdown "select" a class with nothing to select.
+  function _classesInUse(sample) {
+    const set = new Set();
+    for (const a of annotations.listAnnotations(sample, 'library')) set.add(a.class);
+    return Array.from(set).sort();
+  }
+  function _refreshClassSelect() {
+    const sample = getActiveSample();
+    const classes = sample ? _classesInUse(sample) : [];
+    classSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Class…';
+    classSelect.appendChild(placeholder);
+    for (const cls of classes) {
+      const opt = document.createElement('option');
+      opt.value = cls; opt.textContent = cls;
+      classSelect.appendChild(opt);
+    }
+  }
+
   const resetColorsBtn = document.createElement('button');
   resetColorsBtn.textContent = 'Reset colors';
   resetColorsBtn.title = 'Reset every class color to its default';
@@ -114,19 +176,30 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   });
   selectRow.appendChild(resetColorsBtn);
 
-  const bulkRow = document.createElement('div');
-  bulkRow.style.cssText = 'display:none;gap:4px;flex-wrap:wrap;flex-shrink:0;';
-  container.appendChild(bulkRow);
+  // Enable/disable a button or <select> in place, dimming it rather than
+  // hiding it — the bulk-action row and the selection-helper row (All/None/
+  // status/class) stay visible at all times; only their applicability
+  // (something selected, something to select, at least one matching
+  // annotation, etc.) changes whether each control is clickable.
+  function _setEnabled(el, enabled) {
+    if (!el) return;
+    el.disabled = !enabled;
+    el.style.opacity = enabled ? '1' : '0.35';
+    el.style.cursor = enabled ? 'pointer' : 'default';
+  }
+
+  // Delete/Simplify/Export join the same row as All/None/status/class/Reset
+  // colors (right after Reset colors), rather than a row of their own.
   function _mkBulkBtn(label, onClick) {
     const b = document.createElement('button');
     b.textContent = label;
     b.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
     b.addEventListener('click', onClick);
-    bulkRow.appendChild(b);
+    selectRow.appendChild(b);
     return b;
   }
-  _mkBulkBtn('Delete', async () => {
-    if (!modalHelpers) return;
+  const deleteBtn = _mkBulkBtn('Delete', async () => {
+    if (!modalHelpers || !selectedIds.size) return;
     const sample = getActiveSample();
     const ok = await modalHelpers.showConfirm(`Delete ${selectedIds.size} selected annotation(s)?`);
     if (!ok) return;
@@ -149,8 +222,8 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   // *current* zoom level (the level the user is looking at when they choose
   // to simplify), so the visual fidelity trade-off is a screen concept
   // regardless of what zoom the contour was originally drawn at.
-  _mkBulkBtn('Simplify', () => {
-    if (!viewport || typeof annotations.simplifyAnnotation !== 'function') return;
+  const simplifyBtn = _mkBulkBtn('Simplify', () => {
+    if (!viewport || typeof annotations.simplifyAnnotation !== 'function' || !selectedIds.size) return;
     const sample = getActiveSample();
     const screenTolPx = (settings ? settings.get('contourSimplifyPx') : null) || 1.5;
     const { scale } = viewport.getTransform();
@@ -158,7 +231,8 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     for (const id of selectedIds) annotations.simplifyAnnotation(sample, 'library', id, tolerancePx);
     refresh(); annotationsCanvas.redraw();
   });
-  _mkBulkBtn('Export selection', () => {
+  const exportBtn = _mkBulkBtn('Export', () => {
+    if (!selectedIds.size) return;
     const sample = getActiveSample();
     const anns = annotations.listAnnotations(sample, 'library').filter(a => selectedIds.has(a.id));
     // Group by group_id (§6): a group of one ring exports as a Polygon;
@@ -418,8 +492,27 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     return row;
   }
 
+  // Keeps every selection-related control's enabled/disabled state in sync
+  // with the current checkmarks — called after any change to selectedIds
+  // (checkbox toggle, All/None, a bulk-select button, a bulk action). Rows
+  // themselves (and the bulk-action row) always stay visible; only whether
+  // each control would currently do anything determines if it's greyed out.
   function _syncBulkRow() {
-    bulkRow.style.display = selectedIds.size ? 'flex' : 'none';
+    const hasSelection = selectedIds.size > 0;
+    _setEnabled(deleteBtn, hasSelection);
+    _setEnabled(simplifyBtn, hasSelection);
+    _setEnabled(exportBtn, hasSelection);
+
+    const allSelected = currentAnnIds.length > 0 && currentAnnIds.every(id => selectedIds.has(id));
+    _setEnabled(selectAllBtn, currentAnnIds.length > 0 && !allSelected);
+    _setEnabled(selectNoneBtn, hasSelection);
+
+    const sample = getActiveSample();
+    const anns = sample ? annotations.listAnnotations(sample, 'library') : [];
+    for (const [status, b] of Object.entries(statusButtons)) {
+      _setEnabled(b, anns.some(a => a.status === status));
+    }
+    _setEnabled(classSelect, sample ? _classesInUse(sample).length > 0 : false);
   }
 
   function _summaryText(sample) {
@@ -501,6 +594,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
   function refresh() {
     const sample = getActiveSample();
+    _refreshClassSelect();
     listEl.innerHTML = '';
     if (!sample) return;
     let anns = annotations.listAnnotations(sample, 'library').slice();
