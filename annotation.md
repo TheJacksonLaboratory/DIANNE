@@ -46,13 +46,23 @@ New tools, in their own toolbar row:
 - `✏` **Freehand brush** — click-drag to sketch a closed contour freehand.
 - `✥ (vertex edit)` **Vertex editing** — select an annotation, then drag its
   vertices directly on canvas to reshape it.
+- `✂` **Split** — select a library annotation, then drag a freehand line
+  fully across it to divide it into two or more new annotations, each
+  inheriting the original's label/class/notes. A line that only grazes the
+  shape (doesn't fully cross it) is rejected as a no-op.
+- `⊖` **Erase** — select a library annotation, then drag an adjustable-size
+  disk over it to chomp out that area. Can carve a hole into the middle of
+  a shape, or cut it clean through into two or more disjoint pieces.
+- `⊕` **Grow** — the same disk tool as Erase, but adds area instead of
+  removing it. Growing over an existing hole fills it in.
 - `📏` **Ruler** — click once to set the start point, move the mouse to see
   a live rubber-band line, click again to finalize. Only one ruler
   measurement exists at a time — starting a new one replaces the old.
   `Esc` removes the active/most recent ruler line.
 - `↩︎` / `↪︎` **Undo / redo** — covers geometry-mutating operations only
-  (draw, boolean op, vertex edit, delete). Renames, class/status changes,
-  and promotions are not undoable — they're explicit actions.
+  (draw, boolean op, vertex edit, split, erase, grow, delete). Renames,
+  class/status changes, and promotions are not undoable — they're explicit
+  actions.
 - `⤓ GeoJSON` — export annotations for the active slide to a
   QuPath-compatible GeoJSON file.
 

@@ -100,6 +100,9 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     //   { name: 'annot_draw_positive', label: 'draw+', title: 'Freehand/disk brush → positive library annotation', freehandCls: 'positive' },
     //   { name: 'annot_draw_negative', label: 'draw-', title: 'Freehand/disk brush → negative library annotation', freehandCls: 'negative' },
       { name: 'annot_vertex_edit', label: '*',  title: 'Vertex edit: drag/insert/delete vertices' },
+      { name: 'annot_split',       label: '✂',  title: 'Split: draw a line fully across the selected annotation to divide it' },
+      { name: 'annot_erase',       label: '⊖',  title: 'Erase: chomp out area from the selected annotation with an adjustable disk' },
+      { name: 'annot_grow',        label: '⊕',  title: 'Grow: add area onto the selected annotation with an adjustable disk' },
     ];
     // annot_draw / annot_draw_positive / annot_draw_negative all drive the
     // same underlying annotationsCanvas 'freehand' tool (line or noodle/disk
@@ -328,6 +331,35 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       const show = _isAnnotDrawTool(name);
       annotBrushRow.style.display = show ? 'flex' : 'none';
       if (show) _syncAnnotBrushModeBtn(_ac.getBrushMode ? _ac.getBrushMode() : 'line');
+    };
+
+    // ── Row 1d: eraser/grow disk-size control — always a disk footprint
+    // (no line-mode toggle makes sense for chomping/growing area), so just a
+    // single adjustable-size slider, hidden unless annot_erase/annot_grow active.
+    function _isSculptTool(name) { return name === 'annot_erase' || name === 'annot_grow'; }
+    const annotSculptRow = _mkRow();
+    annotSculptRow.style.display = 'none';
+    bar.appendChild(annotSculptRow);
+
+    const annotSculptLabel = document.createElement('span');
+    annotSculptLabel.textContent = 'Size';
+    annotSculptLabel.style.cssText = 'color:#ddd;font-size:11px;white-space:nowrap;';
+    annotSculptRow.appendChild(annotSculptLabel);
+
+    const annotSculptSlider = document.createElement('input');
+    annotSculptSlider.type = 'range';
+    annotSculptSlider.min = '5'; annotSculptSlider.max = '2000'; annotSculptSlider.step = '5';
+    annotSculptSlider.value = String(_ac.getSculptRadius ? _ac.getSculptRadius() : 150);
+    annotSculptSlider.style.cssText = 'width:120px;';
+    annotSculptRow.appendChild(annotSculptSlider);
+    annotSculptSlider.addEventListener('input', () => _ac.setSculptRadius(Number(annotSculptSlider.value)));
+
+    const _origSyncAnnotBrushRow = annotationsOptions._syncAnnotBrushRow;
+    annotationsOptions._syncAnnotBrushRow = (name) => {
+      _origSyncAnnotBrushRow(name);
+      const show = _isSculptTool(name);
+      annotSculptRow.style.display = show ? 'flex' : 'none';
+      if (show) annotSculptSlider.value = String(_ac.getSculptRadius ? _ac.getSculptRadius() : 150);
     };
   }
 
@@ -1041,12 +1073,17 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     }
     container.style.cursor =
       name === 'pan'        ? 'grab' :
-      (_isDrawTool(name) || _isAnnotDrawTool2(name)) ? 'none' :
+      (_isDrawTool(name) || _isAnnotDrawTool2(name) || _isSculptTool2(name)) ? 'none' :
       'cell';
   }
 
   function _isAnnotDrawTool2(name) {
     return name === 'annot_draw' || name === 'annot_draw_positive' || name === 'annot_draw_negative';
+  }
+  // Eraser/grow use a hidden native cursor too, so annotationsCanvas can draw
+  // its own disk-radius cursor preview (mirrors the noodle brush's cursor).
+  function _isSculptTool2(name) {
+    return name === 'annot_erase' || name === 'annot_grow';
   }
 
   setTool('pan');   // initial state

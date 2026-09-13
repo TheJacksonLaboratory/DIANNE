@@ -583,6 +583,40 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     return { minX, minY, maxX, maxY };
   }
 
+  // Guaranteed *raster-space* margin (device px) kept between any rasterized
+  // shape and the edge of its working canvas, regardless of how much the
+  // shape gets downscaled to fit MAX_DIM. A shape that touches the canvas
+  // edge makes _traceMask's boundary walk tear open there instead of forming
+  // a closed loop (the marching-squares grid only visits interior cells), and
+  // the resulting "ring" then gets closed with a straight line back to its
+  // start point — i.e. exactly the spurious long "beam" artifact this margin
+  // prevents. A fixed *image-space* pad isn't enough: once large shapes get
+  // downscaled to fit MAX_DIM, a fixed image-space pad shrinks to a fraction
+  // of a device pixel. Computing the pad in image-space from a fixed raster
+  // target (padPx / scale) keeps it meaningful at any scale.
+  const RASTER_EDGE_MARGIN_PX = 4;
+  /** Compute a rasterize/trace working frame ({minX, minY, scale, W, H}) for
+   *  one or more ring-sets, downscaled to fit `maxDim` if needed, with
+   *  RASTER_EDGE_MARGIN_PX of guaranteed device-px margin around every shape.
+   *  `extraImgPad` adds additional *image-space* padding before that (e.g.
+   *  half a stroke's width, or a swept disk's radius) so the full painted
+   *  footprint — not just the bare path points — stays within the frame. */
+  function _rasterFrame(ringsList, extraImgPad, maxDim) {
+    const bbox = _polysBBox(ringsList);
+    const pad = extraImgPad || 0;
+    const rawMinX = bbox.minX - pad, rawMinY = bbox.minY - pad;
+    const rawMaxX = bbox.maxX + pad, rawMaxY = bbox.maxY + pad;
+    const rawW = Math.max(1e-6, rawMaxX - rawMinX);
+    const rawH = Math.max(1e-6, rawMaxY - rawMinY);
+    const scale = Math.min(1, (maxDim || 1024) / Math.max(rawW, rawH));
+    const marginImg = RASTER_EDGE_MARGIN_PX / scale;
+    const minX = rawMinX - marginImg, minY = rawMinY - marginImg;
+    const maxX = rawMaxX + marginImg, maxY = rawMaxY + marginImg;
+    const W = Math.max(3, Math.ceil((maxX - minX) * scale) + 1);
+    const H = Math.max(3, Math.ceil((maxY - minY) * scale) + 1);
+    return { minX, minY, scale, W, H };
+  }
+
   function _rasterize(rings, minX, minY, scale, W, H) {
     const oc = document.createElement('canvas');
     oc.width = W; oc.height = H;
@@ -646,14 +680,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
    *  this generic op — callers treat the first returned ring as outer and
    *  any additional disjoint pieces as separate group_id siblings). */
   function booleanOp(ringsA, ringsB, op) {
-    const MAX_DIM = 1024;
-    const bbox = _polysBBox([ringsA, ringsB]);
-    const boxW = Math.max(1, bbox.maxX - bbox.minX + 4);
-    const boxH = Math.max(1, bbox.maxY - bbox.minY + 4);
-    const scale = Math.min(1, MAX_DIM / Math.max(boxW, boxH));
-    const W = Math.max(3, Math.ceil(boxW * scale) + 2);
-    const H = Math.max(3, Math.ceil(boxH * scale) + 2);
-    const minX = bbox.minX - 2, minY = bbox.minY - 2;
+    const { minX, minY, scale, W, H } = _rasterFrame([ringsA, ringsB], 0, 1024);
 
     const maskA = _rasterize(ringsA, minX, minY, scale, W, H);
     const maskB = _rasterize(ringsB, minX, minY, scale, W, H);
@@ -671,13 +698,181 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   /** Apply a boolean op between two annotations of the same or different
    *  class within the same sample. Result rings are stored on `targetId`
    *  (subtract/intersect) or merge into a new/updated annotation (union).
-   *  Works across rings sharing the same group_id per task.md §6. */
+   *  Works across rings sharing the same group_id per task.md §6.
+   *
+   *  Handles every possible outcome of the op, not just "stays one piece":
+   *   - 0 pieces (e.g. eraser fully consumed the annotation) → the
+   *     annotation is removed entirely (undo restores it).
+   *   - 1 piece → updated in place, same id (ordinary case; may have grown a
+   *     new hole or lost/filled one — `assembleRingsIntoPieces` figures out
+   *     outer-vs-hole nesting correctly regardless of trace order).
+   *   - 2+ pieces (e.g. eraser cut clean through a narrow neck) → the first
+   *     piece keeps `targetId`, the rest become new sibling annotations
+   *     sharing its group_id, mirroring how a single noodle-brush stroke can
+   *     already produce several disjoint contours under one group (§6). */
   function applyBooleanOp(sample, cls, targetId, otherRings, op) {
     if (!guardGeometryEdit(sample, cls, targetId)) return false;
+    const b = _bucket(sample);
     const ann = findAnnotation(sample, cls, targetId);
     if (!ann) return false;
     const resultRings = booleanOp(ann.rings, otherRings, op);
-    return replaceGeometry(sample, cls, targetId, resultRings);
+    const pieces = assembleRingsIntoPieces(resultRings);
+    const oldRings = ann.rings;
+
+    if (pieces.length === 0) {
+      const idx = b[cls].indexOf(ann);
+      if (idx < 0) return false;
+      b[cls].splice(idx, 1);
+      ann.last_editor = _currentUser();
+      ann.updated_at = new Date().toISOString();
+      markDirty(sample);
+      pushUndo(sample, {
+        undo: () => { ann.rings = oldRings; recomputeMetrics(ann); b[cls].splice(idx, 0, ann); },
+        redo: () => { const i = b[cls].indexOf(ann); if (i >= 0) b[cls].splice(i, 1); },
+      });
+      logAndRecord(`"${ann.label}" fully erased`);
+      _notify(sample);
+      return true;
+    }
+
+    const [first, ...rest] = pieces;
+    const newMainRings = [first.outer, ...first.holes];
+    const extraAnns = rest.map(p => {
+      const copy = makeAnnotation({
+        sample, rings: [p.outer, ...p.holes], label: ann.label, cls: ann.class, author: ann.author, groupId: ann.group_id,
+      });
+      copy.notes = ann.notes;
+      copy.status = ann.status;
+      copy.locked = ann.locked;
+      copy.last_editor = _currentUser();
+      recomputeMetrics(copy);
+      return copy;
+    });
+
+    ann.rings = newMainRings;
+    recomputeMetrics(ann);
+    ann.last_editor = _currentUser();
+    ann.updated_at = new Date().toISOString();
+    markDirty(sample);
+    b[cls].push(...extraAnns);
+    pushUndo(sample, {
+      undo: () => {
+        ann.rings = oldRings;
+        recomputeMetrics(ann);
+        for (const extra of extraAnns) { const i = b[cls].indexOf(extra); if (i >= 0) b[cls].splice(i, 1); }
+      },
+      redo: () => {
+        ann.rings = newMainRings;
+        recomputeMetrics(ann);
+        b[cls].push(...extraAnns);
+      },
+    });
+    logAndRecord(extraAnns.length
+      ? `Edited "${ann.label}" (${op}, split into ${1 + extraAnns.length} pieces)`
+      : `Edited "${ann.label}" (${op})`);
+    _notify(sample);
+    return true;
+  }
+
+  // ── eraser / grow tools: sweep a disk of adjustable radius along a
+  // freehand path and union/subtract it against the currently selected
+  // annotation. A swept disk is exactly the same shape draw.js's/annotations_
+  // canvas.js's noodle brush already traces for freehand-drawn contours, so
+  // this reuses the same rasterize+marching-squares pipeline (via
+  // _strokeMask/_traceMask) rather than a third contour-tracing
+  // implementation — the resulting ring set is just handed to
+  // applyBooleanOp, which already knows how to fold it into (or carve it out
+  // of) the target annotation, including introducing/filling a hole or
+  // splitting/erasing it entirely. ─────────────────────────────────────────
+  function _strokeMask(points, widthPx, minX, minY, scale, W, H) {
+    const oc = document.createElement('canvas');
+    oc.width = W; oc.height = H;
+    const ctx = oc.getContext('2d');
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = Math.max(1, widthPx * scale);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo((points[0].x - minX) * scale, (points[0].y - minY) * scale);
+    for (let i = 1; i < points.length; i++) ctx.lineTo((points[i].x - minX) * scale, (points[i].y - minY) * scale);
+    if (points.length === 1) ctx.lineTo((points[0].x - minX) * scale + 0.01, (points[0].y - minY) * scale); // dot: force a visible stroke
+    ctx.stroke();
+    const data = ctx.getImageData(0, 0, W, H).data;
+    const mask = new Uint8Array(W * H);
+    for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3] > 127 ? 1 : 0;
+    return mask;
+  }
+  function _sweptDiskRings(points, diameterPx) {
+    if (!points || !points.length) return [];
+    // extraImgPad = the disk's own radius, so the frame covers the full
+    // painted footprint (not just the bare center-line path points).
+    const { minX, minY, scale, W, H } = _rasterFrame([[points]], diameterPx / 2, 1024);
+    const mask = _strokeMask(points, diameterPx, minX, minY, scale, W, H);
+    return _traceMask(mask, W, H).map(poly => poly.map(p => ({ x: p.x / scale + minX, y: p.y / scale + minY })));
+  }
+  /** Eraser ('erase', boolean subtract) / grow ('grow', boolean union) tool:
+   *  sweep a disk of `radiusPx` along `points` (image-space) and apply it
+   *  against the selected annotation. Growing over a hole can fill it in
+   *  (the union simply has no gap left to retrace as a hole there) exactly
+   *  as intended — no special-casing needed beyond the raster op itself. */
+  function sculptAnnotation(sample, cls, id, points, radiusPx, mode) {
+    const sweptRings = _sweptDiskRings(points, Math.max(1, radiusPx) * 2);
+    if (!sweptRings.length) return false;
+    return applyBooleanOp(sample, cls, id, sweptRings, mode === 'grow' ? 'union' : 'subtract');
+  }
+
+  /** Split tool: cut a single library annotation into two-or-more new
+   *  annotations along a freehand line/trace, but ONLY if that line fully
+   *  crosses the shape (i.e. subtracting a thin stroke of the drawn line
+   *  from the annotation's mask actually separates it into 2+ disjoint
+   *  pieces) — a line that merely grazes an edge or doesn't fully traverse
+   *  the shape leaves it as one piece and is rejected as a no-op, per the
+   *  "completely crosses" requirement. Each resulting piece becomes an
+   *  independent new annotation (own id/group_id) inheriting the parent's
+   *  label/class/notes/author. Same rasterize + marching-squares + ring-
+   *  nesting-assembly pipeline as booleanOp, so a piece that itself still
+   *  has a hole (not touched by the cut) comes out correctly assembled. */
+  function splitAnnotation(sample, cls, id, linePoints, lineWidthPx) {
+    if (!guardGeometryEdit(sample, cls, id)) return { ok: false, reason: 'locked' };
+    const ann = findAnnotation(sample, cls, id);
+    if (!ann) return { ok: false, reason: 'not-found' };
+    if (!linePoints || linePoints.length < 2) return { ok: false, reason: 'too-short' };
+
+    const cutWidth = Math.max(1, lineWidthPx || 4);
+    // extraImgPad = half the cut stroke's width, so its round-cap footprint
+    // (which extends beyond the raw line points) stays inside the frame too.
+    const { minX, minY, scale, W, H } = _rasterFrame([ann.rings, [linePoints]], cutWidth / 2, 1024);
+
+    const annMask = _rasterize(ann.rings, minX, minY, scale, W, H);
+    const cutMask = _strokeMask(linePoints, cutWidth, minX, minY, scale, W, H);
+    const resultMask = new Uint8Array(W * H);
+    for (let i = 0; i < resultMask.length; i++) resultMask[i] = annMask[i] & (1 - cutMask[i]);
+
+    const rings = _traceMask(resultMask, W, H)
+      .map(poly => poly.map(p => ({ x: p.x / scale + minX, y: p.y / scale + minY })));
+    const pieces = assembleRingsIntoPieces(rings);
+    if (pieces.length < 2) return { ok: false, reason: 'no-crossing' };
+
+    const b = _bucket(sample);
+    const idx = b[cls].indexOf(ann);
+    if (idx < 0) return { ok: false, reason: 'not-found' };
+
+    const newAnns = pieces.map(p => {
+      const copy = makeAnnotation({ sample, rings: [p.outer, ...p.holes], label: ann.label, cls: ann.class, author: ann.author });
+      copy.notes = ann.notes;
+      recomputeMetrics(copy);
+      return copy;
+    });
+
+    b[cls].splice(idx, 1, ...newAnns);
+    markDirty(sample);
+    pushUndo(sample, {
+      undo: () => { b[cls].splice(idx, newAnns.length, ann); },
+      redo: () => { b[cls].splice(idx, 1, ...newAnns); },
+    });
+    logAndRecord(`Split "${ann.label}" into ${newAnns.length} annotations`);
+    _notify(sample);
+    return { ok: true, newIds: newAnns.map(a => a.id) };
   }
 
   // ── §6 vertex-level editing (drag / insert / delete / simplify) ───────
@@ -886,7 +1081,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     setStatus, editMetadata, isLocked, guardGeometryEdit, requestUnlockForEdit,
     promoteToPosNeg, promoteToLibrary,
     setClassColor, getClassColor, getClassColors, resetClassColors, knownClasses,
-    booleanOp, applyBooleanOp,
+    booleanOp, applyBooleanOp, sculptAnnotation, splitAnnotation,
     moveVertex, insertVertex, deleteVertex, simplifyRing, simplifyAnnotation,
     rulerStart, rulerUpdate, rulerFinish, rulerClear, getRuler, rulerLengthPx,
     unitsForSample, formatArea, formatLength, computeAreaPx2, computePerimeterPx,

@@ -30,7 +30,7 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   container.appendChild(canvas);
   const ctx = canvas.getContext('2d');
 
-  let tool = 'none';               // 'none' | 'polygon' | 'freehand' | 'vertex_edit' | 'ruler'
+  let tool = 'none';               // 'none' | 'polygon' | 'freehand' | 'vertex_edit' | 'ruler' | 'split' | 'erase' | 'grow'
   let selectedId = null;
   let hiddenIds = new Set();       // per-annotation visibility (§4)
   let hiddenClasses = new Set();   // per-class-group visibility (§4)
@@ -50,6 +50,14 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   // vertex-edit drag state
   let dragTarget = null; // { id, ringIdx, vertIdx }
   const VERTEX_HIT_RADIUS_VP = 8; // px in viewport space
+  // split tool state: freehand open trace, applied on mouseup against the
+  // selected annotation (annotations.splitAnnotation)
+  let splitPoints = null;
+  const SPLIT_LINE_WIDTH_SCREEN_PX = 3; // constant on-screen thickness for the cut, converted to image px at apply time
+  // eraser/grow tool state: freehand swept-disk path, applied on mouseup
+  // against the selected annotation (annotations.sculptAnnotation)
+  let sculptPoints = null;
+  let sculptRadius = 150; // image px; independent of the freehand-draw brushRadius above
   // freehand cursor tracking (mirrors draw.js so the brush preview is visible
   // even though the native cursor is hidden via container.style.cursor='none')
   let cursorVpX = -9999;
@@ -127,6 +135,39 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       ctx.restore();
     }
 
+    // in-progress split trace: a thin freehand line/dashed preview across
+    // the selected annotation (not filled — it's a cut, not a new shape)
+    if (tool === 'split' && splitPoints && splitPoints.length) {
+      ctx.save();
+      ctx.strokeStyle = '#ff3b3b';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      const p0 = _toVp(splitPoints[0]);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < splitPoints.length; i++) { const p = _toVp(splitPoints[i]); ctx.lineTo(p.x, p.y); }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // in-progress eraser/grow swept-disk preview (same visual language as
+    // the noodle brush, tinted red for erase / green for grow)
+    if ((tool === 'erase' || tool === 'grow') && sculptPoints && sculptPoints.length) {
+      ctx.save();
+      const { scale } = viewport.getTransform();
+      ctx.strokeStyle = tool === 'erase' ? '#ff3b3b' : '#3fff49';
+      ctx.lineWidth = sculptRadius * 2 * scale;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalAlpha = 0.28;
+      ctx.beginPath();
+      const p0 = _toVp(sculptPoints[0]);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < sculptPoints.length; i++) { const p = _toVp(sculptPoints[i]); ctx.lineTo(p.x, p.y); }
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // ruler (§11)
     const ruler = annotations.getRuler();
     if (ruler) {
@@ -148,17 +189,19 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     }
 
     // freehand brush cursor preview (line crosshair / noodle disk+crosshair)
-    if (tool === 'freehand') _renderCursor();
+    if (tool === 'freehand') _renderCursor(brushMode === 'noodle', brushRadius, '#00ff40');
+    // eraser/grow disk cursor preview (always disk footprint)
+    if (tool === 'erase' || tool === 'grow') _renderCursor(true, sculptRadius, tool === 'erase' ? '#ff3b3b' : '#3fff49');
   }
 
-  function _renderCursor() {
+  function _renderCursor(isDisk, radius, color) {
     if (!cursorVisible) return;
     ctx.save();
-    ctx.strokeStyle = '#00ff40';
+    ctx.strokeStyle = color || '#00ff40';
     ctx.globalAlpha = 1.0;
-    if (brushMode === 'noodle') {
+    if (isDisk) {
       const { scale } = viewport.getTransform();
-      const screenRadius = brushRadius * scale;
+      const screenRadius = radius * scale;
       const CH = Math.max(18, screenRadius + 10);
       const GAP = Math.max(4, Math.min(screenRadius, 6));
       ctx.lineWidth = 2.5;
@@ -326,6 +369,31 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       redraw();
       return;
     }
+    if (tool === 'split' || tool === 'erase' || tool === 'grow') {
+      if (selectedId == null) {
+        // Mirror vertex_edit's convention: a click with nothing selected
+        // just selects the annotation under the cursor (if any); the user's
+        // *next* mousedown is what actually starts the split/erase/grow
+        // stroke, so a plain click never silently begins editing.
+        const hit = hitTest(imgPt);
+        if (hit) setSelected(hit.id);
+        else if (typeof log === 'function') log('Select an annotation first to ' + (tool === 'split' ? 'split' : tool) + ' it.');
+        return;
+      }
+      const ann = annotations.findAnnotation(sample, 'library', selectedId);
+      if (!ann) return;
+      const startTracking = () => {
+        cursorVpX = vpX; cursorVpY = vpY; cursorVisible = true;
+        if (tool === 'split') splitPoints = [imgPt];
+        else sculptPoints = [imgPt];
+      };
+      if (annotations.isLocked(ann)) {
+        annotations.requestUnlockForEdit(sample, 'library', ann.id).then(ok => { if (ok) startTracking(); });
+      } else {
+        startTracking();
+      }
+      return;
+    }
     // 'none' → selection click-through
     const hit = hitTest(imgPt);
     setSelected(hit ? hit.id : null);
@@ -349,6 +417,19 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     if (tool === 'ruler') {
       const r = annotations.getRuler();
       if (r && !r.end) { annotations.rulerUpdate(imgPt); redraw(); }
+      return;
+    }
+    if (tool === 'split') {
+      cursorVpX = vpX; cursorVpY = vpY; cursorVisible = true;
+      if (splitPoints) { splitPoints.push(imgPt); redraw(); return; }
+      redraw();
+      return;
+    }
+    if (tool === 'erase' || tool === 'grow') {
+      cursorVpX = vpX; cursorVpY = vpY; cursorVisible = true;
+      if (sculptPoints) { sculptPoints.push(imgPt); redraw(); return; }
+      redraw();
+      return;
     }
   }
 
@@ -383,6 +464,37 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       annotations.moveVertex(sample, 'library', ann.id, ringIdx, vertIdx, newPt);
       dragTarget = null;
       redraw();
+      return;
+    }
+    if (tool === 'split' && splitPoints) {
+      if (splitPoints.length >= 2 && selectedId != null) {
+        const smoothed = _smoothOpenPath(splitPoints, brushSmoothing, Math.max(1, Math.round(brushSmoothing * 8)));
+        const { scale } = viewport.getTransform();
+        const lineWidthPx = SPLIT_LINE_WIDTH_SCREEN_PX / (scale || 1);
+        const result = annotations.splitAnnotation(sample, 'library', selectedId, smoothed, lineWidthPx);
+        if (result && result.ok) {
+          setSelected(result.newIds[0]);
+        } else if (typeof log === 'function') {
+          log('Split line must completely cross the annotation to split it.');
+        }
+      }
+      splitPoints = null;
+      redraw();
+      return;
+    }
+    if ((tool === 'erase' || tool === 'grow') && sculptPoints) {
+      if (selectedId != null) {
+        const smoothed = sculptPoints.length >= 3
+          ? _smoothOpenPath(sculptPoints, brushSmoothing, Math.max(1, Math.round(brushSmoothing * 8)))
+          : sculptPoints;
+        annotations.sculptAnnotation(sample, 'library', selectedId, smoothed, sculptRadius, tool);
+        // The eraser can consume the annotation entirely — drop the stale
+        // selection rather than keep pointing at a now-deleted id.
+        if (!annotations.findAnnotation(sample, 'library', selectedId)) clearSelection();
+      }
+      sculptPoints = null;
+      redraw();
+      return;
     }
   }
 
@@ -531,6 +643,8 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     polyPoints = [];
     freehandPoints = null;
     dragTarget = null;
+    splitPoints = null;
+    sculptPoints = null;
     cursorVisible = false;
     redraw();
   }
@@ -584,6 +698,8 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   function setSmoothing(v) { brushSmoothing = Math.max(0, Math.min(1, Number(v) || 0)); }
   function getSmoothing() { return brushSmoothing; }
   function getBrushRadius() { return brushRadius; }
+  function setSculptRadius(v) { sculptRadius = Math.max(1, Number(v) || 1); redraw(); }
+  function getSculptRadius() { return sculptRadius; }
   function panZoomTo(ann) {
     if (!ann || !ann.rings.length || !ann.rings[0].length) return;
     // Fit the bounding box of every sibling sharing group_id, not just the
@@ -620,5 +736,6 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     finishPolygon,
     setBrushRadius: v => { brushRadius = v; redraw(); },
     getBrushRadius,
+    setSculptRadius, getSculptRadius,
   };
 }
