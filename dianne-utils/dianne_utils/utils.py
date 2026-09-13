@@ -952,6 +952,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
         cache_path = _features_cache_path(sample)
         if os.path.isfile(cache_path):
             print(f'[subtile] using cached features: {cache_path}')
+            os.chmod(cache_path, 0o664) # Legacy to ensure group write access; will be removed later
             return pd.read_parquet(cache_path)
         print(f'[subtile] no cached features at {cache_path}; extracting...')
         from .ctranspath import extract as _ctranspath_extract
@@ -961,6 +962,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
         try:
             os.makedirs(annotations_dir, exist_ok=True)
             df.to_parquet(cache_path)
+            os.chmod(cache_path, 0o664)
             print(f'[subtile] cached features to {cache_path}')
         except Exception as exc:
             # Caching is an optimization, not a correctness requirement — a
