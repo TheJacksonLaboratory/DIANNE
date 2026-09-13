@@ -108,7 +108,7 @@ def quantize_fixed(arr: np.ndarray, val_range=2.0, dtype=np.int8) -> np.ndarray:
 
 def extract_features(slide, pos, model, destination, ts,
                       batch_size, num_batches, transform, forward_fn, postprocess_fn,
-                      num_workers=8):
+                      num_workers=8, progress_cb=None):
     features = []
     num_images = len(pos)
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -136,9 +136,11 @@ def extract_features(slide, pos, model, destination, ts,
                     features_ = features_.reshape(Bn, h_, w_, C).transpose(0, 3, 1, 2)
                     features_ = quantize_fixed(features_)
                     features.append(features_)
+            if progress_cb:
+                progress_cb(ibatch + 1, num_batches)
     return np.vstack(features)
 
-def extract(df_grid, wsi_file, ts=224, num_workers=8, batch_size=512):
+def extract(df_grid, wsi_file, ts=224, num_workers=8, batch_size=512, progress_cb=None):
     model, destination, transform, forward_fn, postprocess_fn = load_model(
         "ctranspath", "/TransPath/ctranspath.pth")
 
@@ -149,7 +151,7 @@ def extract(df_grid, wsi_file, ts=224, num_workers=8, batch_size=512):
 
     features = extract_features(slide, df_grid, model, destination, ts,
                                  batch_size, num_batches, transform, forward_fn,
-                                 postprocess_fn, num_workers=num_workers)
+                                 postprocess_fn, num_workers=num_workers, progress_cb=progress_cb)
     features = features.transpose(0, 2, 3, 1).reshape(-1, features.shape[1])
     cols = [f'feat_CTransPath_{i}' for i in range(features.shape[1])]
     return pd.DataFrame(features, columns=cols)

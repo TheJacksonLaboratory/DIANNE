@@ -948,17 +948,28 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
     def _features_cache_path(sample):
         return os.path.join(annotations_dir, f'{sample}-{F}-{model}_features.parquet')
 
-    def _ensure_features(sample, df_grid):
+    def _ensure_features(sample, df_grid, progress_cb=None):
         cache_path = _features_cache_path(sample)
         if os.path.isfile(cache_path):
             print(f'[subtile] using cached features: {cache_path}')
             os.chmod(cache_path, 0o664) # Legacy to ensure group write access; will be removed later
+            if progress_cb:
+                progress_cb('features_cached', f'Using cached features for {sample}', fraction=1.0)
             return pd.read_parquet(cache_path)
         print(f'[subtile] no cached features at {cache_path}; extracting...')
+        if progress_cb:
+            progress_cb('computing_features',
+                        f'Computing image features for {sample} (first run only, ~30s)…',
+                        fraction=0.0)
         from .ctranspath import extract as _ctranspath_extract
+        def _batch_progress(done, total):
+            if progress_cb:
+                progress_cb('computing_features',
+                            f'Computing image features for {sample} (first run only)… '
+                            f'{done}/{total}', fraction=(done / total if total else None))
         df = _ctranspath_extract(df_grid[['pxl_row_in_wsi', 'pxl_col_in_wsi']], imgs[sample],
                                  ts=ctranspath_ts, num_workers=ctranspath_num_workers,
-                                 batch_size=ctranspath_batch_size)
+                                 batch_size=ctranspath_batch_size, progress_cb=_batch_progress)
         try:
             os.makedirs(annotations_dir, exist_ok=True)
             df.to_parquet(cache_path)
@@ -973,9 +984,11 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
             print(f'[subtile] WARNING: failed to cache features to {cache_path}: {exc}')
         return df
 
-    def _runfn(*, strokes_by_sample, active_sample):
+    def _runfn(*, strokes_by_sample, active_sample, progress_cb=None):
         from .subtilegpu import inferSubtileFromFeatures, cleanupClassifier
 
+        if progress_cb:
+            progress_cb('training', 'Training classifier…', fraction=None)
         clf, _, _ = getClassifierForFromStrokes(
             strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size,
             ads, samples, qs, augFunc=PCMA, alpha=PCMA_alpha, seed=0)
@@ -984,8 +997,10 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
         clf = cleanupClassifier(clf)
 
         df_grid = _load_subtile_grid(imgs[active_sample], F=F, model=model)
-        df_features = _ensure_features(active_sample, df_grid)
+        df_features = _ensure_features(active_sample, df_grid, progress_cb=progress_cb)
 
+        if progress_cb:
+            progress_cb('running_inference', 'Running GPU inference…', fraction=None)
         y, x, p = inferSubtileFromFeatures(
             df_features, df_grid[['array_row', 'array_col']], clf,
             radius=radius, qs=qs, subgrid=subgrid, val_range=val_range)
@@ -1005,6 +1020,10 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
                     pi=p.astype(np.float64).tolist(),
                     delta=delta_x, alpha=0.5, color_low='#FFA500', color_high='#0000FF')
 
+    # Tells ViewerServer._inference_loop it's safe to pass a progress_cb kwarg
+    # (see GET /inference_progress) — a plain run_inference_fn (makeRunFn)
+    # doesn't accept one and would TypeError if it were passed unconditionally.
+    _runfn.supports_progress = True
     return _runfn
 
 def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctranspath-1.h5ad', samplesToSTQnames=None, L=None, ts=56, mpp=0.25, N=8):

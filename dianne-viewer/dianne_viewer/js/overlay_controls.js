@@ -341,20 +341,46 @@ function createOverlayControls({
                'stroke-dashoffset="' + _loaderCircumference.toFixed(2) + '"/>',
       '</svg>',
       '<div id="iv-loader-pct" style="color:#00ff88;font:700 20px monospace;letter-spacing:2px;">0%</div>',
-      '<div style="color:#aaa;font:12px monospace;">Training &amp; running inference…</div>',
+      '<div id="iv-loader-phase" style="color:#aaa;font:12px monospace;text-align:center;max-width:260px;">Training &amp; running inference…</div>',
     '</div>',
   ].join('');
   root.appendChild(inferenceLoader);
 
   let _loaderRaf = null;
+  // Polled while the loader is up (GET /inference_progress) so a run that
+  // reports real phases/fractions (currently only run_subtile_inference —
+  // see makeSubtileRunFn's progress_cb) can show "computing features" vs
+  // "running GPU inference" instead of one opaque time-estimated spinner.
+  // A run that never reports a real fraction (plain run_inference, or the
+  // subtile run's training/inference phases) just falls back to the
+  // time-based ring estimate already running; polling only overrides the
+  // ring when a fraction is actually known.
+  let _progressPollTimer = null;
+
+  function _pollInferenceProgress() {
+    fetch(BASE_URL + '/inference_progress').then(r => r.json()).then(p => {
+      if (!p || !p.active) return;
+      const arc   = inferenceLoader.querySelector('#iv-loader-arc');
+      const pct   = inferenceLoader.querySelector('#iv-loader-pct');
+      const phase = inferenceLoader.querySelector('#iv-loader-phase');
+      if (phase && p.message) phase.textContent = p.message;
+      if (typeof p.fraction === 'number') {
+        const circ = _loaderCircumference;
+        if (arc) arc.style.strokeDashoffset = String(circ * (1 - p.fraction));
+        if (pct) pct.textContent = Math.round(p.fraction * 100) + '%';
+      }
+    }).catch(() => {});
+  }
 
   function showLoader(durationMs) {
     inferenceLoader.style.display = 'flex';
-    const arc  = inferenceLoader.querySelector('#iv-loader-arc');
-    const pct  = inferenceLoader.querySelector('#iv-loader-pct');
-    const circ = _loaderCircumference;
-    if (arc)  { arc.style.strokeDashoffset = String(circ); }
-    if (pct)  { pct.textContent = '0%'; }
+    const arc   = inferenceLoader.querySelector('#iv-loader-arc');
+    const pct   = inferenceLoader.querySelector('#iv-loader-pct');
+    const phase = inferenceLoader.querySelector('#iv-loader-phase');
+    const circ  = _loaderCircumference;
+    if (arc)   { arc.style.strokeDashoffset = String(circ); }
+    if (pct)   { pct.textContent = '0%'; }
+    if (phase) { phase.textContent = 'Training & running inference…'; }
     let startTime = null;
     function step(ts) {
       if (!startTime) startTime = ts;
@@ -364,15 +390,21 @@ function createOverlayControls({
       if (progress < 1) _loaderRaf = requestAnimationFrame(step);
     }
     _loaderRaf = requestAnimationFrame(step);
+    if (_progressPollTimer) clearInterval(_progressPollTimer);
+    _progressPollTimer = setInterval(_pollInferenceProgress, 400);
+    _pollInferenceProgress();
   }
 
   function hideLoader() {
     if (_loaderRaf) { cancelAnimationFrame(_loaderRaf); _loaderRaf = null; }
+    if (_progressPollTimer) { clearInterval(_progressPollTimer); _progressPollTimer = null; }
     inferenceLoader.style.display = 'none';
-    const arc = inferenceLoader.querySelector('#iv-loader-arc');
-    const pct = inferenceLoader.querySelector('#iv-loader-pct');
-    if (arc) arc.style.strokeDashoffset = String(_loaderCircumference);
-    if (pct) pct.textContent = '0%';
+    const arc   = inferenceLoader.querySelector('#iv-loader-arc');
+    const pct   = inferenceLoader.querySelector('#iv-loader-pct');
+    const phase = inferenceLoader.querySelector('#iv-loader-phase');
+    if (arc)   arc.style.strokeDashoffset = String(_loaderCircumference);
+    if (pct)   pct.textContent = '0%';
+    if (phase) phase.textContent = 'Training & running inference…';
   }
 
   // ── run-inference handler ──────────────────────────────────────────────────

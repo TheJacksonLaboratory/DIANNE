@@ -105,6 +105,8 @@ class ViewerServer:
             POST /strokes       → {strokes_positive:[...], strokes_negative:[...]}
             POST /run_inference → tile-level classifier train + inference
             POST /run_subtile_inference → same, but GPU subtile-level inference
+            GET  /inference_progress → phase/fraction of the in-flight run_inference
+                                        or run_subtile_inference call, for progress UI
     """
 
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
@@ -168,6 +170,14 @@ class ViewerServer:
             target=self._inference_loop, daemon=True, name='dianne-inference-worker'
         )
         self._inference_worker.start()
+        # Polled by the client (GET /inference_progress) while a /run_inference
+        # or /run_subtile_inference POST is in flight, so the loading modal can
+        # show which phase is running (e.g. "computing features" vs "GPU
+        # inference") instead of a single opaque spinner. Updated from the
+        # inference worker thread; read from HTTP handler threads — plain dict
+        # replacement is fine here (no partial-write hazard, GIL-protected).
+        self._inference_progress = {'active': False, 'phase': 'idle', 'message': '',
+                                     'fraction': None, 'sample': None}
         self.save_fn           = save_fn
         self.load_fn           = load_fn
         self.list_names_fn     = list_names_fn
@@ -219,6 +229,12 @@ class ViewerServer:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._stopped = False  # set True as soon as /stop is received or stop() is called
 
+    def _set_inference_progress(self, phase, message='', fraction=None, sample=None, active=True):
+        self._inference_progress = {
+            'active': active, 'phase': phase, 'message': message,
+            'fraction': fraction, 'sample': sample,
+        }
+
     def _inference_loop(self):
         """Long-lived worker: picks up (fn, fn_kwargs, result_event, result_box) tuples."""
         while True:
@@ -226,11 +242,27 @@ class ViewerServer:
             if item is None:   # sentinel → shut down
                 break
             fn, fn_kwargs, result_event, result_box = item
+            sample = fn_kwargs.get('active_sample')
+            # Only functions built to report phases (e.g. makeSubtileRunFn's
+            # run fn, which sets .supports_progress) get a progress_cb — a
+            # plain run_inference_fn that doesn't accept the kwarg would
+            # otherwise TypeError.
+            if getattr(fn, 'supports_progress', False):
+                fn_kwargs = {
+                    **fn_kwargs,
+                    'progress_cb': lambda phase, message='', fraction=None, _sample=sample: (
+                        self._set_inference_progress(phase, message, fraction, _sample)
+                    ),
+                }
+                self._set_inference_progress('starting', 'Starting…', sample=sample)
+            else:
+                self._set_inference_progress('running', 'Training & running inference…', sample=sample)
             try:
                 result_box['result'] = fn(**fn_kwargs)
             except Exception as exc:
                 result_box['error'] = exc
             finally:
+                self._set_inference_progress('idle', '', active=False, sample=sample)
                 result_event.set()
 
     def start(self):
@@ -760,6 +792,10 @@ class ViewerServer:
                         'chosen_sample': srv.chosen_sample,
                         'samples': list(srv.images.keys()),
                     }).encode()
+                    self._respond(200, body, 'application/json')
+
+                elif parsed.path == '/inference_progress':
+                    body = json.dumps(srv._inference_progress).encode()
                     self._respond(200, body, 'application/json')
 
                 elif parsed.path == '/stop':
