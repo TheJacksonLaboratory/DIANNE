@@ -580,6 +580,10 @@ _overlayCtrlApi = createOverlayControls({
   strokesBySample,
   buildServerStrokesPayload: _buildServerStrokesPayload,
   annotations,
+  onAnnotationsAdded: (ids) => {
+    const api = _metadataPanel && _metadataPanel.getAnnotationsApi && _metadataPanel.getAnnotationsApi();
+    if (api && typeof api.checkIds === 'function') api.checkIds(ids);
+  },
 });
 window.addEventListener('resize', _overlayCtrlApi.resizePredLayer);
 _overlayCtrlApi.resizePredLayer();

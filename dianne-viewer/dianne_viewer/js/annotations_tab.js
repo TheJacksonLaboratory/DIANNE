@@ -533,5 +533,14 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     if (rowEl) rowEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  return { refresh, onShow: refresh, selectRow: selectAnnotationRow };
+  // Called by boot.js after annotations are created programmatically (e.g.
+  // the overlay controls' "Add" button turning temp contours into draft
+  // annotations) so the new rows show up already checkmarked, ready for the
+  // bulk actions (export/delete/promote) without the user re-selecting them.
+  function checkIds(ids) {
+    for (const id of (ids || [])) selectedIds.add(id);
+    refresh();
+  }
+
+  return { refresh, onShow: refresh, selectRow: selectAnnotationRow, checkIds };
 }

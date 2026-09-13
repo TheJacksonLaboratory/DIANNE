@@ -16,6 +16,7 @@
  *     drawSecondaryLayer,
  *     setActiveSampleFn,
  *     annotations,
+ *     onAnnotationsAdded,
  *   })
  *   → {
  *       resizePredLayer, drawPredLayer,
@@ -43,6 +44,7 @@ function createOverlayControls({
   strokesBySample,
   buildServerStrokesPayload,
   annotations,
+  onAnnotationsAdded,
 }) {
   // ── primary / secondary opacity sliders ────────────────────────────────────
   const _primaryOpacityWrap   = overlayControls.querySelector('#iv-primary-opacity-wrap');
@@ -372,6 +374,7 @@ function createOverlayControls({
         const anns = _annotationsFromFeatures([feat], sample);
         if (!anns.length) { log('No contour to add.'); return; }
         annotations.addAnnotationGroup(sample, 'library', anns);
+        if (typeof onAnnotationsAdded === 'function') onAnnotationsAdded(anns.map(a => a.id));
         contourGeoJSON.features.splice(idx, 1);
         highlightedContourIdx = null;
         // Nothing left in the preview — same cleanup as the "add all" path.
@@ -392,6 +395,7 @@ function createOverlayControls({
       const anns = _annotationsFromFeatures(geojson.features || [], sample);
       if (!anns.length) { log('No contours to add.'); return; }
       annotations.addAnnotationGroup(sample, 'library', anns);
+      if (typeof onAnnotationsAdded === 'function') onAnnotationsAdded(anns.map(a => a.id));
       // Turn off the temporary contour preview now that the same shapes
       // exist as real draft annotations, so the two don't overlay.
       if (contoursVisible) {
