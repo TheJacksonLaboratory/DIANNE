@@ -707,9 +707,12 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
    *     new hole or lost/filled one — `assembleRingsIntoPieces` figures out
    *     outer-vs-hole nesting correctly regardless of trace order).
    *   - 2+ pieces (e.g. eraser cut clean through a narrow neck) → the first
-   *     piece keeps `targetId`, the rest become new sibling annotations
-   *     sharing its group_id, mirroring how a single noodle-brush stroke can
-   *     already produce several disjoint contours under one group (§6). */
+   *     piece keeps `targetId`, the rest become new, fully INDEPENDENT
+   *     annotations (own id AND own group_id) — unlike a single noodle-brush
+   *     stroke's disjoint pieces (which intentionally share one group_id so
+   *     they select/delete as a unit), a piece an edit tore off the target
+   *     is its own annotation from that point on: selecting, deleting, or
+   *     editing one piece must never affect the others. */
   function applyBooleanOp(sample, cls, targetId, otherRings, op) {
     if (!guardGeometryEdit(sample, cls, targetId)) return false;
     const b = _bucket(sample);
@@ -739,7 +742,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     const newMainRings = [first.outer, ...first.holes];
     const extraAnns = rest.map(p => {
       const copy = makeAnnotation({
-        sample, rings: [p.outer, ...p.holes], label: ann.label, cls: ann.class, author: ann.author, groupId: ann.group_id,
+        sample, rings: [p.outer, ...p.holes], label: ann.label, cls: ann.class, author: ann.author,
       });
       copy.notes = ann.notes;
       copy.status = ann.status;
