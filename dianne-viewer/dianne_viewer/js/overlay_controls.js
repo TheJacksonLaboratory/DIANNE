@@ -92,6 +92,7 @@ function createOverlayControls({
   const contourCtx = contourLayer.getContext('2d');
   let contourGeoJSON = null;   // last-fetched contours (image-px space), or null
   let contoursVisible = false;
+  let highlightedContourIdx = null;  // index into contourGeoJSON.features, or null
 
   let predStyle = {
     alpha: 0.55,
@@ -203,29 +204,76 @@ function createOverlayControls({
   const contourShowBtn = overlayControls.querySelector('#iv-contour-show');
   const contourAddBtn  = overlayControls.querySelector('#iv-contour-add');
 
+  function _strokeContourFeature(feat, color, width) {
+    const rings = feat.geometry && feat.geometry.coordinates;
+    if (!rings) return;
+    contourCtx.lineWidth = width;
+    contourCtx.strokeStyle = color;
+    for (const ring of rings) {
+      if (!ring || ring.length < 2) continue;
+      contourCtx.beginPath();
+      ring.forEach((c, i) => {
+        const s = viewport.toScreenSpace(c[0], c[1]);
+        if (i === 0) contourCtx.moveTo(s.x, s.y); else contourCtx.lineTo(s.x, s.y);
+      });
+      contourCtx.stroke();
+    }
+  }
+
   function drawContourLayer() {
     contourCtx.clearRect(0, 0, contourLayer.width, contourLayer.height);
     if (!contoursVisible || !contourGeoJSON) return;
-    contourCtx.lineWidth = 2;
-    contourCtx.strokeStyle = '#00ff88';
-    for (const feat of (contourGeoJSON.features || [])) {
+    const feats = contourGeoJSON.features || [];
+    // Draw the highlighted contour (if any) last so it renders on top of
+    // any overlapping neighbors.
+    feats.forEach((feat, idx) => {
+      if (idx !== highlightedContourIdx) _strokeContourFeature(feat, '#00ff88', 2);
+    });
+    if (highlightedContourIdx !== null && feats[highlightedContourIdx]) {
+      _strokeContourFeature(feats[highlightedContourIdx], '#ffdd00', 3.5);
+    }
+  }
+
+  // Euclidean distance from point (px,py) to segment (ax,ay)-(bx,by), for
+  // contour double-click hit-testing.
+  function _distToSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    let t = lenSq > 0 ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+
+  const CONTOUR_HIT_PX = 8;  // max screen-space distance (px) counted as a hit
+
+  // Returns the index of the contour feature whose ring passes closest to
+  // (vpX, vpY) (viewport/screen space, same as drawContourLayer draws in),
+  // within CONTOUR_HIT_PX, or null if none is close enough.
+  function _hitTestContour(vpX, vpY) {
+    if (!contourGeoJSON) return null;
+    let bestIdx = null;
+    let bestDist = CONTOUR_HIT_PX;
+    (contourGeoJSON.features || []).forEach((feat, idx) => {
       const rings = feat.geometry && feat.geometry.coordinates;
-      if (!rings) continue;
+      if (!rings) return;
       for (const ring of rings) {
         if (!ring || ring.length < 2) continue;
-        contourCtx.beginPath();
-        ring.forEach((c, i) => {
-          const s = viewport.toScreenSpace(c[0], c[1]);
-          if (i === 0) contourCtx.moveTo(s.x, s.y); else contourCtx.lineTo(s.x, s.y);
-        });
-        contourCtx.stroke();
+        const pts = ring.map(c => viewport.toScreenSpace(c[0], c[1]));
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i], b = pts[(i + 1) % pts.length];
+          const d = _distToSegment(vpX, vpY, a.x, a.y, b.x, b.y);
+          if (d < bestDist) { bestDist = d; bestIdx = idx; }
+        }
       }
-    }
+    });
+    return bestIdx;
   }
 
   function clearContours() {
     contourGeoJSON = null;
     contoursVisible = false;
+    highlightedContourIdx = null;
     if (contourShowBtn) contourShowBtn.style.opacity = '0.6';
     drawContourLayer();
   }
@@ -255,6 +303,7 @@ function createOverlayControls({
       const result = await resp.json();
       if (!result.ok) { log('Contour extraction error: ' + (result.error || 'unknown')); return null; }
       contourGeoJSON = result.geojson;
+      highlightedContourIdx = null;  // fresh data — any prior selection index is stale
       return contourGeoJSON;
     } catch (err) {
       log('Contour extraction request failed: ' + err);
@@ -275,6 +324,7 @@ function createOverlayControls({
     contourShowBtn.addEventListener('click', async () => {
       if (contoursVisible) {
         contoursVisible = false;
+        highlightedContourIdx = null;
         contourShowBtn.style.opacity = '0.6';
         drawContourLayer();
         return;
@@ -289,27 +339,57 @@ function createOverlayControls({
     });
   }
 
+  // Builds one draft annotation per GeoJSON feature (each feature's own
+  // rings are already correctly outer+holes, per region, from the server's
+  // contour hierarchy) — via makeAnnotation directly rather than
+  // buildAnnotationsFromRings, which would otherwise assign every region a
+  // shared group_id (since it groups whenever it returns >1 piece), making
+  // unrelated regions delete together as if they were one shape.
+  function _annotationsFromFeatures(feats, sample) {
+    const anns = [];
+    for (const feat of feats) {
+      const coords = feat.geometry && feat.geometry.coordinates;
+      if (!coords) continue;
+      const rings = coords.filter(r => r && r.length >= 3).map(ring => ring.map(c => ({ x: c[0], y: c[1] })));
+      if (!rings.length) continue;
+      const ann = annotations.makeAnnotation({ sample, rings, cls: 'positive' });
+      annotations.recomputeMetrics(ann);
+      anns.push(ann);
+    }
+    return anns;
+  }
+
   if (contourAddBtn) {
     contourAddBtn.addEventListener('click', async () => {
+      const sample = ACTIVE_SAMPLE_REF();
+
+      // A single contour is highlighted (double-clicked) — add just that
+      // one, leave the rest of the temporary preview showing.
+      if (highlightedContourIdx !== null && contourGeoJSON &&
+          contourGeoJSON.features && contourGeoJSON.features[highlightedContourIdx]) {
+        const idx = highlightedContourIdx;
+        const feat = contourGeoJSON.features[idx];
+        const anns = _annotationsFromFeatures([feat], sample);
+        if (!anns.length) { log('No contour to add.'); return; }
+        annotations.addAnnotationGroup(sample, 'library', anns);
+        contourGeoJSON.features.splice(idx, 1);
+        highlightedContourIdx = null;
+        // Nothing left in the preview — same cleanup as the "add all" path.
+        if (!contourGeoJSON.features.length) {
+          contoursVisible = false;
+          if (contourShowBtn) contourShowBtn.style.opacity = '0.6';
+        }
+        drawContourLayer();
+        log('Added 1 draft annotation from the highlighted contour (' +
+            contourGeoJSON.features.length + ' remaining).');
+        return;
+      }
+
+      // No highlight — add every contour currently in the preview (existing
+      // behavior), then turn the temporary preview off entirely.
       const geojson = contourGeoJSON || await _fetchContours();
       if (!geojson) return;
-      const sample = ACTIVE_SAMPLE_REF();
-      // One annotation per GeoJSON feature (each feature's own rings are
-      // already correctly outer+holes, per region, from the server's contour
-      // hierarchy) — built directly via makeAnnotation rather than
-      // buildAnnotationsFromRings, which would otherwise assign every region
-      // a shared group_id (since it groups whenever it returns >1 piece),
-      // making unrelated regions delete together as if they were one shape.
-      const anns = [];
-      for (const feat of (geojson.features || [])) {
-        const coords = feat.geometry && feat.geometry.coordinates;
-        if (!coords) continue;
-        const rings = coords.filter(r => r && r.length >= 3).map(ring => ring.map(c => ({ x: c[0], y: c[1] })));
-        if (!rings.length) continue;
-        const ann = annotations.makeAnnotation({ sample, rings, cls: 'positive' });
-        annotations.recomputeMetrics(ann);
-        anns.push(ann);
-      }
+      const anns = _annotationsFromFeatures(geojson.features || [], sample);
       if (!anns.length) { log('No contours to add.'); return; }
       annotations.addAnnotationGroup(sample, 'library', anns);
       // Turn off the temporary contour preview now that the same shapes
@@ -322,6 +402,38 @@ function createOverlayControls({
       log('Added ' + anns.length + ' draft annotation' + (anns.length === 1 ? '' : 's') + ' from contours.');
     });
   }
+
+  // ── contour selection: double-click to highlight, Delete to remove,
+  //    Escape to de-highlight ─────────────────────────────────────────────────
+  root.addEventListener('dblclick', e => {
+    if (!contoursVisible || !contourGeoJSON) return;
+    if (e.target && e.target.closest && e.target.closest('[data-iv-ui="true"]')) return;
+    const rect = root.getBoundingClientRect();
+    const vpX = e.clientX - rect.left, vpY = e.clientY - rect.top;
+    const idx = _hitTestContour(vpX, vpY);
+    if (idx !== null) {
+      highlightedContourIdx = idx;
+      drawContourLayer();
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (highlightedContourIdx === null) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === 'Escape') {
+      highlightedContourIdx = null;
+      drawContourLayer();
+      e.stopImmediatePropagation();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (contourGeoJSON && contourGeoJSON.features) {
+        contourGeoJSON.features.splice(highlightedContourIdx, 1);
+      }
+      highlightedContourIdx = null;
+      drawContourLayer();
+      e.stopImmediatePropagation();
+    }
+  });
 
   // ── inference loading overlay ──────────────────────────────────────────────
   const inferenceLoader = document.createElement('div');
