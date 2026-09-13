@@ -128,8 +128,11 @@ function createFullscreen({ overlayControls, resizePredLayer }) {
         return;
       }
       if (active) {
-        active = false;
-        exitFs();
+        // Do nothing
+        return;
+
+        // active = false;
+        // exitFs();
       }
     }
   }
