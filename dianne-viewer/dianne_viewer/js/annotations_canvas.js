@@ -15,7 +15,7 @@
  *   .setSelected(id)            → highlight + used by bidirectional list sync
  *   .panZoomTo(ann)             → center viewport on an annotation
  *   .redraw()
- *   .setVisibility(id, visible) / setClassVisibility(cls, visible)
+ *   .setVisibility(id, visible) / .isVisible(id) / setClassVisibility(cls, visible)
  *
  * `settings` (optional) supplies the 'contourSimplify' / 'contourSimplifyPx'
  * viewer settings (see settings.js): newly finished polygon/freehand/noodle
@@ -566,6 +566,10 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     if (visible) hiddenIds.delete(id); else hiddenIds.add(id);
     redraw();
   }
+  // Per-annotation manual visibility only (ignores class-level hide) — lets
+  // the list's eye button reflect/toggle exactly the state setVisibility
+  // controls, independent of any whole-class hide.
+  function isVisible(id) { return !hiddenIds.has(id); }
   function setClassVisibility(cls, visible) {
     if (visible) hiddenClasses.delete(cls); else hiddenClasses.add(cls);
     redraw();
@@ -607,7 +611,7 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   return {
     setTool, onMouseDown, onMouseMove, onMouseUp, onKeyDown, onMouseLeave,
     setSelected, hasSelection, clearSelection, deleteSelected,
-    setVisibility, setClassVisibility, setClassOpacity,
+    setVisibility, isVisible, setClassVisibility, setClassOpacity,
     setClassColor, getClassColor,
     setFreehandMode, getFreehandMode,
     setBrushMode, getBrushMode,

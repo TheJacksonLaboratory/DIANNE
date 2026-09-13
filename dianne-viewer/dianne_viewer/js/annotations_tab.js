@@ -239,17 +239,34 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     classInput.addEventListener('focus', () => _openClassDropdown());
     classInput.addEventListener('blur', () => { classDropdown.style.display = 'none'; });
     classInput.addEventListener('change', () => {
-      const apply = () => {
-        annotations.editMetadata(sample, 'library', ann.id, { class: classInput.value });
-        colorInput.title = 'Color for class "' + classInput.value + '"';
-        colorInput.value = annotations.getClassColor(classInput.value) || _defaultClassColor(classInput.value);
+      const newClass = classInput.value;
+      const applySingle = () => {
+        annotations.editMetadata(sample, 'library', ann.id, { class: newClass });
+        colorInput.title = 'Color for class "' + newClass + '"';
+        colorInput.value = annotations.getClassColor(newClass) || _defaultClassColor(newClass);
         refresh();
+      };
+      const applyBulk = (ids) => {
+        for (const id of ids) annotations.editMetadata(sample, 'library', id, { class: newClass });
+        refresh();
+      };
+      // If this row is one of two-or-more checkmarked annotations, offer to
+      // apply the class change to the whole checked set; declining (or a
+      // lone checked row, or no modalHelpers available) falls back to
+      // editing just this annotation, same as before.
+      const proceed = async () => {
+        if (selectedIds.has(ann.id) && selectedIds.size > 1 && modalHelpers) {
+          const ok = await modalHelpers.showConfirm(
+            `Change class of all ${selectedIds.size} selected annotations to "${newClass}"?`);
+          if (ok) { applyBulk(Array.from(selectedIds)); return; }
+        }
+        applySingle();
       };
       // Editing a reviewed annotation's metadata needs the same confirm
       // dialog as a geometry edit (annotations_canvas.js); a canceled dialog
       // just re-renders the row so the input snaps back to its saved value.
-      if (annotations.isLocked(ann)) annotations.requestUnlockForEdit(sample, 'library', ann.id).then(ok => ok ? apply() : refresh());
-      else apply();
+      if (annotations.isLocked(ann)) annotations.requestUnlockForEdit(sample, 'library', ann.id).then(ok => ok ? proceed() : refresh());
+      else proceed();
     });
     classWrap.appendChild(classInput);
 
@@ -329,14 +346,20 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
 
     const visBtn = document.createElement('button');
-    let visible = true;
+    const isVis = typeof annotationsCanvas.isVisible === 'function' ? annotationsCanvas.isVisible(ann.id) : true;
     visBtn.textContent = '👀';
-    visBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;';
+    visBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;' +
+      'opacity:' + (isVis ? '1' : '0.35') + ';';
     visBtn.addEventListener('click', e => {
       e.stopPropagation();
-      visible = !visible;
-      visBtn.style.opacity = visible ? '1' : '0.35';
-      annotationsCanvas.setVisibility(ann.id, visible);
+      const wasVisible = typeof annotationsCanvas.isVisible === 'function' ? annotationsCanvas.isVisible(ann.id) : true;
+      const newVisible = !wasVisible;
+      // If this row is part of the current checkmarked selection, the
+      // toggle applies to every checked annotation (bulk action); otherwise
+      // it's just this one row, as before. No confirmation needed either way.
+      const targets = selectedIds.has(ann.id) ? Array.from(selectedIds) : [ann.id];
+      for (const id of targets) annotationsCanvas.setVisibility(id, newVisible);
+      refresh();
     });
     top.appendChild(visBtn);
 
