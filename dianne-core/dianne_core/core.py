@@ -31,6 +31,7 @@ from sklearn.linear_model import LogisticRegression as LR
 from scipy.ndimage import generic_filter
 from scipy.spatial import KDTree
 from scipy.sparse import issparse
+from scipy.special import erfinv
 from joblib import Parallel, delayed
 
 
@@ -285,6 +286,47 @@ def getPatchRepresentationParallel(ad, df_temp_img_tiles, qs, sample_id=None,
         return getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=sample_id)
 
 
+def fast_ppf(qs, loc, scale):
+    """Percent-point function of a normal distribution, via erfinv."""
+    return loc + scale * np.sqrt(2) * erfinv(2 * qs - 1)
+
+
+def get_cdf_of_matrix_of_single_values_ppf_fast(a, qs, w=0.01):
+    """Synthesize per-quantile values for rows that collapsed to a single constant value.
+
+    Treats each entry of `a` as the mean of a narrow normal distribution (std
+    proportional to `w`) and evaluates its ppf at each of `qs`, so a previously flat
+    ("single value repeated for every quantile") row gets a small monotonic spread
+    across quantiles instead.
+
+    Parameters
+    ----------
+    a : array-like, shape (m, n)
+        Constant value for each of m rows (e.g. patches) and n columns (e.g. features).
+    qs : array-like, shape (K,)
+        Quantile levels to evaluate.
+    w : float
+        Relative width of the synthetic spread (std = max(|a| * w/2, 0.1)).
+
+    Returns
+    -------
+    X : ndarray, shape (m, K * n)
+        Synthetic quantile values, laid out as K blocks of width n (i.e. all n columns
+        for qs[0], then all n columns for qs[1], etc.) to match getPatchRepresentation's
+        (quantile, feature) column ordering.
+    """
+    a = np.asarray(a)
+    qs = np.asarray(qs)
+
+    m, n = a.shape
+    sigma = np.maximum(np.abs(a) * (w / 2), 0.1)
+
+    X = fast_ppf(qs, loc=a[..., None], scale=sigma[..., None])  # (m, n, K)
+
+    X = np.swapaxes(X, 1, 2).reshape(m, qs.size * n)
+    return X
+
+
 def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
     """Get the patch SAMPLER representation for each tile in the image.
 
@@ -310,6 +352,22 @@ def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
     df = df.groupby(level=0).quantile(qs).unstack()
     df = df.reorder_levels([1, 0], axis=1)
     df = df.T.sort_index().T
+
+    # Columns are laid out as K blocks of width n (n features per quantile level, see
+    # get_cdf_of_matrix_of_single_values_ppf_fast), so this reshape recovers (patch,
+    # quantile, feature). A patch/feature pair whose K quantile values are all identical
+    # (e.g. a patch built from a single duplicated tile, see getTilesInContour) is a flat
+    # "CDF" that blows up the PCMA augmentation's PDF differentiation later on; replace
+    # only those flat entries with a small synthetic spread around the same value.
+    K = len(qs)
+    n = df.shape[1] // K
+    vals = df.to_numpy().reshape(-1, K, n)
+    flat_mask = vals.max(axis=1) == vals.min(axis=1)
+    if flat_mask.any():
+        noisy = get_cdf_of_matrix_of_single_values_ppf_fast(vals[:, 0, :], np.asarray(qs), w=0.02)
+        noisy = noisy.reshape(-1, K, n)
+        vals = np.where(flat_mask[:, None, :], noisy, vals)
+        df = pd.DataFrame(vals.reshape(df.shape[0], -1), index=df.index, columns=df.columns)
 
     if sample_id is not None:
         df.index = pd.MultiIndex.from_product([[sample_id], df.index], names=['sample', 'patch'])
