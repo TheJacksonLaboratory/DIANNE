@@ -759,5 +759,8 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     setSample,
     // setLevel stub for API compatibility with tiles.js
     setLevel : () => {},
+    // Wand tool pixel sampling: the composite canvas already covers the whole
+    // container in screen space, so callers can getImageData from it directly.
+    getCanvas: () => canvas,
   };
 }

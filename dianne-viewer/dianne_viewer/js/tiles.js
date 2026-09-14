@@ -338,11 +338,47 @@ function createTiles(tileLayer, baseUrl, meta, viewport, sampleName = null, sett
     });
   }
 
+  // ── pixel sampling (Wand tool) ──────────────────────────────────────────────
+  // Composites the currently-displayed level's cached tile <img>s into an
+  // offscreen canvas covering a screen-space rect (container-relative px, same
+  // coordinate space as viewport.toScreenSpace / mouse vpX,vpY) and returns the
+  // resulting ImageData. Only currentLevel tiles are drawn (never the
+  // fallback level) so the wand never blends two resolutions together; any
+  // area whose tile hasn't loaded yet is left transparent (alpha 0), which
+  // callers treat as "no data" rather than guessing a color.
+  function getRenderedRegion(x, y, w, h) {
+    const rx = Math.max(0, Math.floor(x));
+    const ry = Math.max(0, Math.floor(y));
+    const rw = Math.max(1, Math.ceil(w));
+    const rh = Math.max(1, Math.ceil(h));
+    const oc = document.createElement('canvas');
+    oc.width = rw; oc.height = rh;
+    const octx = oc.getContext('2d');
+    const { scale, ox, oy } = viewport.getTransform();
+    const l0 = currentMeta.levels[0];
+    for (const [k, entry] of cache) {
+      const [l, r, c] = k.split('-').map(Number);
+      if (l !== currentLevel) continue;
+      if (!entry.img.complete || !entry.img.naturalWidth) continue;
+      const lm = currentMeta.levels[l];
+      const downsample = l0.width / lm.width;
+      const sx = c * TILE * downsample * scale + ox;
+      const sy = r * TILE * downsample * scale + oy;
+      const sw = TILE * downsample * scale;
+      const sh = TILE * downsample * scale;
+      if (sx + sw <= rx || sx >= rx + rw || sy + sh <= ry || sy >= ry + rh) continue;
+      octx.drawImage(entry.img, sx - rx, sy - ry, sw, sh);
+    }
+    try { return octx.getImageData(0, 0, rw, rh); }
+    catch (e) { return null; }
+  }
+
   return {
     update: scheduleUpdate,
     setLevel: l => { currentLevel = l; },
     getLevel: () => currentLevel,
     setMeta,
     setSample,
+    getRenderedRegion,
   };
 }

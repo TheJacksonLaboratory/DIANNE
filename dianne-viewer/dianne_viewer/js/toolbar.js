@@ -103,6 +103,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       { name: 'annot_split',       label: '✂',  title: 'Split: draw a line fully across the selected annotation to divide it' },
       { name: 'annot_erase',       label: '⊖',  title: 'Erase: chomp out area from the selected annotation with an adjustable disk' },
       { name: 'annot_grow',        label: '⊕',  title: 'Grow: add area onto the selected annotation with an adjustable disk' },
+    //   { name: 'annot_wand',        label: '✨', title: 'Wand: click-drag to quick-select by color/optical-density similarity (snaps to edges beyond the brush); release and drag again to keep filling in the same region, Enter to accept, Esc to cancel. Alt+click for single-seed mode: move the mouse to ramp tolerance, click/Enter to accept, Esc to cancel.' },
     ];
     // annot_draw / annot_draw_positive / annot_draw_negative all drive the
     // same underlying annotationsCanvas 'freehand' tool (line or noodle/disk
@@ -360,6 +361,52 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       const show = _isSculptTool(name);
       annotSculptRow.style.display = show ? 'flex' : 'none';
       if (show) annotSculptSlider.value = String(_ac.getSculptRadius ? _ac.getSculptRadius() : 150);
+    };
+
+    // ── Row 1e: wand controls — brush footprint Size + similarity Tolerance,
+    // hidden unless annot_wand is active. Size only matters in brush (drag)
+    // mode; Tolerance doubles as brush-mode's fixed threshold and seed-mode's
+    // ramp ceiling (see annotations_canvas.js's wand implementation).
+    function _isWandTool(name) { return name === 'annot_wand'; }
+    const annotWandRow = _mkRow();
+    annotWandRow.style.display = 'none';
+    bar.appendChild(annotWandRow);
+
+    const annotWandSizeLabel = document.createElement('span');
+    annotWandSizeLabel.textContent = 'Size';
+    annotWandSizeLabel.style.cssText = 'color:#ddd;font-size:11px;white-space:nowrap;';
+    annotWandRow.appendChild(annotWandSizeLabel);
+
+    const annotWandSizeSlider = document.createElement('input');
+    annotWandSizeSlider.type = 'range';
+    annotWandSizeSlider.min = '5'; annotWandSizeSlider.max = '400'; annotWandSizeSlider.step = '5';
+    annotWandSizeSlider.value = String(_ac.getWandRadius ? _ac.getWandRadius() : 60);
+    annotWandSizeSlider.style.cssText = 'width:90px;';
+    annotWandRow.appendChild(annotWandSizeSlider);
+    annotWandSizeSlider.addEventListener('input', () => _ac.setWandRadius(Number(annotWandSizeSlider.value)));
+
+    const annotWandTolLabel = document.createElement('span');
+    annotWandTolLabel.textContent = 'Tolerance';
+    annotWandTolLabel.style.cssText = 'color:#ddd;font-size:11px;white-space:nowrap;';
+    annotWandRow.appendChild(annotWandTolLabel);
+
+    const annotWandTolSlider = document.createElement('input');
+    annotWandTolSlider.type = 'range';
+    annotWandTolSlider.min = '1'; annotWandTolSlider.max = '100'; annotWandTolSlider.step = '1';
+    annotWandTolSlider.value = String(_ac.getWandTolerance ? _ac.getWandTolerance() : 24);
+    annotWandTolSlider.style.cssText = 'width:80px;';
+    annotWandRow.appendChild(annotWandTolSlider);
+    annotWandTolSlider.addEventListener('input', () => _ac.setWandTolerance(Number(annotWandTolSlider.value)));
+
+    const _origSyncAnnotBrushRow2 = annotationsOptions._syncAnnotBrushRow;
+    annotationsOptions._syncAnnotBrushRow = (name) => {
+      _origSyncAnnotBrushRow2(name);
+      const show = _isWandTool(name);
+      annotWandRow.style.display = show ? 'flex' : 'none';
+      if (show) {
+        annotWandSizeSlider.value = String(_ac.getWandRadius ? _ac.getWandRadius() : 60);
+        annotWandTolSlider.value = String(_ac.getWandTolerance ? _ac.getWandTolerance() : 24);
+      }
     };
   }
 
@@ -1073,7 +1120,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     }
     container.style.cursor =
       name === 'pan'        ? 'grab' :
-      (_isDrawTool(name) || _isAnnotDrawTool2(name) || _isSculptTool2(name)) ? 'none' :
+      (_isDrawTool(name) || _isAnnotDrawTool2(name) || _isSculptTool2(name) || _isWandTool2(name)) ? 'none' :
       'cell';
   }
 
@@ -1084,6 +1131,10 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   // its own disk-radius cursor preview (mirrors the noodle brush's cursor).
   function _isSculptTool2(name) {
     return name === 'annot_erase' || name === 'annot_grow';
+  }
+  // Wand uses the same hidden-native-cursor + custom disk-preview convention.
+  function _isWandTool2(name) {
+    return name === 'annot_wand';
   }
 
   setTool('pan');   // initial state

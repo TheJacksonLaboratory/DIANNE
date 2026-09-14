@@ -10,8 +10,10 @@
  * untouched.
  *
  * Exposes createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log })
- *   .setTool(name)              → 'none'|'polygon'|'freehand'|'vertex_edit'|'ruler'
+ *   .setTool(name)              → 'none'|'polygon'|'freehand'|'vertex_edit'|'ruler'|'split'|'erase'|'grow'|'wand'
  *   .onMouseDown/onMouseMove/onMouseUp/onKeyDown(e)
+ *   .setPixelSource(src)        → wires the wand tool to a { getRegion(sx,sy,sw,sh) → ImageData|null }
+ *                                  pixel provider for the active render mode (see boot.js)
  *   .setSelected(id)            → highlight + used by bidirectional list sync
  *   .panZoomTo(ann)             → center viewport on an annotation
  *   .redraw()
@@ -30,7 +32,7 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   container.appendChild(canvas);
   const ctx = canvas.getContext('2d');
 
-  let tool = 'none';               // 'none' | 'polygon' | 'freehand' | 'vertex_edit' | 'ruler' | 'split' | 'erase' | 'grow'
+  let tool = 'none';               // 'none' | 'polygon' | 'freehand' | 'vertex_edit' | 'ruler' | 'split' | 'erase' | 'grow' | 'wand'
   let selectedId = null;
   let hiddenIds = new Set();       // per-annotation visibility (§4)
   let hiddenClasses = new Set();   // per-class-group visibility (§4)
@@ -58,6 +60,52 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   // against the selected annotation (annotations.sculptAnnotation)
   let sculptPoints = null;
   let sculptRadius = 150; // image px; independent of the freehand-draw brushRadius above
+
+  // ── wand tool state ────────────────────────────────────────────────────────
+  // Two interaction modes, chosen at mousedown by the Alt/Option modifier:
+  //   'brush' (plain click-drag)  — Quick-Select-style: grows the region along
+  //     the dragged path, snapping to similar-colored pixels beyond the brush
+  //     footprint. The reference color is sampled once, from the footprint's
+  //     first frame, and frozen for the rest of the session (wandAdaptiveRef)
+  //     — recomputing it from the whole path on every frame let it drift as
+  //     more/different-colored area got painted, which could un-match pixels
+  //     that had matched a moment before and made the grown region visibly
+  //     shrink ("erase"). Releasing the mouse just pauses the stroke —
+  //     pressing mousedown again keeps adding to the *same* growing region
+  //     (like a paint tool: QuPath / Photoshop Quick Selection), instead of
+  //     each drag becoming its own disconnected shape. Enter commits the
+  //     accumulated region as one annotation; Escape cancels the whole
+  //     in-progress shape.
+  //   'seed'  (Alt+click)         — classic magic-wand: one click seeds a
+  //     fixed reference color, then just moving the mouse (no drag) live-
+  //     previews a flood fill whose tolerance ramps up with the *farthest*
+  //     distance the cursor has reached from the seed this session
+  //     (wandSeedMaxDist) rather than the current instantaneous distance —
+  //     otherwise moving back toward the seed (e.g. out of habit, to click
+  //     and confirm) silently re-shrank an already-grown preview right before
+  //     it got accepted. Accepted by a second click or Enter, cancelled by
+  //     Escape (which is also the only way to shrink it back down).
+  // `pixelSource` is supplied by boot.js (setPixelSource) and differs by
+  // active render mode (plain RGB tiles / multichannel / monochannel2D) — see
+  // its call sites below for the { getRegion(sx,sy,sw,sh) → ImageData|null }
+  // contract.
+  let pixelSource = null;
+  let wandRadius = 60;        // image px; brush-mode footprint radius
+  let wandTolerance = 24;     // 0-100; brush-mode threshold, seed-mode ramp ceiling
+  let wandMode = null;        // null | 'brush' | 'seed'
+  let wandPathPoints = null;  // image-space points collected across the whole brush-mode session (all strokes, until commit/cancel)
+  let wandDragging = false;   // true while the mouse button is held during a brush-mode stroke
+  let wandAdaptiveRef = null; // { rgb, od } — brush-mode reference, frozen from the first frame of the session
+  let wandSeedPoint = null;   // image-space seed point (seed mode)
+  let wandSeedColor = null;   // { rgb: [r,g,b], od: [odR,odG,odB] } reference sample (seed mode only)
+  let wandSeedMaxDist = 0;    // farthest image-px distance the cursor has reached from wandSeedPoint this session (ratchet, never decreases until reset)
+  let wandPreviewRings = null; // current live-preview rings, image space (unsimplified)
+  let wandFrozenScale = null; // raster workScale frozen at the first grow of the current session — see _wandGrow
+  let _wandRecomputePending = false;
+  const WAND_MAX_RASTER_DIM = 640;     // initial cap on the BFS working raster, for perf (session then freezes at whatever this yields — see wandFrozenScale)
+  const WAND_HARD_MAX_CELLS = 4000000; // absolute ceiling on raster cell count regardless of the frozen scale, so a very long drag can't blow up memory/perf
+  const WAND_SEED_MAX_REACH_PX = 450;  // hard safety cap on seed-mode growth radius (image px)
+  const WAND_SEED_RAMP_PX = 300;       // image px of cursor travel to reach full tolerance in seed mode
   // freehand cursor tracking (mirrors draw.js so the brush preview is visible
   // even though the native cursor is hidden via container.style.cursor='none')
   let cursorVpX = -9999;
@@ -168,6 +216,28 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       ctx.restore();
     }
 
+    // in-progress wand region: filled/outlined preview of the currently
+    // grown mask (brush-mode: as dragged so far; seed-mode: at the current
+    // cursor-distance tolerance), same fill/stroke language as a finished
+    // annotation but tinted amber so it reads as "not yet committed".
+    if (tool === 'wand' && wandPreviewRings && wandPreviewRings.length) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,196,0,0.22)';
+      ctx.strokeStyle = '#ffc400';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (const ring of wandPreviewRings) {
+        if (!ring.length) continue;
+        const p0 = _toVp(ring[0]);
+        ctx.moveTo(p0.x, p0.y);
+        for (let i = 1; i < ring.length; i++) { const p = _toVp(ring[i]); ctx.lineTo(p.x, p.y); }
+        ctx.closePath();
+      }
+      ctx.fill('evenodd');
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // ruler (§11)
     const ruler = annotations.getRuler();
     if (ruler) {
@@ -192,6 +262,10 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     if (tool === 'freehand') _renderCursor(brushMode === 'noodle', brushRadius, '#00ff40');
     // eraser/grow disk cursor preview (always disk footprint)
     if (tool === 'erase' || tool === 'grow') _renderCursor(true, sculptRadius, tool === 'erase' ? '#ff3b3b' : '#3fff49');
+    // wand disk cursor preview: brush footprint in brush mode, a small fixed
+    // marker at the seed point's scale in seed mode (footprint there is a
+    // sampling nicety, not the actual grown extent)
+    if (tool === 'wand') _renderCursor(true, wandMode === 'seed' ? 8 : wandRadius, '#ffc400');
   }
 
   function _renderCursor(isDisk, radius, color) {
@@ -322,11 +396,49 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   }
 
   // ── mouse handlers (invoked by toolbar routing, mirroring draw.js's API) ─
-  function onMouseDown(vpX, vpY) {
+  function onMouseDown(vpX, vpY, altKey) {
     const imgPt = viewport.toImageSpace(vpX, vpY);
     const sample = getActiveSample();
     if (!sample) return;
 
+    if (tool === 'wand') {
+      if (wandMode === 'seed') {
+        // second click accepts whatever's currently previewed
+        _wandFinalize();
+        return;
+      }
+      const rgb = _wandSampleColorAt(imgPt);
+      if (!rgb) {
+        if (typeof log === 'function') log('Wand: no image data at that point yet — wait for tiles to load or zoom out.');
+        return;
+      }
+      if (altKey) {
+        wandMode = 'seed';
+        wandSeedPoint = imgPt;
+        wandSeedColor = { rgb, od: _od(rgb) };
+        wandPreviewRings = null;
+        wandSeedMaxDist = 0;
+        wandFrozenScale = null; // starting a fresh session — don't reuse a scale frozen for a different (brush) bbox
+        wandAdaptiveRef = null;
+      } else {
+        if (wandMode !== 'brush') {
+          // Start a new brush session. If one is already in progress (this
+          // is a second/third/... stroke), keep the accumulated path so the
+          // new stroke's growth merges into the same region instead of
+          // starting a disconnected shape.
+          wandMode = 'brush';
+          wandPathPoints = [];
+          wandFrozenScale = null;
+          wandAdaptiveRef = null;
+        }
+        wandDragging = true;
+        wandPathPoints.push(imgPt);
+        _wandRecomputeFromGrow(wandPathPoints, wandRadius, wandRadius * 1.5, wandTolerance / 100, true);
+      }
+      cursorVpX = vpX; cursorVpY = vpY; cursorVisible = true;
+      redraw();
+      return;
+    }
     if (tool === 'polygon') {
       if (polyPoints.length >= 3) {
         const p0vp = _toVp(polyPoints[0]);
@@ -401,6 +513,13 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
 
   function onMouseMove(vpX, vpY) {
     const imgPt = viewport.toImageSpace(vpX, vpY);
+    if (tool === 'wand') {
+      cursorVpX = vpX; cursorVpY = vpY; cursorVisible = true;
+      if (wandMode === 'brush' && wandDragging && wandPathPoints) wandPathPoints.push(imgPt);
+      if ((wandMode === 'brush' && wandDragging) || wandMode === 'seed') { _wandScheduleRecompute(); return; }
+      redraw();
+      return;
+    }
     if (tool === 'freehand') {
       cursorVpX = vpX; cursorVpY = vpY; cursorVisible = true;
       if (freehandPoints) { freehandPoints.push(imgPt); redraw(); return; }
@@ -435,6 +554,14 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
 
   function onMouseUp() {
     const sample = getActiveSample();
+    if (tool === 'wand' && wandMode === 'brush') {
+      // Pause, don't commit: releasing the mouse just ends this stroke so
+      // the accumulated region keeps filling in across further strokes.
+      // Enter commits it as one annotation; Escape cancels it.
+      wandDragging = false;
+      redraw();
+      return;
+    }
     if (tool === 'freehand' && freehandPoints) {
       if (brushMode === 'noodle') {
         if (freehandPoints.length >= 2) {
@@ -598,6 +725,245 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     return result;
   }
 
+  // ── wand: color/optical-density similarity region growing ──────────────────
+  // Optical density follows the same -log(rgb/255) convention used server-side
+  // for H&E stain deconvolution (see is_he_image in server.py) — it's more
+  // robust than raw RGB to the brightness/thickness variation that's common
+  // across a slide, so combining it with plain color distance lets the wand
+  // follow stain-intensity boundaries (e.g. a nucleus edge) that flat RGB
+  // similarity alone would blur through.
+  function _od(rgb) {
+    return [
+      -Math.log(Math.max(1, rgb[0]) / 255),
+      -Math.log(Math.max(1, rgb[1]) / 255),
+      -Math.log(Math.max(1, rgb[2]) / 255),
+    ];
+  }
+  // Combined similarity score in [0, ~1]; lower = more similar. Weighted
+  // toward plain color distance (0.6) with optical density (0.4) as a
+  // brightness-invariant secondary signal, then compared against the
+  // 0-100 tolerance slider (normalized to 0-1).
+  function _wandScore(rgbA, odA, rgbB, odB) {
+    const dR = rgbA[0] - rgbB[0], dG = rgbA[1] - rgbB[1], dB = rgbA[2] - rgbB[2];
+    const colorDist = Math.sqrt(dR * dR + dG * dG + dB * dB) / 441.7; // max possible RGB distance
+    const oR = odA[0] - odB[0], oG = odA[1] - odB[1], oB = odA[2] - odB[2];
+    const odDist = Math.sqrt(oR * oR + oG * oG + oB * oB) / 9.6; // ~max possible OD distance
+    return 0.6 * colorDist + 0.4 * odDist;
+  }
+  // Samples a single point's color from the active pixel source; returns
+  // null if the point falls outside the rendered viewport or lands on a
+  // not-yet-loaded tile (transparent), so callers can refuse to start a wand
+  // stroke from data that doesn't exist yet rather than guessing black.
+  function _wandSampleColorAt(imgPt) {
+    if (!pixelSource || typeof pixelSource.getRegion !== 'function') return null;
+    const sp = _toVp(imgPt);
+    const region = pixelSource.getRegion(sp.x - 1, sp.y - 1, 3, 3);
+    if (!region || !region.width || !region.height) return null;
+    const px = Math.min(region.width - 1, Math.max(0, Math.floor(region.width / 2)));
+    const py = Math.min(region.height - 1, Math.max(0, Math.floor(region.height / 2)));
+    const i = (py * region.width + px) * 4;
+    if (region.data[i + 3] === 0) return null;
+    return [region.data[i], region.data[i + 1], region.data[i + 2]];
+  }
+  // Flood-fills a working raster built from the active pixel source, seeded
+  // by disks of `coreRadiusPx` (image px) around every point in `pathPtsImg`
+  // (unconditionally included — this is the tool's physical footprint) and
+  // grown outward from there while neighbor similarity to the fixed
+  // `referenceRgb`/`referenceOd` stays within `tolerance` (0-1), bounded to a
+  // working bbox no larger than `bboxMarginPx` beyond the path (the safety
+  // cap that keeps a big uniform region, e.g. blank slide background, from
+  // flooding the whole raster). Returns { mask, rw, rh, workScale, bbox } in
+  // raster coordinates, or null if there's nothing to sample (e.g. path
+  // entirely off-screen or no pixel source configured).
+  function _wandGrow(pathPtsImg, coreRadiusPx, bboxMarginPx, referenceRgb, referenceOd, tolerance, forcedScale) {
+    if (!pixelSource || typeof pixelSource.getRegion !== 'function' || !pathPtsImg.length) return null;
+    const { width: imgW, height: imgH } = viewport.getImageSize();
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pathPtsImg) {
+      if (p.x - bboxMarginPx < minX) minX = p.x - bboxMarginPx;
+      if (p.x + bboxMarginPx > maxX) maxX = p.x + bboxMarginPx;
+      if (p.y - bboxMarginPx < minY) minY = p.y - bboxMarginPx;
+      if (p.y + bboxMarginPx > maxY) maxY = p.y + bboxMarginPx;
+    }
+    minX = Math.max(0, minX); minY = Math.max(0, minY);
+    maxX = Math.min(imgW - 1, maxX); maxY = Math.min(imgH - 1, maxY);
+    const boxW = maxX - minX, boxH = maxY - minY;
+    if (boxW <= 0 || boxH <= 0) return null;
+    // The raster resolution is picked once per growing session and frozen by
+    // the caller (see wandFrozenScale) instead of being recomputed from the
+    // ever-changing path bbox on every frame: letting it drift down as a drag
+    // gets longer made already-included pixels resample differently frame to
+    // frame — visually "erasing" parts of the region — and since only
+    // strongly-contrasted features (nuclei) survive that resampling
+    // reliably, it also biased the whole selection toward them. A hard cell
+    // count still caps the raster so a very long drag can't blow up memory.
+    let workScale = forcedScale != null ? forcedScale : Math.min(1.0, WAND_MAX_RASTER_DIM / Math.max(boxW, boxH));
+    if (boxW * workScale * (boxH * workScale) > WAND_HARD_MAX_CELLS) {
+      workScale = Math.sqrt(WAND_HARD_MAX_CELLS / (boxW * boxH));
+    }
+    const rw = Math.max(3, Math.round(boxW * workScale));
+    const rh = Math.max(3, Math.round(boxH * workScale));
+
+    // One screen-space capture covers the whole working bbox; every raster
+    // cell's color is then looked up inside it, so the pixel source is only
+    // asked for a region once per growth step regardless of raster size.
+    const p0 = viewport.toScreenSpace(minX, minY);
+    const p1 = viewport.toScreenSpace(maxX, maxY);
+    const screenW = Math.max(1, p1.x - p0.x);
+    const screenH = Math.max(1, p1.y - p0.y);
+    const region = pixelSource.getRegion(p0.x, p0.y, screenW, screenH);
+    if (!region || !region.width || !region.height) return null;
+    const rsx = region.width / screenW;
+    const rsy = region.height / screenH;
+    function sample(rx, ry) {
+      const imgX = minX + rx / workScale, imgY = minY + ry / workScale;
+      const sp = viewport.toScreenSpace(imgX, imgY);
+      const px = Math.floor((sp.x - p0.x) * rsx);
+      const py = Math.floor((sp.y - p0.y) * rsy);
+      if (px < 0 || py < 0 || px >= region.width || py >= region.height) return null;
+      const i = (py * region.width + px) * 4;
+      if (region.data[i + 3] === 0) return null;
+      return [region.data[i], region.data[i + 1], region.data[i + 2]];
+    }
+
+    const mask = new Uint8Array(rw * rh);
+    const visited = new Uint8Array(rw * rh);
+    const queue = [];
+    const rasterRadius = Math.max(1, coreRadiusPx * workScale);
+    const rr2 = rasterRadius * rasterRadius;
+    // Footprint pixels (the swept path itself) are always included regardless
+    // of color — that's the tool's physical brush stroke, not a similarity
+    // match — but their colors are also averaged into an adaptive reference
+    // when the caller doesn't pass a fixed one (brush mode): using the mean
+    // of everything painted so far, rather than a single first-clicked pixel,
+    // keeps the tolerance test representative of the whole region being
+    // selected instead of biased toward whatever that one starting pixel
+    // happened to be (e.g. a dark nucleus).
+    let sumR = 0, sumG = 0, sumB = 0, coreCount = 0;
+    for (const p of pathPtsImg) {
+      const cx = (p.x - minX) * workScale, cy = (p.y - minY) * workScale;
+      const x0 = Math.max(0, Math.floor(cx - rasterRadius)), x1 = Math.min(rw - 1, Math.ceil(cx + rasterRadius));
+      const y0 = Math.max(0, Math.floor(cy - rasterRadius)), y1 = Math.min(rh - 1, Math.ceil(cy + rasterRadius));
+      for (let ry = y0; ry <= y1; ry++) {
+        for (let rx = x0; rx <= x1; rx++) {
+          const dx = rx - cx, dy = ry - cy;
+          if (dx * dx + dy * dy > rr2) continue;
+          const idx = ry * rw + rx;
+          if (visited[idx]) continue;
+          visited[idx] = 1;
+          const rgb = sample(rx, ry);
+          if (!rgb) continue;
+          mask[idx] = 1;
+          queue.push(idx);
+          sumR += rgb[0]; sumG += rgb[1]; sumB += rgb[2]; coreCount++;
+        }
+      }
+    }
+    let refRgb = referenceRgb, refOd = referenceOd;
+    if (!refRgb) {
+      refRgb = coreCount > 0 ? [sumR / coreCount, sumG / coreCount, sumB / coreCount] : [128, 128, 128];
+      refOd = _od(refRgb);
+    }
+    let qi = 0;
+    while (qi < queue.length) {
+      const idx = queue[qi++];
+      const ry = (idx / rw) | 0, rx = idx % rw;
+      const nbrs = [[rx + 1, ry], [rx - 1, ry], [rx, ry + 1], [rx, ry - 1]];
+      for (const [nx, ny] of nbrs) {
+        if (nx < 0 || ny < 0 || nx >= rw || ny >= rh) continue;
+        const nidx = ny * rw + nx;
+        if (visited[nidx]) continue;
+        visited[nidx] = 1;
+        const rgb = sample(nx, ny);
+        if (!rgb) continue;
+        if (_wandScore(rgb, _od(rgb), refRgb, refOd) <= tolerance) {
+          mask[nidx] = 1;
+          queue.push(nidx);
+        }
+      }
+    }
+    return { mask, rw, rh, workScale, bbox: { minX, minY }, refRgb, refOd };
+  }
+  // Extracts contour rings (image space) from a _wandGrow() result via the
+  // same marching-squares helper the noodle brush uses.
+  function _wandMaskToRings(built) {
+    if (!built) return [];
+    const polys = _marchingSquares(built.mask, built.rw, built.rh);
+    const { width: imgW, height: imgH } = viewport.getImageSize();
+    return polys.filter(p => p.length >= 6).map(poly => poly.map(p => ({
+      x: Math.max(0, Math.min(imgW - 1, p.x / built.workScale + built.bbox.minX)),
+      y: Math.max(0, Math.min(imgH - 1, p.y / built.workScale + built.bbox.minY)),
+    })));
+  }
+  function _wandRecomputeFromGrow(pathPtsImg, coreRadiusPx, bboxMarginPx, tolerance, adaptive) {
+    let referenceRgb, referenceOd;
+    if (adaptive) {
+      // Reference is computed once, from the footprint of the *first* frame
+      // of the session, and frozen (wandAdaptiveRef) — see the wand-state
+      // comment block above for why recomputing it every frame is unsafe.
+      referenceRgb = wandAdaptiveRef ? wandAdaptiveRef.rgb : null;
+      referenceOd = wandAdaptiveRef ? wandAdaptiveRef.od : null;
+    } else {
+      referenceRgb = wandSeedColor.rgb;
+      referenceOd = wandSeedColor.od;
+    }
+    const built = _wandGrow(pathPtsImg, coreRadiusPx, bboxMarginPx, referenceRgb, referenceOd, tolerance, wandFrozenScale);
+    if (built) {
+      if (wandFrozenScale == null) wandFrozenScale = built.workScale;
+      if (adaptive && !wandAdaptiveRef) wandAdaptiveRef = { rgb: built.refRgb, od: built.refOd };
+    }
+    wandPreviewRings = built ? _wandMaskToRings(built) : null;
+  }
+  // Throttles wand recompute to one per animation frame — brush-mode drags
+  // and seed-mode mousemoves can both fire far faster than the BFS needs to
+  // re-run; each callback re-reads current wand state at fire time rather
+  // than closing over a snapshot, so only the latest cursor position matters.
+  function _wandScheduleRecompute() {
+    if (_wandRecomputePending) return;
+    _wandRecomputePending = true;
+    requestAnimationFrame(() => {
+      _wandRecomputePending = false;
+      if (tool !== 'wand') return;
+      if (wandMode === 'brush' && wandDragging && wandPathPoints) {
+        _wandRecomputeFromGrow(wandPathPoints, wandRadius, wandRadius * 1.5, wandTolerance / 100, true);
+        redraw();
+      } else if (wandMode === 'seed' && wandSeedPoint) {
+        const cur = viewport.toImageSpace(cursorVpX, cursorVpY);
+        const dist = Math.hypot(cur.x - wandSeedPoint.x, cur.y - wandSeedPoint.y);
+        // Ratchet on the farthest distance reached, not the current one —
+        // moving the cursor back toward the seed (e.g. to click and accept)
+        // must not silently shrink an already-grown preview.
+        wandSeedMaxDist = Math.max(wandSeedMaxDist, dist);
+        const t = Math.min(1, wandSeedMaxDist / WAND_SEED_RAMP_PX) * (wandTolerance / 100);
+        _wandRecomputeFromGrow([wandSeedPoint], 3, WAND_SEED_MAX_REACH_PX, t);
+        redraw();
+      }
+    });
+  }
+  function _wandFinalize() {
+    const sample = getActiveSample();
+    if (wandPreviewRings && wandPreviewRings.length) {
+      const rings = wandPreviewRings.map(_maybeSimplify);
+      const anns = annotations.buildAnnotationsFromRings(sample, rings, { cls: freehandCls });
+      if (anns.length) annotations.addAnnotationGroup(sample, 'library', anns);
+    } else if (typeof log === 'function') {
+      log('Wand: no region found — try a larger tolerance or a different starting point.');
+    }
+    _wandReset();
+    redraw();
+  }
+  function _wandReset() {
+    wandMode = null;
+    wandPathPoints = null;
+    wandDragging = false;
+    wandAdaptiveRef = null;
+    wandSeedPoint = null;
+    wandSeedColor = null;
+    wandSeedMaxDist = 0;
+    wandPreviewRings = null;
+    wandFrozenScale = null;
+  }
+
   function _closeRing(points) {
     const out = points.slice();
     const first = out[0], last = out[out.length - 1];
@@ -632,9 +998,11 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
 
   function onKeyDown(e) {
     if (e.key === 'Enter' && tool === 'polygon') { finishPolygon(); }
+    else if (e.key === 'Enter' && tool === 'wand' && (wandMode === 'seed' || wandMode === 'brush')) { _wandFinalize(); }
     else if (e.key === 'Escape') {
       if (tool === 'polygon') { polyPoints = []; redraw(); }
       else if (tool === 'ruler') { annotations.rulerClear(); redraw(); }
+      else if (tool === 'wand') { _wandReset(); redraw(); }
     }
   }
 
@@ -645,6 +1013,7 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     dragTarget = null;
     splitPoints = null;
     sculptPoints = null;
+    _wandReset();
     cursorVisible = false;
     redraw();
   }
@@ -700,6 +1069,14 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   function getBrushRadius() { return brushRadius; }
   function setSculptRadius(v) { sculptRadius = Math.max(1, Number(v) || 1); redraw(); }
   function getSculptRadius() { return sculptRadius; }
+  // Wand pixel source: boot.js picks the right one for the active render mode
+  // (plain RGB tiles / multichannel / monochannel2D) and re-supplies it
+  // whenever that mode changes (e.g. switching to/from a monochannel sample).
+  function setPixelSource(src) { pixelSource = src || null; }
+  function setWandRadius(v) { wandRadius = Math.max(1, Number(v) || 1); redraw(); }
+  function getWandRadius() { return wandRadius; }
+  function setWandTolerance(v) { wandTolerance = Math.max(0, Math.min(100, Number(v) || 0)); redraw(); }
+  function getWandTolerance() { return wandTolerance; }
   function panZoomTo(ann) {
     if (!ann || !ann.rings.length || !ann.rings[0].length) return;
     // Fit the bounding box of every sibling sharing group_id, not just the
@@ -737,5 +1114,8 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     setBrushRadius: v => { brushRadius = v; redraw(); },
     getBrushRadius,
     setSculptRadius, getSculptRadius,
+    setPixelSource,
+    setWandRadius, getWandRadius,
+    setWandTolerance, getWandTolerance,
   };
 }

@@ -670,6 +670,7 @@ function setActiveSample(sampleName) {
     if (visiumOverlay) visiumOverlay.setContext(ACTIVE_SAMPLE, BASE_URL);
     if (mono2d) mono2d.setSample(ACTIVE_SAMPLE);
     _updateMonoLayerVisibility();
+    _updateWandPixelSource();
     if (toolbar && typeof toolbar.setMonoActive === 'function')
       toolbar.setMonoActive(!!(SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
     _overlayCtrlApi.clearPredPoints();
@@ -897,7 +898,7 @@ setInterval(_refreshAnnotationBadges, 5000);
 window.addEventListener('beforeunload', () => { annotations.saveIfDirty(ACTIVE_SAMPLE); });
 
 // ── route annotation-tool mouse/keyboard events (polygon/freehand/vertex/ruler) ──
-const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'annot_split', 'annot_erase', 'annot_grow', 'ruler'];
+const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'annot_split', 'annot_erase', 'annot_grow', 'annot_wand', 'ruler'];
 function _isUiEventTarget(target) {
   return Boolean(target && target.closest && target.closest('[data-iv-ui="true"]'));
 }
@@ -905,7 +906,7 @@ root.addEventListener('mousedown', e => {
   const tool = toolbar.getActiveTool();
   if (ANNOT_MOUSE_TOOLS.includes(tool) && !_isUiEventTarget(e.target)) {
     const r = root.getBoundingClientRect();
-    annotationsCanvas.onMouseDown(e.clientX - r.left, e.clientY - r.top);
+    annotationsCanvas.onMouseDown(e.clientX - r.left, e.clientY - r.top, e.altKey);
   }
 });
 root.addEventListener('mousemove', e => {
@@ -925,8 +926,39 @@ root.addEventListener('mouseleave', () => {
 });
 document.addEventListener('keydown', e => {
   const tool = toolbar.getActiveTool();
-  if (['annot_polygon', 'ruler'].includes(tool)) annotationsCanvas.onKeyDown(e);
+  if (['annot_polygon', 'annot_wand', 'ruler'].includes(tool)) annotationsCanvas.onKeyDown(e);
 });
+
+// ── wand pixel source: picks the pixel provider matching whichever renderer
+// is currently on screen (plain RGB tiles / multichannel composite /
+// monochannel2D composite) so the wand samples real displayed pixels
+// regardless of image type. IS_MULTICHANNEL is fixed for the whole session
+// (chosen at boot); monochannel2D can additionally override per-sample, so
+// this is re-run on every sample switch (see _updateMonoLayerVisibility's
+// call site below).
+function _canvasRegion(canvasEl, sx, sy, sw, sh) {
+  if (!canvasEl) return null;
+  const x = Math.max(0, Math.floor(sx));
+  const y = Math.max(0, Math.floor(sy));
+  const w = Math.max(0, Math.min(canvasEl.width - x, Math.ceil(sw)));
+  const h = Math.max(0, Math.min(canvasEl.height - y, Math.ceil(sh)));
+  if (w <= 0 || h <= 0) return null;
+  try { return canvasEl.getContext('2d').getImageData(x, y, w, h); }
+  catch (e) { return null; }
+}
+function _updateWandPixelSource() {
+  const isMonoActive = !!(IS_MONOCHANNEL && MONO_META && SAMPLE_IS_MONO[ACTIVE_SAMPLE]);
+  if (isMonoActive) {
+    annotationsCanvas.setPixelSource({ getRegion: (x, y, w, h) => _canvasRegion(monoCanvas, x, y, w, h) });
+  } else if (IS_MULTICHANNEL && typeof tiles.getCanvas === 'function') {
+    annotationsCanvas.setPixelSource({ getRegion: (x, y, w, h) => _canvasRegion(tiles.getCanvas(), x, y, w, h) });
+  } else if (typeof tiles.getRenderedRegion === 'function') {
+    annotationsCanvas.setPixelSource({ getRegion: (x, y, w, h) => tiles.getRenderedRegion(x, y, w, h) });
+  } else {
+    annotationsCanvas.setPixelSource(null);
+  }
+}
+_updateWandPixelSource();
 
 // ── Async annotation layers ────────────────────────────────────────────────
 fetch(BASE_URL + '/annotation_layers')
