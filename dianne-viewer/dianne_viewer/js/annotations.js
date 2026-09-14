@@ -198,7 +198,6 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
       rings: rings || [],       // array of rings; ring0=outer, rest=holes (image-space points)
       area: 0,
       perimeter: 0,
-      promoted_copies: [],
     };
   }
   function recomputeMetrics(ann) {
@@ -508,6 +507,18 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
   // ── §5 promotion workflow (always an independent snapshot copy) ───────
   function _cloneRings(rings) { return rings.map(r => r.map(p => ({ x: p.x, y: p.y }))); }
 
+  /** Remove any existing copy in the `targetCls` bucket that was derived
+   *  from one of `siblings` (via `derived_from`), so re-promoting a group
+   *  replaces its previous copy there instead of piling up another one. */
+  function _removeExistingCopies(sample, siblings, targetCls) {
+    const bucket = _bucket(sample)[targetCls];
+    if (!bucket) return;
+    const srcIds = new Set(siblings.map(s => s.id));
+    for (let i = bucket.length - 1; i >= 0; i--) {
+      if (srcIds.has(bucket[i].derived_from)) bucket.splice(i, 1);
+    }
+  }
+
   /** Copy an annotation (and every sibling sharing its group_id, so a
    *  multi-ring/multi-piece shape is copied as one unit) to positive/
    *  negative. Returns the array of copies (length 1 for a plain, ungrouped
@@ -517,6 +528,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     const ann = findAnnotation(sample, 'library', id);
     if (!ann) return null;
     const siblings = listGroupSiblings(sample, 'library', ann.group_id);
+    _removeExistingCopies(sample, siblings, targetCls);
     const newGroupId = _nextId('grp');
     const copies = siblings.map(src => {
       const copy = makeAnnotation({
@@ -527,7 +539,6 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
       return copy;
     });
     addAnnotationGroup(sample, targetCls, copies);
-    siblings.forEach((src, i) => src.promoted_copies.push({ id: copies[i].id, cls: targetCls }));
     markDirty(sample);
     logAndRecord(`Copied "${ann.label}" \u2192 ${targetCls}` + (copies.length > 1 ? ` (${copies.length} parts)` : ''));
     _notify(sample);
@@ -550,6 +561,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     const ann = findAnnotation(sample, sourceCls, id);
     if (!ann) return null;
     const siblings = listGroupSiblings(sample, sourceCls, ann.group_id);
+    _removeExistingCopies(sample, siblings, 'library');
     const newGroupId = _nextId('grp');
     const copies = siblings.map(src => {
       const copy = makeAnnotation({
@@ -560,7 +572,6 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
       return copy;
     });
     addAnnotationGroup(sample, 'library', copies);
-    siblings.forEach((src, i) => src.promoted_copies.push({ id: copies[i].id, cls: 'library' }));
     markDirty(sample);
     logAndRecord(`Saved ${sourceCls} contour "${ann.label}" to library` + (copies.length > 1 ? ` (${copies.length} parts)` : ''));
     _notify(sample);

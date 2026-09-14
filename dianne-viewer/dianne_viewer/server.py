@@ -290,6 +290,33 @@ class ViewerServer:
         safe = str(sample).replace(os.sep, '_')
         return os.path.join(self.annotations_dir, f'{safe}.annotations.geojson.gz')
 
+    @staticmethod
+    def _clean_bucket(bucket):
+        """Drop the retired promoted_copies bookkeeping (superseded by
+        derived_from, which is what the client now uses to dedupe on
+        promote) and collapse duplicate copies left over from repeated
+        promotion before that dedup-on-promote fix existed: within each of
+        library/positive/negative, keep only the most-recently-updated
+        annotation per source id (derived_from), dropping earlier copies of
+        the same source. Annotations with no derived_from (nothing was ever
+        promoted from them) are left untouched. Applied on both load and
+        save so already-saved files and already-open sessions self-heal."""
+        for cls in ('library', 'positive', 'negative'):
+            anns = bucket.get(cls) or []
+            for ann in anns:
+                ann.pop('promoted_copies', None)
+            latest_by_source = {}
+            for ann in anns:
+                src = ann.get('derived_from')
+                if not src:
+                    continue
+                cur = latest_by_source.get(src)
+                if cur is None or (ann.get('updated_at') or '') >= (cur.get('updated_at') or ''):
+                    latest_by_source[src] = ann
+            keep = {id(a) for a in latest_by_source.values()}
+            bucket[cls] = [a for a in anns if not a.get('derived_from') or id(a) in keep]
+        return bucket
+
     def save_annotations(self, sample, library=None, positive=None, negative=None):
         """Persist one sample's annotation sets to a compressed GeoJSON file.
         Called by the /annotations/save route (autosave, manual save, and
@@ -302,6 +329,7 @@ class ViewerServer:
             bucket['positive'] = positive
         if negative is not None:
             bucket['negative'] = negative
+        self._clean_bucket(bucket)
 
         old_umask = os.umask(0)
         try:
@@ -338,6 +366,7 @@ class ViewerServer:
             if props.get('_promoted_class') in ('positive', 'negative'):
                 cls = props['_promoted_class']
             bucket.setdefault(cls, []).append(props)
+        self._clean_bucket(bucket)
         self.annotations_by_sample[sample] = bucket
         return bucket
 
