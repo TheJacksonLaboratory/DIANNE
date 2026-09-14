@@ -209,7 +209,7 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
         print(f'Prepared {patchesCDFs.shape[0]} patches')
         sizes = {s: ads[s].shape[0] for s in samples}
         runfn = makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, tile_size=tile_size, patch_size=patch_size,
-                                 PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode)
+                                 PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode, body_overlap=body_overlap)
         # Subtile inference (GPU) reuses the same tile-level classifier training,
         # so it's only meaningful for the ctranspath feature model it's derived from.
         # Note: it always reads the base single-tile (F=1) CTransPath grid — the
