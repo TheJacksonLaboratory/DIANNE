@@ -2,6 +2,7 @@ import os
 import re
 
 import numpy as np
+import pandas as pd
 import torch
 from skimage.morphology import disk
 from tqdm import tqdm
@@ -251,6 +252,41 @@ def build_padded_grid_and_valid(df_features, df_tiles, radius, subgrid, val_rang
               f"({100*len(valid_i)/(fine_rows*fine_cols):.1f}%)")
 
     return padded, valid_i, valid_j
+
+
+def build_subtile_table(df_features, df_tiles, subgrid=(7, 7), val_range=2.0, ctranspath_ts=224):
+    """Sparse per-subtile pixel coordinates + dequantized CTransPath feature table,
+    for training a classifier directly in the feature space inferSubtileFromFeatures
+    applies it in at inference time -- unlike getClassifierForFromStrokes' tile-level
+    AnnData features, which live in a completely different feature space and don't
+    actually match what the subtile GPU pass evaluates.
+
+    Reuses build_padded_grid_and_valid with radius=0 (no windowing: each subtile is
+    its own training row here, aggregated into stroke/contour patches downstream by
+    getSubtileClassifierForFromStrokes, the same way tile-level training aggregates
+    tiles into patches instead of windowing per tile).
+
+    Returns (df_grid_sub, df_feat_sub), both indexed by the same subtile id string
+    ('<fine_row>_<fine_col>'):
+      df_grid_sub : columns 'x', 'y' (int) -- pixel center of the subtile in the WSI,
+          suitable for getTilesInContour (which needs integer tile centers).
+      df_feat_sub : columns 'feat_CTransPath_<i>' -- dequantized feature vector.
+    """
+    padded, valid_i, valid_j = build_padded_grid_and_valid(
+        df_features, df_tiles, radius=0, subgrid=subgrid, val_range=val_range)
+    feats = padded[valid_i, valid_j, :]
+
+    shy, shx = df_tiles[['pxl_row_in_wsi', 'pxl_col_in_wsi']].min(axis=0).values
+    sub_r, sub_c = subgrid
+    delta_y, delta_x = ctranspath_ts / sub_r, ctranspath_ts / sub_c
+    x = np.round((valid_j.astype(np.float64) + 0.5) * delta_x + shx - ctranspath_ts / 2).astype(np.int64)
+    y = np.round((valid_i.astype(np.float64) + 0.5) * delta_y + shy - ctranspath_ts / 2).astype(np.int64)
+
+    ids = [f'{i}_{j}' for i, j in zip(valid_i.tolist(), valid_j.tolist())]
+    df_grid_sub = pd.DataFrame({'x': x, 'y': y}, index=ids)
+    df_feat_sub = pd.DataFrame(feats, index=ids,
+                                columns=[f'feat_CTransPath_{k}' for k in range(feats.shape[1])])
+    return df_grid_sub, df_feat_sub
 
 
 def cleanupClassifier(clf):

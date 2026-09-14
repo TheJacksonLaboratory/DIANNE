@@ -347,7 +347,11 @@ def getPatchRepresentation(ad, df_temp_img_tiles, qs, sample_id=None):
         DataFrame with the patch representation, indexed by patch identifiers and columns as features.
     """
 
-    df = ad.to_df().loc[df_temp_img_tiles.index]
+    # Accept either an AnnData (tile-level callers) or a plain features DataFrame
+    # already indexed by tile/subtile id (e.g. the CTransPath subtile feature table
+    # dianne_utils.subtilegpu.build_subtile_table builds for subtile-level training).
+    df_all = ad.to_df() if hasattr(ad, 'to_df') else ad
+    df = df_all.loc[df_temp_img_tiles.index]
     df.index = df_temp_img_tiles['patch']
     df = df.groupby(level=0).quantile(qs).unstack()
     df = df.reorder_levels([1, 0], axis=1)

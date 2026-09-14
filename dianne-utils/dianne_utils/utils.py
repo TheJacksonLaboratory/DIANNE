@@ -492,6 +492,125 @@ def getClassifierForFromStrokes(strokes_by_sample, patchCoordinates, tile_size, 
 
     return clf, patchesCDFsMod, annotations
 
+def getSubtileClassifierForFromStrokes(strokes_by_sample, samples, qs, get_subtile_data_fn,
+                                       subtile_size, body_overlap, patch_size,
+                                       augFunc=None, alpha=0.8, seed=0, showPatches=False):
+    """Subtile-level analogue of getClassifierForFromStrokes.
+
+    getClassifierForFromStrokes trains on tile-level AnnData features, which is a
+    different feature space than the CTransPath subtile features
+    dianne_utils.subtilegpu.inferSubtileFromFeatures evaluates the classifier on --
+    makeSubtileRunFn used to paper over that mismatch by training tile-level and
+    applying the result subtile-level anyway. This trains directly on dequantized
+    CTransPath subtile features (dianne_utils.subtilegpu.build_subtile_table),
+    grouped into patches by stroke/contour overlap exactly like the tile-level
+    path, so train- and inference-time feature spaces actually match.
+
+    Parameters
+    ----------
+    get_subtile_data_fn : callable
+        sample -> (df_grid_sub, df_feat_sub), as returned by
+        dianne_utils.subtilegpu.build_subtile_table for that sample.
+    subtile_size : int
+        Subtile side length in pixels (e.g. ctranspath_ts / subgrid side).
+    patch_size : int
+        Side length of each training patch in subtiles (see getTilesInContour).
+
+    Returns
+    -------
+    clf, patchesCDFs, annotations -- clf has already been through
+    dianne_utils.subtilegpu.cleanupClassifier, ready for inferSubtileFromFeatures.
+    """
+    from .subtilegpu import cleanupClassifier
+
+    active_samples = [
+        s for s in samples
+        if s in strokes_by_sample and (
+            len(strokes_by_sample[s].get('strokes_positive', [])) > 0 or
+            len(strokes_by_sample[s].get('strokes_negative', [])) > 0
+        )
+    ]
+
+    if not active_samples:
+        print("No annotations provided for any sample.")
+        return None, None, None
+
+    has_any_pos = any(len(strokes_by_sample[s].get('strokes_positive', [])) > 0 for s in active_samples)
+    has_any_neg = any(len(strokes_by_sample[s].get('strokes_negative', [])) > 0 for s in active_samples)
+
+    if not has_any_pos:
+        print("No positive annotations available across any sample.")
+        return None, None, None
+    if not has_any_neg:
+        print("No negative annotations available across any sample.")
+        return None, None, None
+
+    all_patchesCDFsMod = []
+    all_annotations = {}
+
+    for sample in active_samples:
+        strokes = strokes_by_sample[sample]
+        df_grid_sub, df_feat_sub = get_subtile_data_fn(sample)
+
+        dataPS = preparePatchesFromStrokes(strokes, df_grid_sub, tile_size=subtile_size,
+                                           body_overlap=body_overlap, patch_size=patch_size, debug=False)
+
+        if not dataPS['positive'] and not dataPS['negative']:
+            # e.g. every stroke on this sample was too small to yield a usable
+            # (>= 2-subtile) patch. Nothing to build here; skip rather than fall
+            # through to an empty-index concat below.
+            continue
+
+        if showPatches:
+            visualizePatches(dataPS, df_grid_sub, tile_size=subtile_size, fontsize=6)
+
+        # Same tile/patch-stealing resolution as getClassifierForFromStrokes: a
+        # subtile claimed by two overlapping contours silently goes to whichever
+        # patch is iterated last, which can leave a 1-subtile "leftover" patch
+        # (see getTilesInContour) with zero surviving subtiles.
+        se = pd.concat([
+            pd.Series({subtile: patch for patch, subtiles in dataPS[cl].items() for subtile in subtiles})
+            for cl in ['positive', 'negative']
+        ])
+        surviving_patches = set(se.values)
+        for cl in ['positive', 'negative']:
+            for patch in [p for p in dataPS[cl] if p not in surviving_patches]:
+                print(f"Sample {sample}: patch {patch} lost all its subtiles to an "
+                      f"overlapping annotation and will be skipped.")
+                del dataPS[cl][patch]
+
+        df_patch_map = pd.DataFrame({'patch': se})
+        patchesCDFs_sample = getPatchRepresentation(df_feat_sub, df_patch_map, qs, sample_id=sample)
+        all_patchesCDFsMod.append(patchesCDFs_sample)
+
+        sample_annotations = {(sample, k): 'positive' for k in dataPS['positive']}
+        sample_annotations.update({(sample, k): 'negative' for k in dataPS['negative']})
+        all_annotations.update(sample_annotations)
+
+    if not all_patchesCDFsMod:
+        print("No patch representations could be built.")
+        return None, None, None
+
+    patchesCDFsMod = pd.concat(all_patchesCDFsMod)
+    annotations = all_annotations
+
+    annotation_classes = set(annotations.values())
+    if 'positive' not in annotation_classes:
+        print("No usable positive patches (annotated strokes were too small).")
+        return None, None, None
+    if 'negative' not in annotation_classes:
+        print("No usable negative patches (annotated strokes were too small).")
+        return None, None, None
+
+    try:
+        clf = trainClassifier(annotations, patchesCDFsMod, alpha=alpha, seed=seed, augFunc=augFunc)
+        clf = cleanupClassifier(clf)
+    except Exception as e:
+        print(f"Error training classifier: {e}")
+        clf = None
+
+    return clf, patchesCDFsMod, annotations
+
 def setNotebookWidth(widthPercent=100):
     """Set the notebook container width in a Jupyter environment."""
     display(HTML(f"""<style>:root {{ --jp-notebook-max-width: {widthPercent}%; }}
@@ -928,16 +1047,20 @@ def _load_subtile_grid(img_path, F=1, model='ctranspath'):
     return pd.read_csv(grid_path, index_col=0)
 
 def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alpha=0.8,
-                     tile_size=448, patch_size=8, body_overlap=0.25, F=1, model='ctranspath',
+                     tile_size=448, patch_size=8, subtile_patch_size=8, body_overlap=0.25,
+                     F=1, model='ctranspath',
                      annotations_dir=None, ctranspath_ts=224, ctranspath_num_workers=16,
                      ctranspath_batch_size=512, radius=2, subgrid=(7, 7), val_range=2.0):
     """Return a run_subtile_inference_fn compatible with
     ``viewer.create_viewer(run_subtile_inference_fn=...)``.
 
-    Trains the classifier the same way makeRunFn does (tile-level
-    getClassifierForFromStrokes), but instead of tile-level inference
-    (inferProbFast), it runs a finer-grained GPU pass
-    (dianne_utils.subtilegpu.inferSubtileFromFeatures) over per-slide
+    Trains the classifier directly on dequantized CTransPath subtile features
+    (dianne_utils.subtilegpu.build_subtile_table / getSubtileClassifierForFromStrokes),
+    grouped into patches by stroke/contour overlap the same way tile-level training
+    does -- not on tile-level AnnData features the way makeRunFn (and this function,
+    previously) does, since those live in a different feature space than the one
+    the GPU subtile pass (dianne_utils.subtilegpu.inferSubtileFromFeatures) applies
+    the classifier to. Inference then runs a finer-grained GPU pass over per-slide
     CTransPath subtile features. Those features are cached to
     ``<annotations_dir>/<sample>-<F>-<model>_features.parquet`` the first
     time a sample is requested (dianne_utils.ctranspath.extract) and reused
@@ -945,6 +1068,10 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
 
     Parameters mirror makeRunFn where they overlap; additional ones:
     imgs : dict[sample -> path to image.ome.tiff]
+    subtile_patch_size : int
+        Side length, in subtiles, of each training patch built from stroke/contour
+        overlap (see getTilesInContour) -- the subtile-level equivalent of
+        ``patch_size``, which stays tile-level (unused for subtile training).
     annotations_dir : str, optional
         Feature cache directory. Should be passed as the *same resolved*
         annotations directory ``viewer.create_viewer`` will use (i.e.
@@ -1000,19 +1127,39 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
         return df
 
     def _runfn(*, strokes_by_sample, active_sample, progress_cb=None):
-        from .subtilegpu import inferSubtileFromFeatures, cleanupClassifier
+        from .subtilegpu import inferSubtileFromFeatures, build_subtile_table
+
+        # Per-call cache so a sample needed for both training (any annotated
+        # sample) and inference (active_sample) isn't loaded/extracted twice.
+        grid_cache, feat_cache = {}, {}
+
+        def _get_grid(sample):
+            if sample not in grid_cache:
+                grid_cache[sample] = _load_subtile_grid(imgs[sample], F=F, model=model)
+            return grid_cache[sample]
+
+        def _get_features(sample, df_grid_, cb):
+            if sample not in feat_cache:
+                feat_cache[sample] = _ensure_features(sample, df_grid_, progress_cb=cb)
+            return feat_cache[sample]
+
+        def _get_subtile_data(sample):
+            df_grid_ = _get_grid(sample)
+            df_features_ = _get_features(sample, df_grid_, cb=progress_cb if sample == active_sample else None)
+            return build_subtile_table(df_features_, df_grid_, subgrid=subgrid, val_range=val_range,
+                                       ctranspath_ts=ctranspath_ts)
 
         if progress_cb:
             progress_cb('training', 'Training classifier…', fraction=None)
-        clf, _, _ = getClassifierForFromStrokes(
-            strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size,
-            ads, samples, qs, augFunc=PCMA, alpha=PCMA_alpha, seed=0)
+        clf, _, _ = getSubtileClassifierForFromStrokes(
+            strokes_by_sample, samples, qs, _get_subtile_data,
+            subtile_size=int(round(ctranspath_ts / subgrid[0])), body_overlap=body_overlap,
+            patch_size=subtile_patch_size, augFunc=PCMA, alpha=PCMA_alpha, seed=0)
         if clf is None:
             return
-        clf = cleanupClassifier(clf)
 
-        df_grid = _load_subtile_grid(imgs[active_sample], F=F, model=model)
-        df_features = _ensure_features(active_sample, df_grid, progress_cb=progress_cb)
+        df_grid = _get_grid(active_sample)
+        df_features = _get_features(active_sample, df_grid, cb=progress_cb)
 
         if progress_cb:
             progress_cb('running_inference', 'Running GPU inference…', fraction=None)
