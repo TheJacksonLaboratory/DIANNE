@@ -419,11 +419,28 @@ def getClassifierForFromStrokes(strokes_by_sample, patchCoordinates, tile_size, 
         if showPatches:
             visualizePatches(dataPS, sample_coords, tile_size=tile_size, fontsize=6)
 
-        # Build tile→patch mapping and retrieve coordinates for annotated patches
+        # Build tile→patch mapping and retrieve coordinates for annotated patches.
+        # Two annotation contours can independently claim the same tile at their
+        # boundary (e.g. adjacent strokes); the dict comprehension below then lets
+        # whichever patch is iterated last win that tile, silently stealing it from
+        # the other. Usually this just costs the loser one tile, but a 1-tile
+        # "leftover" patch (see getTilesInContour) has both its tile-list entries
+        # equal to that same tile, so losing it leaves the patch with zero tiles in
+        # `se` while it still exists as a key in dataPS. Left unhandled, that patch
+        # would still be added to `annotations` below but have no row in
+        # patchesCDFsMod, and trainClassifier's `.loc[...]` would raise a
+        # "not in index" KeyError. Drop any such fully-overlapped patch here instead.
         se = pd.concat([
             pd.Series({tile: patch for patch, tiles in dataPS[cl].items() for tile in tiles})
             for cl in ['positive', 'negative']
         ])
+        surviving_patches = set(se.values)
+        for cl in ['positive', 'negative']:
+            for patch in [p for p in dataPS[cl] if p not in surviving_patches]:
+                print(f"Sample {sample}: patch {patch} lost all its tiles to an "
+                      f"overlapping annotation and will be skipped.")
+                del dataPS[cl][patch]
+
         if not isinstance(se.index, pd.MultiIndex):
             assert len(se.index[0])==2, "Expected tile index to be a tuple of (sample, barcode)"
             # Convert to multiindex with 'sample' and 'barcode' levels
