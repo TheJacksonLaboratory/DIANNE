@@ -273,6 +273,14 @@ function _syncAnnotationsTabSelection(kind, id) {
   const api = _metadataPanel && _metadataPanel.getAnnotationsApi && _metadataPanel.getAnnotationsApi();
   if (api && typeof api.selectRow === 'function') api.selectRow(kind, id);
 }
+// Fired once per finished lasso stroke (annotationsCanvas's onLassoSelect)
+// with every library annotation id the drawn area touched — replaces the
+// Annotations tab's checked set outright, same as a fresh lasso replaces
+// its own on-canvas outline (see annotations_canvas.js's _lassoReset).
+function _syncAnnotationsTabChecks(ids) {
+  const api = _metadataPanel && _metadataPanel.getAnnotationsApi && _metadataPanel.getAnnotationsApi();
+  if (api && typeof api.setCheckedIds === 'function') api.setCheckedIds(ids);
+}
 // Selecting a stroke clears any active library-annotation selection on the
 // other canvas layer, so only one yellow highlight (list + canvas) is ever
 // shown at a time; annotationsCanvas is declared with `const` further below
@@ -341,6 +349,7 @@ const annotationsCanvas = createAnnotationsCanvas({
     if (id != null) draw.clearSelection();
     _syncAnnotationsTabSelection('library', id);
   },
+  onLassoSelect: (ids) => _syncAnnotationsTabChecks(ids),
 });
 
 // ── per-sample stroke storage ──────────────────────────────────────────────
@@ -898,7 +907,7 @@ setInterval(_refreshAnnotationBadges, 5000);
 window.addEventListener('beforeunload', () => { annotations.saveIfDirty(ACTIVE_SAMPLE); });
 
 // ── route annotation-tool mouse/keyboard events (polygon/freehand/vertex/ruler) ──
-const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'annot_split', 'annot_erase', 'annot_grow', 'annot_wand', 'ruler'];
+const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'annot_split', 'annot_erase', 'annot_grow', 'annot_wand', 'annot_lasso', 'ruler'];
 function _isUiEventTarget(target) {
   return Boolean(target && target.closest && target.closest('[data-iv-ui="true"]'));
 }
@@ -926,7 +935,7 @@ root.addEventListener('mouseleave', () => {
 });
 document.addEventListener('keydown', e => {
   const tool = toolbar.getActiveTool();
-  if (['annot_polygon', 'annot_wand', 'ruler'].includes(tool)) annotationsCanvas.onKeyDown(e);
+  if (['annot_polygon', 'annot_wand', 'annot_lasso', 'ruler'].includes(tool)) annotationsCanvas.onKeyDown(e);
 });
 
 // ── wand pixel source: picks the pixel provider matching whichever renderer

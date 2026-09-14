@@ -96,6 +96,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     const annotTools = [
       { name: 'ruler',             label: '📏', title: 'Ruler tool (single measurement, Esc to remove)' },
       { name: 'annot_polygon',     label: '△',  title: 'Polygon tool: click to place vertices, Enter to close' }, // triangle symbol: '△'
+      { name: 'annot_lasso',       label: '➰', title: 'Lasso: drag a freehand area to select every annotation it touches (checkmarks them in the Annotations tab); the drawn area stays on screen until you draw a new one, switch tools, or press Esc' },
     //   { name: 'annot_draw',        label: 'draw',  title: 'Freehand/disk brush → unclassified library annotation', freehandCls: 'unclassified' },
     //   { name: 'annot_draw_positive', label: 'draw+', title: 'Freehand/disk brush → positive library annotation', freehandCls: 'positive' },
     //   { name: 'annot_draw_negative', label: 'draw-', title: 'Freehand/disk brush → negative library annotation', freehandCls: 'negative' },

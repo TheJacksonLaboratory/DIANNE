@@ -10,13 +10,17 @@
  * Exposes createAnnotationsTab({ container, annotations, annotationsCanvas,
  *   getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes,
  *   onDeletePosNegStroke, onImportPosNegToAnnotation, onSelectPosNegStroke,
- *   modalHelpers }) → { refresh, onShow, selectRow }
+ *   modalHelpers }) → { refresh, onShow, selectRow, checkIds, setCheckedIds }
  *
  * selectRow(kind, id) — 'library'|'positive'|'negative', or (null, null) to
  * clear — highlights the matching row yellow and scrolls it into view.
  * Called by boot.js whenever a canvas-driven selection (list click, or
  * dblclick-to-select a contour) changes, so the list and canvas always agree
  * on which annotation/stroke is selected regardless of which side drove it.
+ *
+ * checkIds(ids) — adds ids to the checked set (used for freshly-created
+ * annotations). setCheckedIds(ids) — replaces the whole checked set (used by
+ * the lasso select tool, see annotations_canvas.js).
  */
 function createAnnotationsTab({ container, annotations, annotationsCanvas, getActiveSample, viewport, settings, log, getPosNegCounts, getPosNegStrokes, onDeletePosNegStroke, onImportPosNegToAnnotation, onSelectPosNegStroke, modalHelpers }) {
   container.style.padding = '6px';
@@ -681,5 +685,14 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     refresh();
   }
 
-  return { refresh, onShow: refresh, selectRow: selectAnnotationRow, checkIds };
+  // Called by boot.js after a lasso-select gesture on the canvas (see
+  // annotations_canvas.js's onLassoSelect) — replaces the whole checked set
+  // with exactly what the lasso just touched, unlike checkIds above (which
+  // only adds, used for freshly-created annotations).
+  function setCheckedIds(ids) {
+    selectedIds = new Set(ids || []);
+    refresh();
+  }
+
+  return { refresh, onShow: refresh, selectRow: selectAnnotationRow, checkIds, setCheckedIds };
 }

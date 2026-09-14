@@ -10,7 +10,7 @@
  * untouched.
  *
  * Exposes createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log })
- *   .setTool(name)              → 'none'|'polygon'|'freehand'|'vertex_edit'|'ruler'|'split'|'erase'|'grow'|'wand'
+ *   .setTool(name)              → 'none'|'polygon'|'freehand'|'vertex_edit'|'ruler'|'split'|'erase'|'grow'|'wand'|'lasso'
  *   .onMouseDown/onMouseMove/onMouseUp/onKeyDown(e)
  *   .setPixelSource(src)        → wires the wand tool to a { getRegion(sx,sy,sw,sh) → ImageData|null }
  *                                  pixel provider for the active render mode (see boot.js)
@@ -26,13 +26,13 @@
  * same on-screen fidelity is kept regardless of the zoom level the contour
  * was drawn at.
  */
-function createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log, onSelect }) {
+function createAnnotationsCanvas({ container, viewport, annotations, getActiveSample, settings, log, onSelect, onLassoSelect }) {
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:3;';
   container.appendChild(canvas);
   const ctx = canvas.getContext('2d');
 
-  let tool = 'none';               // 'none' | 'polygon' | 'freehand' | 'vertex_edit' | 'ruler' | 'split' | 'erase' | 'grow' | 'wand'
+  let tool = 'none';               // 'none' | 'polygon' | 'freehand' | 'vertex_edit' | 'ruler' | 'split' | 'erase' | 'grow' | 'wand' | 'lasso'
   let selectedId = null;
   let hiddenIds = new Set();       // per-annotation visibility (§4)
   let hiddenClasses = new Set();   // per-class-group visibility (§4)
@@ -60,6 +60,17 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   // against the selected annotation (annotations.sculptAnnotation)
   let sculptPoints = null;
   let sculptRadius = 150; // image px; independent of the freehand-draw brushRadius above
+
+  // lasso (multi-)select tool state: freehand closed area, drawn mousedown→
+  // mouseup, checkmarking every library annotation it touches. Unlike the
+  // other freehand tools it doesn't consume itself on mouseup — `lassoRing`
+  // and `lassoSelectedIds` persist (and keep rendering) across further
+  // mousemoves/redraws until the user starts a new stroke, switches tool, or
+  // presses Escape (see setTool/onKeyDown), per the tool's job of leaving a
+  // visible "what did I select" area on screen.
+  let lassoPoints = null;          // in-progress stroke, image space
+  let lassoRing = null;            // finalized closed ring, image space (kept until tool switch/Esc)
+  let lassoSelectedIds = new Set(); // ids touched by lassoRing, for the highlight-only overlay
 
   // ── wand tool state ────────────────────────────────────────────────────────
   // Two interaction modes, chosen at mousedown by the Alt/Option modifier:
@@ -141,7 +152,8 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     const selectedGroupId = selectedAnn ? selectedAnn.group_id : null;
     for (const ann of libAnns) {
       if (!_classVisible(ann)) continue;
-      _drawAnnotation(ann, selectedGroupId != null && ann.group_id === selectedGroupId);
+      const highlighted = (selectedGroupId != null && ann.group_id === selectedGroupId) || lassoSelectedIds.has(ann.id);
+      _drawAnnotation(ann, highlighted);
     }
 
     // in-progress polygon tool
@@ -194,6 +206,37 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       const p0 = _toVp(splitPoints[0]);
       ctx.moveTo(p0.x, p0.y);
       for (let i = 1; i < splitPoints.length; i++) { const p = _toVp(splitPoints[i]); ctx.lineTo(p.x, p.y); }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // in-progress lasso stroke (open path, while dragging)
+    if (tool === 'lasso' && lassoPoints && lassoPoints.length) {
+      ctx.save();
+      ctx.strokeStyle = '#00d2ff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      const p0 = _toVp(lassoPoints[0]);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < lassoPoints.length; i++) { const p = _toVp(lassoPoints[i]); ctx.lineTo(p.x, p.y); }
+      ctx.stroke();
+      ctx.restore();
+    }
+    // finalized lasso area (closed, filled lightly) — persists on screen
+    // after mouseup until the next stroke, a tool switch, or Escape clears it
+    if (lassoRing && lassoRing.length) {
+      ctx.save();
+      ctx.strokeStyle = '#00d2ff';
+      ctx.fillStyle = 'rgba(0,210,255,0.10)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      const p0 = _toVp(lassoRing[0]);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < lassoRing.length; i++) { const p = _toVp(lassoRing[i]); ctx.lineTo(p.x, p.y); }
+      ctx.closePath();
+      ctx.fill();
       ctx.stroke();
       ctx.restore();
     }
@@ -379,6 +422,54 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     }
     return null;
   }
+  // ── lasso "touch" test: do two closed rings overlap at all? ────────────────
+  // Checked against an annotation's outer ring only (rings[0]) — a lasso
+  // landing purely inside a hole, without touching the annotation's actual
+  // painted area anywhere else, is treated as a rare edge case not worth the
+  // extra even-odd bookkeeping here.
+  function _ringBBox(ring) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of ring) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, minY, maxX, maxY };
+  }
+  function _bboxOverlap(a, b) { return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY; }
+  function _ccw(a, b, c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
+  function _segIntersect(p1, p2, p3, p4) {
+    const d1 = _ccw(p3, p4, p1), d2 = _ccw(p3, p4, p2);
+    const d3 = _ccw(p1, p2, p3), d4 = _ccw(p1, p2, p4);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  }
+  function _ringsTouch(ringA, ringB) {
+    if (!ringA.length || !ringB.length) return false;
+    if (!_bboxOverlap(_ringBBox(ringA), _ringBBox(ringB))) return false;
+    // Cheap containment check first (covers full overlap and the vast
+    // majority of partial overlaps); only fall back to the O(n*m) edge scan
+    // for the rarer case of two boundaries crossing without either ring
+    // having a vertex inside the other (e.g. a thin sliver of the lasso
+    // clipping through an edge of a much larger annotation).
+    for (const p of ringA) if (_pointInRing(p, ringB)) return true;
+    for (const p of ringB) if (_pointInRing(p, ringA)) return true;
+    for (let i = 0; i < ringA.length; i++) {
+      const a1 = ringA[i], a2 = ringA[(i + 1) % ringA.length];
+      for (let j = 0; j < ringB.length; j++) {
+        if (_segIntersect(a1, a2, ringB[j], ringB[(j + 1) % ringB.length])) return true;
+      }
+    }
+    return false;
+  }
+  function _lassoTouchedIds(ring) {
+    const sample = getActiveSample();
+    if (!sample) return [];
+    const touched = [];
+    for (const ann of annotations.listAnnotations(sample, 'library')) {
+      if (!_classVisible(ann) || !ann.rings.length || !ann.rings[0].length) continue;
+      if (_ringsTouch(ring, ann.rings[0])) touched.push(ann.id);
+    }
+    return touched;
+  }
   function _findNearestVertex(imgPt, vpPt) {
     const sample = getActiveSample();
     if (!sample || selectedId == null) return null;
@@ -481,6 +572,16 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       redraw();
       return;
     }
+    if (tool === 'lasso') {
+      // A fresh stroke supersedes whatever was previously drawn/selected —
+      // the old outline+highlight disappear immediately rather than lingering
+      // underneath the new in-progress path.
+      lassoRing = null;
+      lassoSelectedIds = new Set();
+      lassoPoints = [imgPt];
+      redraw();
+      return;
+    }
     if (tool === 'split' || tool === 'erase' || tool === 'grow') {
       if (selectedId == null) {
         // Mirror vertex_edit's convention: a click with nothing selected
@@ -538,6 +639,10 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       if (r && !r.end) { annotations.rulerUpdate(imgPt); redraw(); }
       return;
     }
+    if (tool === 'lasso') {
+      if (lassoPoints) { lassoPoints.push(imgPt); redraw(); }
+      return;
+    }
     if (tool === 'split') {
       cursorVpX = vpX; cursorVpY = vpY; cursorVisible = true;
       if (splitPoints) { splitPoints.push(imgPt); redraw(); return; }
@@ -590,6 +695,22 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       const newPt = ann.rings[ringIdx][vertIdx];
       annotations.moveVertex(sample, 'library', ann.id, ringIdx, vertIdx, newPt);
       dragTarget = null;
+      redraw();
+      return;
+    }
+    if (tool === 'lasso' && lassoPoints) {
+      if (lassoPoints.length >= 3) {
+        const ring = _maybeSimplify(_closeRing(lassoPoints));
+        lassoRing = ring;
+        lassoSelectedIds = new Set(_lassoTouchedIds(ring));
+      } else {
+        // A too-short drag (effectively a click) clears any prior area,
+        // mirroring a plain click-to-deselect elsewhere in this file.
+        lassoRing = null;
+        lassoSelectedIds = new Set();
+      }
+      lassoPoints = null;
+      _notifyLassoSelect(Array.from(lassoSelectedIds));
       redraw();
       return;
     }
@@ -1003,7 +1124,18 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       if (tool === 'polygon') { polyPoints = []; redraw(); }
       else if (tool === 'ruler') { annotations.rulerClear(); redraw(); }
       else if (tool === 'wand') { _wandReset(); redraw(); }
+      else if (tool === 'lasso') { _lassoReset(); redraw(); }
     }
+  }
+
+  // Clears the lasso's drawn area + highlight only — deliberately leaves the
+  // Annotations tab's checkmarks (selectedIds there) alone, since those are
+  // the actual bulk-action selection the user is meant to keep using after
+  // the visual outline goes away (tool switch, Escape, or a fresh stroke).
+  function _lassoReset() {
+    lassoPoints = null;
+    lassoRing = null;
+    lassoSelectedIds = new Set();
   }
 
   function setTool(name) {
@@ -1014,6 +1146,7 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     splitPoints = null;
     sculptPoints = null;
     _wandReset();
+    _lassoReset();
     cursorVisible = false;
     redraw();
   }
@@ -1028,6 +1161,11 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   // goes through setSelected as well, keeping both directions in sync
   // through one code path instead of two.
   function _notifySelect(id) { if (typeof onSelect === 'function') onSelect(id); }
+  // Notifies the Annotations tab of the ids the just-finished lasso stroke
+  // touched, so it can replace the checked set (see boot.js/annotations_tab.js
+  // setCheckedIds) — a separate hook from _notifySelect since a lasso can
+  // check many rows at once, not just highlight a single one.
+  function _notifyLassoSelect(ids) { if (typeof onLassoSelect === 'function') onLassoSelect(ids); }
   function setSelected(id) { selectedId = id; redraw(); _notifySelect(id); }
   function hasSelection() { return selectedId != null; }
   function clearSelection() { selectedId = null; redraw(); _notifySelect(null); }
