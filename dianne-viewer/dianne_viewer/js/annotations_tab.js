@@ -263,6 +263,26 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     document.body.appendChild(a); a.click(); a.remove();
   });
 
+  // Bulk copy-to-positive/negative: same per-row "Copy" action
+  // (annotations.promoteToPosNeg) applied to every checkmarked annotation at
+  // once, so reviewing a batch doesn't require clicking Copy on each row.
+  const bulkCopyPosBtn = _mkBulkBtn('Copy', () => {
+    if (!selectedIds.size) return;
+    const sample = getActiveSample();
+    for (const id of selectedIds) annotations.promoteToPosNeg(sample, id, 'positive');
+    refresh(); annotationsCanvas.redraw();
+  });
+  bulkCopyPosBtn.title = 'Copy all checked annotations to positive';
+  bulkCopyPosBtn.style.cssText = 'background:#123;border:1px solid #22f0ff;color:#22f0ff;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
+  const bulkCopyNegBtn = _mkBulkBtn('Copy', () => {
+    if (!selectedIds.size) return;
+    const sample = getActiveSample();
+    for (const id of selectedIds) annotations.promoteToPosNeg(sample, id, 'negative');
+    refresh(); annotationsCanvas.redraw();
+  });
+  bulkCopyNegBtn.title = 'Copy all checked annotations to negative';
+  bulkCopyNegBtn.style.cssText = 'background:#321;border:1px solid #ff5233;color:#ff5233;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
+
   const listEl = document.createElement('div');
   listEl.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:1 1 auto;overflow-y:auto;min-height:0;';
   container.appendChild(listEl);
@@ -502,6 +522,8 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     _setEnabled(deleteBtn, hasSelection);
     _setEnabled(simplifyBtn, hasSelection);
     _setEnabled(exportBtn, hasSelection);
+    _setEnabled(bulkCopyPosBtn, hasSelection);
+    _setEnabled(bulkCopyNegBtn, hasSelection);
 
     const allSelected = currentAnnIds.length > 0 && currentAnnIds.every(id => selectedIds.has(id));
     _setEnabled(selectAllBtn, currentAnnIds.length > 0 && !allSelected);
