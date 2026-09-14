@@ -12,7 +12,7 @@
  *   patches.isEnabled()          → bool
  *   patches.toggleBtn            → <button> element appended to toolbar
  */
-function createPatchOverlay(container, viewport, settings) {
+function createPatchOverlay(container, viewport, settings, onCountChange) {
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:3;';
   container.appendChild(canvas);
@@ -60,6 +60,7 @@ function createPatchOverlay(container, viewport, settings) {
     if (!enabled) return;
     const coords = coordCache[currentSample];
     if (!coords) return;
+    let drawnCount = 0;
 
     const { scale, ox, oy } = viewport.getTransform();
 
@@ -104,9 +105,12 @@ function createPatchOverlay(container, viewport, settings) {
       const sx = cx * scale + ox - rectW / 2;
       const sy = cy * scale + oy - rectH / 2;
       ctx.rect(sx, sy, rectW, rectH);
+      drawnCount++;
     }
     ctx.fill();
     ctx.stroke();
+
+    if (typeof onCountChange === 'function') onCountChange(drawnCount, n);
   }
 
   // ── Fetch coords ────────────────────────────────────────────────────────────

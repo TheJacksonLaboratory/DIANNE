@@ -255,7 +255,7 @@ const cells = createXeCells(
 hoverInteraction.setCellVisibilityFilter(cell => cells.isCellVisible(cell));
 hoverInteraction.setTranscriptVisibilityFilter(pt => transcripts.isTranscriptVisible(pt));
 const patches = HAS_TILE_COORDS
-  ? createPatchOverlay(root, viewport, settings)
+  ? createPatchOverlay(root, viewport, settings, (drawn, total) => log(`${drawn} tiles displayed (${total} total)`))
   : null;
 if (patches) patches.setContext(ACTIVE_SAMPLE, BASE_URL, TILE_SIZE, SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE]);
 const visiumOverlay = HAS_VISIUM
