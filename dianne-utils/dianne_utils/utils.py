@@ -226,10 +226,10 @@ def getTilesInContour(contours, df_grid, tile_size=224, body_overlap=0.25, debug
 
     Returns:
     dict: { patch_index (int): [tile_id, ...] } arranged in row-major order (top-left to
-          bottom-right within the patch). A patch with only 1 tile is never returned: its
-          per-quantile representation would be a constant ("flat CDF"), which later blows up
-          (division by a zero range) in the PCMA augmentation step. Returns {} on failure or
-          if no patch has >= 2 tiles.
+          bottom-right within the patch). A patch left with only 1 tile after merging has
+          that tile's id duplicated so it is returned as a 2-tile patch instead of being
+          dropped (see note above on why that doesn't fully resolve the flat-CDF risk).
+          Returns {} on failure or if no tiles overlap the contour.
     """
     try:
         cs = [np.asarray(c, dtype=np.int32) for c in (contours if isinstance(contours, list) else [contours])]
@@ -295,15 +295,13 @@ def getTilesInContour(contours, df_grid, tile_size=224, body_overlap=0.25, debug
                 cells[best].extend(cells.pop(sk)); merged_any = True
             if not merged_any: break
 
-        # Each tile contributes exactly one row to getPatchRepresentation's per-patch
-        # quantile, so a 1-tile patch has n=1 and every quantile level collapses to
-        # the same constant value -> a flat "CDF" that blows up later (division by a
-        # zero range) when the classifier pipeline differentiates it into a PDF.
-        # Drop only that degenerate leftover, not anything short of full patch_size**2
-        # (the merge loop above doesn't produce exactly-T-sized cells anyway).
-        cells = {k: v for k, v in cells.items() if len(v) >= 2}
-        if debug and not cells:
-            print(f"getTilesInContour: no usable patches (need >= 2 tiles per patch, got {len(df_hits)} tile(s) total)")
+        # A 1-tile leftover patch has no second tile to give it, so duplicate its sole
+        # tile id to make it a 2-tile patch (rather than dropping it). Note this does not
+        # give getPatchRepresentation's per-patch quantile any real spread -- both tiles
+        # are identical, so every quantile level still collapses to the same constant
+        # value ("flat CDF"), which can still blow up (division by a zero range) when the
+        # classifier pipeline differentiates it into a PDF later on.
+        cells = {k: (v * 2 if len(v) == 1 else v) for k, v in cells.items()}
 
         return {i: df_hits.loc[ids, ['x','y']].sort_values(['y','x']).index.tolist()
                 for i, (_, ids) in enumerate(sorted(cells.items()))}
