@@ -405,18 +405,18 @@ def loadDataAndPreparePatches(samples, outsSTQpath, fname, L=None, ts=112, mpp=0
 
     ads = {}
     imgs = {}
-    for sample in tqdm(samples):
+    for sample in tqdm(samples, desc='Loading data and preparing patches (stage 1 of 3)'):
         ads[sample], imgs[sample] = loadAd(f'{outsSTQpath}{sample}/', fname=fname, L=L, fs=fs)
 
     patchCoordinates = pd.concat(
-        [preparePatchesWSI(ads[sample].obs, N=N, spacing=ts / mpp, sample_id=sample) for sample in tqdm(samples)],
+        [preparePatchesWSI(ads[sample].obs, N=N, spacing=ts / mpp, sample_id=sample) for sample in tqdm(samples, desc='Loading data and preparing patches (stage 2 of 3)')],
         axis=0)
 
     qs = np.linspace(0.05, 0.95, 10, endpoint=True)
     patchesCDFs = pd.concat(
         [getPatchRepresentationParallel(ads[sample],
                                 patchCoordinates.xs(sample, level='sample', axis=0),
-                                qs, sample_id=sample) for sample in tqdm(samples)],
+                                qs, sample_id=sample) for sample in tqdm(samples, desc='Loading data and preparing patches (stage 3 of 3)')],
         axis=0)
 
     return ads, imgs, patchCoordinates, patchesCDFs, qs, ts, mpp, L, N
