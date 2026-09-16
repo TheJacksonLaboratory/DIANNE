@@ -80,6 +80,12 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       if (t.freehandCls !== undefined && annotationsOptions && annotationsOptions.annotationsCanvas) {
         annotationsOptions.annotationsCanvas.setFreehandMode(t.freehandCls);
         annotationsOptions.annotationsCanvas.setTool('freehand');
+      } else if (annotationsOptions && annotationsOptions.annotationsCanvas) {
+        // pan / draw_positive / draw_negative don't touch annotationsCanvas —
+        // without this it keeps whatever annot_* tool was last active (e.g.
+        // 'freehand'), leaving its cursor/crosshair preview frozen on screen
+        // since it stops receiving mousemove once toolbar's activeTool changes.
+        annotationsOptions.annotationsCanvas.setTool(null);
       }
     });
     btn.dataset.demoId = 'tool-' + t.name.replace(/_/g, '-');
@@ -1115,6 +1121,11 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       const bm = (typeof draw.getBrushMode === 'function') ? draw.getBrushMode() : 'line';
       _syncBrushModeBtn(bm);
       _syncWidthSlider(bm);
+    } else if (typeof draw.onMouseLeave === 'function') {
+      // Leaving the draw tool stops feeding draw.onMouseMove (see the pointer
+      // handlers below), so its crosshair cursor would otherwise stay frozen
+      // on screen at its last position — explicitly clear it here.
+      draw.onMouseLeave();
     }
     if (annotationsOptions && typeof annotationsOptions._syncAnnotBrushRow === 'function') {
       annotationsOptions._syncAnnotBrushRow(name);
