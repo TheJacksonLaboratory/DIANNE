@@ -317,20 +317,16 @@ class ViewerServer:
             bucket[cls] = [a for a in anns if not a.get('derived_from') or id(a) in keep]
         return bucket
 
-    def save_annotations(self, sample, library=None, positive=None, negative=None):
-        """Persist one sample's annotation sets to a compressed GeoJSON file.
-        Called by the /annotations/save route (autosave, manual save, and
-        on-slide-switch flush per task.md §8)."""
-        bucket = self.annotations_by_sample.setdefault(
-            sample, {'library': [], 'positive': [], 'negative': []})
-        if library is not None:
-            bucket['library'] = library
-        if positive is not None:
-            bucket['positive'] = positive
-        if negative is not None:
-            bucket['negative'] = negative
-        self._clean_bucket(bucket)
-
+    def _ensure_annotations_dir(self):
+        """Create annotations_dir group-writable + setgid if it doesn't exist
+        yet, and best-effort fix its mode if it does. annotations_dir is
+        shared across every user of a dataset (annotations, class colors,
+        history logs, and dianne_utils' subtile feature cache all write into
+        it), so whichever user's request happens to create it first must not
+        leave it with a restrictive default-umask mode that locks everyone
+        else out -- every writer into this directory must go through this
+        instead of a bare os.makedirs, or that "first writer" can just as
+        easily be save_class_colors or append_history_log as save_annotations."""
         old_umask = os.umask(0)
         try:
             os.makedirs(self.annotations_dir, mode=0o775, exist_ok=True)
@@ -345,6 +341,22 @@ class ViewerServer:
             # already grant this user group write access via setgid. Not
             # fatal, and must not block saving into it.
             pass
+
+    def save_annotations(self, sample, library=None, positive=None, negative=None):
+        """Persist one sample's annotation sets to a compressed GeoJSON file.
+        Called by the /annotations/save route (autosave, manual save, and
+        on-slide-switch flush per task.md §8)."""
+        bucket = self.annotations_by_sample.setdefault(
+            sample, {'library': [], 'positive': [], 'negative': []})
+        if library is not None:
+            bucket['library'] = library
+        if positive is not None:
+            bucket['positive'] = positive
+        if negative is not None:
+            bucket['negative'] = negative
+        self._clean_bucket(bucket)
+
+        self._ensure_annotations_dir()
 
         features = []
         for cls in ('library', 'positive', 'negative'):
@@ -484,7 +496,7 @@ class ViewerServer:
         if not isinstance(colors, dict):
             return
         self.class_colors.update(colors)
-        os.makedirs(self.annotations_dir, exist_ok=True)
+        self._ensure_annotations_dir()
         with open(self._class_colors_path(), 'w', encoding='utf-8') as f:
             json.dump(self.class_colors, f)
 
@@ -520,7 +532,7 @@ class ViewerServer:
         of {ts, message}."""
         if not entries:
             return
-        os.makedirs(self.annotations_dir, exist_ok=True)
+        self._ensure_annotations_dir()
         by_date = {}
         for e in entries:
             ts = e.get('ts') or datetime.now(timezone.utc).isoformat()

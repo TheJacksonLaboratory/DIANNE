@@ -1122,7 +1122,28 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
                                  ts=ctranspath_ts, num_workers=ctranspath_num_workers,
                                  batch_size=ctranspath_batch_size, progress_cb=_batch_progress)
         try:
-            os.makedirs(annotations_dir, exist_ok=True)
+            # annotations_dir is shared across every user of a dataset (the
+            # viewer's own annotations/class-colors/history-log writes land
+            # here too), so whoever creates it first must not leave it at a
+            # restrictive default-umask mode that locks other users out --
+            # same group-writable + setgid treatment as ViewerServer's own
+            # _ensure_annotations_dir.
+            old_umask = os.umask(0)
+            try:
+                os.makedirs(annotations_dir, mode=0o775, exist_ok=True)
+            finally:
+                os.umask(old_umask)
+            try:
+                os.chmod(annotations_dir, 0o2775)
+            except PermissionError:
+                # Dir already exists and is owned by another user -- chmod
+                # requires ownership, so a non-owner can't fix it even
+                # though its own permission bits already grant this user
+                # group write access. Not fatal on its own; if the dir
+                # really isn't writable by this user, the to_parquet() call
+                # below will fail and be caught the same as any other
+                # caching failure.
+                pass
             df.to_parquet(cache_path)
             os.chmod(cache_path, 0o664)
             print(f'[subtile] cached features to {cache_path}')

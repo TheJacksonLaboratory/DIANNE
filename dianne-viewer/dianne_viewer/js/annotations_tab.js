@@ -267,6 +267,21 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     document.body.appendChild(a); a.click(); a.remove();
   });
 
+  // Manual save (§8): autosave already covers this (periodic check + flush
+  // on sample switch / page unload), but a visible button gives the user a
+  // way to force a save on demand -- e.g. right before closing the browser
+  // tab some other way, or just for peace of mind. Unlike Delete/Simplify/
+  // Export it doesn't depend on selectedIds, so it's never dimmed by _setEnabled below.
+  const saveNowBtn = _mkBulkBtn('Save', async () => {
+    const sample = getActiveSample();
+    if (!sample) return;
+    const res = await annotations.saveSample(sample);
+    if (res && res.ok) annotations.logAndRecord('Saved annotations for ' + sample);
+  });
+  saveNowBtn.title = 'Save annotations for this sample right now.\n'
+    + 'Autosave already runs on its own: every 60 seconds while an annotation has unsaved '
+    + 'changes, and immediately when you switch to another sample’s tab.';
+
   // Bulk copy-to-positive/negative: same per-row "Copy" action
   // (annotations.promoteToPosNeg) applied to every checkmarked annotation at
   // once, so reviewing a batch doesn't require clicking Copy on each row.
