@@ -336,7 +336,15 @@ class ViewerServer:
             os.makedirs(self.annotations_dir, mode=0o775, exist_ok=True)
         finally:
             os.umask(old_umask)
-        os.chmod(self.annotations_dir, 0o2775)
+        try:
+            os.chmod(self.annotations_dir, 0o2775)
+        except PermissionError:
+            # Dir already exists and is owned by another user (shared
+            # multi-user annotations_dir) -- chmod requires ownership, so a
+            # non-owner can't change it even though its own permission bits
+            # already grant this user group write access via setgid. Not
+            # fatal, and must not block saving into it.
+            pass
 
         features = []
         for cls in ('library', 'positive', 'negative'):
@@ -346,7 +354,15 @@ class ViewerServer:
         payload = json.dumps(fc).encode('utf-8')
         with gzip.open(self._sample_annotations_path(sample), 'wb') as f:
             f.write(payload)
-        os.chmod(self._sample_annotations_path(sample), 0o664)
+        try:
+            os.chmod(self._sample_annotations_path(sample), 0o664)
+        except PermissionError:
+            # File already existed and is owned by another user -- chmod
+            # requires ownership regardless of the file's own permission
+            # bits, so a non-owner can't fix perms here even though the
+            # write above (via that file's existing group-write bit)
+            # already succeeded. Must not fail the save over this.
+            pass
         return True
 
     def load_annotations(self, sample):

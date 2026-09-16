@@ -1094,7 +1094,16 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
         cache_path = _features_cache_path(sample)
         if os.path.isfile(cache_path):
             print(f'[subtile] using cached features: {cache_path}')
-            os.chmod(cache_path, 0o664) # Legacy to ensure group write access; will be removed later
+            try:
+                os.chmod(cache_path, 0o664) # Legacy to ensure group write access; will be removed later
+            except PermissionError:
+                # File is owned by another user (shared multi-user
+                # annotations_dir) -- chmod requires ownership regardless of
+                # the file's own permission bits, so a non-owner can't fix
+                # perms here. Not fatal: whoever created the file already
+                # set them (see the write path below), and this must not
+                # block reading an otherwise-usable cache.
+                pass
             if progress_cb:
                 progress_cb('features_cached', f'Using cached features for {sample}', fraction=1.0)
             return pd.read_parquet(cache_path)
