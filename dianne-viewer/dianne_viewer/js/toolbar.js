@@ -23,12 +23,15 @@
  * Exposes:
  *   toolbar.getActiveTool()   → 'pan' | 'draw_positive' | 'draw_negative' | 'click'
  *   toolbar.setTool(name)
+ *   toolbar.setInputLocked(bool)  → force 'pan' and disable other tool buttons (pan/zoom stay live)
  */
 
 function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, searchOptions, runSubtileInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions, annotationsOptions) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
+  let inputLocked = false;   // true while inference is in flight (see setInputLocked)
+  let _toolBeforeLock = null;
 
   // ── Shared button style helpers ────────────────────────────────────────────
   const _btnCss = [
@@ -1126,6 +1129,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   }
 
   function setTool(name) {
+    if (inputLocked && name !== 'pan') return;  // drawing tools disabled while inference runs
     activeTool = name;
     for (const [n, btn] of Object.entries(buttons)) {
       btn.style.background = (n === name) ? 'rgba(255,255,255,0.2)' : 'transparent';
@@ -1167,6 +1171,21 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   // Wand uses the same hidden-native-cursor + custom disk-preview convention.
   function _isWandTool2(name) {
     return name === 'annot_wand';
+  }
+
+  // Disables every non-pan tool button while inference is running (pan/zoom
+  // stay usable) — called from overlay_controls.js around run/search POSTs.
+  function setInputLocked(locked) {
+    if (locked === inputLocked) return;
+    inputLocked = locked;
+    if (locked) { _toolBeforeLock = activeTool; setTool('pan'); }
+    for (const [n, btn] of Object.entries(buttons)) {
+      if (n === 'pan') continue;
+      btn.disabled = locked;
+      btn.style.opacity = locked ? '0.35' : '1';
+      btn.style.cursor  = locked ? 'not-allowed' : 'pointer';
+    }
+    if (!locked && _toolBeforeLock) { setTool(_toolBeforeLock); _toolBeforeLock = null; }
   }
 
   setTool('pan');   // initial state
@@ -1409,6 +1428,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   return {
     getActiveTool: () => activeTool,
     setTool,
+    setInputLocked,
     setMonoActive,
     setSecChVisible,
   };

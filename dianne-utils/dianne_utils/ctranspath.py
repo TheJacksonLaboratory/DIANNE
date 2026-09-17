@@ -108,11 +108,14 @@ def quantize_fixed(arr: np.ndarray, val_range=2.0, dtype=np.int8) -> np.ndarray:
 
 def extract_features(slide, pos, model, destination, ts,
                       batch_size, num_batches, transform, forward_fn, postprocess_fn,
-                      num_workers=8, progress_cb=None):
+                      num_workers=8, progress_cb=None, cancel_event=None):
     features = []
     num_images = len(pos)
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         for ibatch in tqdm(range(num_batches)):
+            if cancel_event is not None and cancel_event.is_set():
+                from .utils import InferenceCancelled
+                raise InferenceCancelled('cancelled during feature extraction')
             start = ibatch * batch_size
             stop = min(start + batch_size, num_images)
             tasks = ((slide, pos, row_idx, ts) for row_idx in range(start, stop))
@@ -140,7 +143,7 @@ def extract_features(slide, pos, model, destination, ts,
                 progress_cb(ibatch + 1, num_batches)
     return np.vstack(features)
 
-def extract(df_grid, wsi_file, ts=224, num_workers=8, batch_size=512, progress_cb=None):
+def extract(df_grid, wsi_file, ts=224, num_workers=8, batch_size=512, progress_cb=None, cancel_event=None):
     model, destination, transform, forward_fn, postprocess_fn = load_model(
         "ctranspath", "/TransPath/ctranspath.pth")
 
@@ -151,7 +154,8 @@ def extract(df_grid, wsi_file, ts=224, num_workers=8, batch_size=512, progress_c
 
     features = extract_features(slide, df_grid, model, destination, ts,
                                  batch_size, num_batches, transform, forward_fn,
-                                 postprocess_fn, num_workers=num_workers, progress_cb=progress_cb)
+                                 postprocess_fn, num_workers=num_workers, progress_cb=progress_cb,
+                                 cancel_event=cancel_event)
     features = features.transpose(0, 2, 3, 1).reshape(-1, features.shape[1])
     cols = [f'feat_CTransPath_{i}' for i in range(features.shape[1])]
     return pd.DataFrame(features, columns=cols)

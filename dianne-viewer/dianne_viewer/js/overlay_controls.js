@@ -325,6 +325,20 @@ function createOverlayControls({
     _fetchContours().then(geojson => { if (geojson) drawContourLayer(); });
   });
 
+  // A handful of red-halo pulses on the eye button when a fetch legitimately
+  // returns zero contours (e.g. probContourMinArea/Sigma tuned for tile-level
+  // deltas filtering out finer subtile-level predictions) — otherwise the
+  // only feedback is a log line that's easy to miss, and the click looks
+  // like it did nothing at all.
+  function _blinkContourWarn() {
+    if (!contourShowBtn) return;
+    let n = 0;
+    const iv = setInterval(() => {
+      contourShowBtn.style.boxShadow = (n % 2 === 0) ? '0 0 8px 3px rgba(255,40,40,0.9)' : 'none';
+      if (++n >= 6) { clearInterval(iv); contourShowBtn.style.boxShadow = 'none'; }
+    }, 180);
+  }
+
   if (contourShowBtn) {
     contourShowBtn.style.opacity = '0.6';
     contourShowBtn.addEventListener('click', async () => {
@@ -337,10 +351,16 @@ function createOverlayControls({
       }
       const geojson = await _fetchContours();
       if (!geojson) return;
+      const n = (geojson.features || []).length;
+      if (n === 0) {
+        log('No contours found at threshold ' + settings.get('probContourThreshold') +
+            ' — try lowering probContourMinArea/probContourSigma in Settings (subtile-level predictions are finer-grained than tile-level).');
+        _blinkContourWarn();
+        return;
+      }
       contoursVisible = true;
       contourShowBtn.style.opacity = '1';
       drawContourLayer();
-      const n = (geojson.features || []).length;
       log('Showing ' + n + ' contour' + (n === 1 ? '' : 's') + ' at threshold ' + settings.get('probContourThreshold'));
     });
   }
@@ -551,6 +571,21 @@ function createOverlayControls({
     });
   }
 
+  // Set while a run/search POST is in flight so Esc can abort it client-side
+  // and tell the server to cooperatively cancel the matching worker-thread
+  // call (see POST /cancel_inference) — otherwise the server keeps running
+  // (and its single-slot inference queue stays blocked) after the client
+  // gives up waiting.
+  let _activeInferenceAbort = null;
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !_activeInferenceAbort) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    _activeInferenceAbort.abort();
+    fetch(BASE_URL + '/cancel_inference', { method: 'POST' }).catch(() => {});
+  });
+
   async function _runInferenceRequest(endpoint, runBtn) {
     const ACTIVE_SAMPLE = ACTIVE_SAMPLE_REF();
     // 1. Flush current strokes to server
@@ -574,16 +609,21 @@ function createOverlayControls({
     // stale overlay next to the new heatmap.
     clearContours();
     showLoader(durationMs);
-    log('Running inference on ' + ACTIVE_SAMPLE + '…');
+    toolbar.setInputLocked(true);
+    log('Running inference on ' + ACTIVE_SAMPLE + '… (Esc to cancel)');
+    _activeInferenceAbort = new AbortController();
     try {
       const resp = await fetch(BASE_URL + endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active_sample: ACTIVE_SAMPLE }),
+        signal: _activeInferenceAbort.signal,
       });
       const result = await resp.json();
       hideLoader();
-      if (result.ok) {
+      if (result.cancelled) {
+        log('Inference cancelled.');
+      } else if (result.ok) {
         const ov = result.overlay;
         let points = ov.xi.map((xi, i) => ({ xi, yi: ov.yi[i], pi: ov.pi[i] }));
         const style  = { delta: ov.style.delta, alpha: ov.style.alpha,
@@ -611,8 +651,10 @@ function createOverlayControls({
       }
     } catch (err) {
       hideLoader();
-      log('Inference request failed: ' + err);
+      log(err && err.name === 'AbortError' ? 'Inference cancelled.' : 'Inference request failed: ' + err);
     } finally {
+      _activeInferenceAbort = null;
+      toolbar.setInputLocked(false);
       if (runBtn) { runBtn.disabled = false; runBtn.style.opacity = '1'; runBtn.style.boxShadow = '0 0 8px 2px rgba(0,255,136,0.65)'; }
     }
   }
@@ -645,16 +687,21 @@ function createOverlayControls({
     if (searchBtn) { searchBtn.disabled = true; searchBtn.style.opacity = '0.5'; }
     clearContours();
     showLoader(4000);
-    log('Searching for an uncurated patch to review…');
+    toolbar.setInputLocked(true);
+    log('Searching for an uncurated patch to review… (Esc to cancel)');
+    _activeInferenceAbort = new AbortController();
     try {
       const resp = await fetch(BASE_URL + '/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
+        signal: _activeInferenceAbort.signal,
       });
       const result = await resp.json();
       hideLoader();
-      if (result.ok) {
+      if (result.cancelled) {
+        log('Search cancelled.');
+      } else if (result.ok) {
         const sample = result.sample;
         let { x0, y0, x1, y1 } = result.bbox;
         // bbox is in the same coordinate space as run_inference_fn's xi/yi —
@@ -677,8 +724,10 @@ function createOverlayControls({
       }
     } catch (err) {
       hideLoader();
-      log('Search request failed: ' + err);
+      log(err && err.name === 'AbortError' ? 'Search cancelled.' : 'Search request failed: ' + err);
     } finally {
+      _activeInferenceAbort = null;
+      toolbar.setInputLocked(false);
       if (searchBtn) { searchBtn.disabled = false; searchBtn.style.opacity = '1'; }
     }
   }

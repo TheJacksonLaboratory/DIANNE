@@ -29,6 +29,12 @@ from dianne_core import PCMA
 from dianne_core import inferProbFast
 from .interpolation import interpolate_points as interpolatePoints
 
+class InferenceCancelled(Exception):
+    """Raised cooperatively by a run_*_inference_fn when its cancel_event is
+    set (see ViewerServer / POST /cancel_inference) -- lets a slow feature
+    extraction or training loop stop between checkpoints instead of running
+    to completion with no way to abort."""
+
 def createH2(slide, mpath=None, mpp=0.2208187960959237):
     df_temp = pd.read_csv(f'{mpath}/{slide}.matrix-H.csv', header=None)
     df_temp.iloc[:2,:2] *= 0.25 / mpp
@@ -494,7 +500,8 @@ def getClassifierForFromStrokes(strokes_by_sample, patchCoordinates, tile_size, 
 
 def getSubtileClassifierForFromStrokes(strokes_by_sample, samples, qs, get_subtile_data_fn,
                                        subtile_size, body_overlap, patch_size,
-                                       augFunc=None, alpha=0.8, seed=0, showPatches=False):
+                                       augFunc=None, alpha=0.8, seed=0, showPatches=False,
+                                       cancel_event=None):
     """Subtile-level analogue of getClassifierForFromStrokes.
 
     getClassifierForFromStrokes trains on tile-level AnnData features, which is a
@@ -549,6 +556,8 @@ def getSubtileClassifierForFromStrokes(strokes_by_sample, samples, qs, get_subti
     all_annotations = {}
 
     for sample in active_samples:
+        if cancel_event is not None and cancel_event.is_set():
+            raise InferenceCancelled('cancelled while building per-sample training data')
         strokes = strokes_by_sample[sample]
         df_grid_sub, df_feat_sub = get_subtile_data_fn(sample)
 
@@ -1180,7 +1189,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
     def _features_cache_path(sample):
         return os.path.join(annotations_dir, f'{sample}-{F}-{model}_features.parquet')
 
-    def _ensure_features(sample, df_grid, progress_cb=None):
+    def _ensure_features(sample, df_grid, progress_cb=None, cancel_event=None):
         cache_path = _features_cache_path(sample)
         if os.path.isfile(cache_path):
             print(f'[subtile] using cached features: {cache_path}')
@@ -1210,7 +1219,8 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
                             f'{done}/{total}', fraction=(done / total if total else None))
         df = _ctranspath_extract(df_grid[['pxl_row_in_wsi', 'pxl_col_in_wsi']], imgs[sample],
                                  ts=ctranspath_ts, num_workers=ctranspath_num_workers,
-                                 batch_size=ctranspath_batch_size, progress_cb=_batch_progress)
+                                 batch_size=ctranspath_batch_size, progress_cb=_batch_progress,
+                                 cancel_event=cancel_event)
         try:
             # annotations_dir is shared across every user of a dataset (the
             # viewer's own annotations/class-colors/history-log writes land
@@ -1246,7 +1256,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
             print(f'[subtile] WARNING: failed to cache features to {cache_path}: {exc}')
         return df
 
-    def _runfn(*, strokes_by_sample, active_sample, progress_cb=None):
+    def _runfn(*, strokes_by_sample, active_sample, progress_cb=None, cancel_event=None):
         from .subtilegpu import inferSubtileFromFeatures, build_subtile_table
 
         # Per-call cache so a sample needed for both training (any annotated
@@ -1260,10 +1270,14 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
 
         def _get_features(sample, df_grid_, cb):
             if sample not in feat_cache:
-                feat_cache[sample] = _ensure_features(sample, df_grid_, progress_cb=cb)
+                feat_cache[sample] = _ensure_features(sample, df_grid_, progress_cb=cb, cancel_event=cancel_event)
             return feat_cache[sample]
 
         def _get_subtile_data(sample):
+            # Any annotated-but-not-active sample without a cached feature file
+            # extracts silently here (cb=None) -- this is the step that can run
+            # for minutes with zero progress feedback, which is why it must stay
+            # cancellable via cancel_event even though it's not reported.
             df_grid_ = _get_grid(sample)
             df_features_ = _get_features(sample, df_grid_, cb=progress_cb if sample == active_sample else None)
             return build_subtile_table(df_features_, df_grid_, subgrid=subgrid, val_range=val_range,
@@ -1274,13 +1288,16 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
         clf, _, _ = getSubtileClassifierForFromStrokes(
             strokes_by_sample, samples, qs, _get_subtile_data,
             subtile_size=int(round(ctranspath_ts / subgrid[0])), body_overlap=body_overlap,
-            patch_size=subtile_patch_size, augFunc=PCMA, alpha=PCMA_alpha, seed=0)
+            patch_size=subtile_patch_size, augFunc=PCMA, alpha=PCMA_alpha, seed=0,
+            cancel_event=cancel_event)
         if clf is None:
             return
 
         df_grid = _get_grid(active_sample)
         df_features = _get_features(active_sample, df_grid, cb=progress_cb)
 
+        if cancel_event is not None and cancel_event.is_set():
+            raise InferenceCancelled('cancelled before GPU inference')
         if progress_cb:
             progress_cb('running_inference', 'Running GPU inference…', fraction=None)
         y, x, p = inferSubtileFromFeatures(
@@ -1306,6 +1323,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
     # (see GET /inference_progress) — a plain run_inference_fn (makeRunFn)
     # doesn't accept one and would TypeError if it were passed unconditionally.
     _runfn.supports_progress = True
+    _runfn.supports_cancel = True
     return _runfn
 
 def loadDataAndPreparePatchesStatic(samples, outsSTQpath, fname='img.data.ctranspath-1.h5ad', samplesToSTQnames=None, L=None, ts=56, mpp=0.25, N=8):

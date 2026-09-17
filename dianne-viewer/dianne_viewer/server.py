@@ -12,6 +12,7 @@ import multiprocessing
 import cv2
 import numpy as np
 from dianne_utils.mask import extractContoursForQuPath
+from dianne_utils.utils import InferenceCancelled
 
 from .contours import make_prob_mask_from_points
 
@@ -108,6 +109,7 @@ class ViewerServer:
             POST /search        → re-train classifier, propose an uncurated patch to review
             GET  /inference_progress → phase/fraction of the in-flight run_inference,
                                         run_subtile_inference, or search call, for progress UI
+            POST /cancel_inference   → cooperative-cancel the in-flight run/search call (Esc in the UI)
     """
 
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
@@ -172,6 +174,10 @@ class ViewerServer:
             target=self._inference_loop, daemon=True, name='dianne-inference-worker'
         )
         self._inference_worker.start()
+        # Set by POST /cancel_inference (e.g. the client's Esc handler); a
+        # run_*_inference_fn that supports cooperative cancellation (see
+        # supports_cancel) polls it between its slower steps.
+        self._cancel_event = threading.Event()
         # Polled by the client (GET /inference_progress) while a /run_inference
         # or /run_subtile_inference POST is in flight, so the loading modal can
         # show which phase is running (e.g. "computing features" vs "GPU
@@ -259,8 +265,13 @@ class ViewerServer:
                 self._set_inference_progress('starting', 'Starting…', sample=sample)
             else:
                 self._set_inference_progress('running', 'Training & running inference…', sample=sample)
+            if getattr(fn, 'supports_cancel', False):
+                self._cancel_event.clear()
+                fn_kwargs = {**fn_kwargs, 'cancel_event': self._cancel_event}
             try:
                 result_box['result'] = fn(**fn_kwargs)
+            except InferenceCancelled:
+                result_box['cancelled'] = True
             except Exception as exc:
                 result_box['error'] = exc
             finally:
@@ -1377,6 +1388,10 @@ class ViewerServer:
                         self._respond(200, body, 'application/json')
                         return
                     result_event.wait()  # block HTTP handler thread until done
+                    if result_box.get('cancelled'):
+                        body = json.dumps({'ok': False, 'cancelled': True, 'error': 'Cancelled by user'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
                     if 'error' in result_box:
                         import traceback as _tb
                         _tb.print_exc()
@@ -1435,6 +1450,10 @@ class ViewerServer:
                         self._respond(200, body, 'application/json')
                         return
                     result_event.wait()  # block HTTP handler thread until done
+                    if result_box.get('cancelled'):
+                        body = json.dumps({'ok': False, 'cancelled': True, 'error': 'Cancelled by user'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
                     if 'error' in result_box:
                         import traceback as _tb
                         _tb.print_exc()
@@ -1489,6 +1508,10 @@ class ViewerServer:
                         self._respond(200, body, 'application/json')
                         return
                     result_event.wait()  # block HTTP handler thread until done
+                    if result_box.get('cancelled'):
+                        body = json.dumps({'ok': False, 'cancelled': True, 'error': 'Cancelled by user'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
                     if 'error' in result_box:
                         import traceback as _tb
                         _tb.print_exc()
@@ -1519,6 +1542,15 @@ class ViewerServer:
                         traceback.print_exc()
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
                         self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/cancel_inference':
+                    # Esc in the UI: sets a flag a supports_cancel run_*_inference_fn
+                    # polls between its slower steps, so the blocked HTTP handler
+                    # thread for the in-flight request (see result_event.wait() above)
+                    # returns promptly instead of running to completion or hanging.
+                    srv._cancel_event.set()
+                    self._respond(200, json.dumps({'ok': True}).encode(), 'application/json')
                     return
 
                 self._respond(200, b'ok')
