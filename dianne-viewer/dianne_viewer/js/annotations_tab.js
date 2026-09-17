@@ -461,8 +461,17 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     });
     top.appendChild(labelEl);
 
-
-
+    // Author (purple) / last-editor (light blue) user icons, hover shows
+    // who + when. Library annotations only — pos/neg strokes have no author.
+    function _userIcon(color, title) {
+      const span = document.createElement('span');
+      span.title = title;
+      span.style.cssText = 'display:inline-flex;flex-shrink:0;';
+      span.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="${color}"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
+      return span;
+    }
+    top.appendChild(_userIcon('#a58bff', `Created by ${ann.author || 'unknown'}\n${ann.created_at ? new Date(ann.created_at).toLocaleString() : ''}`));
+    top.appendChild(_userIcon('#7ec8ff', `Last edited by ${ann.last_editor || 'unknown'}\n${ann.updated_at ? new Date(ann.updated_at).toLocaleString() : ''}`));
 
     const visBtn = document.createElement('button');
     const isVis = typeof annotationsCanvas.isVisible === 'function' ? annotationsCanvas.isVisible(ann.id) : true;

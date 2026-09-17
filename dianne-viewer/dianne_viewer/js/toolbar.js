@@ -96,6 +96,33 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     buttons[t.name] = btn;
   }
 
+  // ── Active-sample indicator: blinking green dot when another user's
+  // ".{user}-active.lock" file (written server-side on /choose_sample)
+  // points at this same sample within the last hour. Placed right after
+  // the "draw" button.
+  const _activeDotBlink = document.createElement('style');
+  _activeDotBlink.textContent = '@keyframes iv-active-blink { 0%,100%{opacity:1} 50%{opacity:0.15} }';
+  document.head.appendChild(_activeDotBlink);
+  const activeDot = document.createElement('span');
+  activeDot.style.cssText = 'display:none;width:25px;height:25px;border-radius:50%;flex-shrink:0;' +
+    'background:#22ff55;box-shadow:0 0 6px 2px rgba(34,255,85,0.8);animation:iv-active-blink 1s ease-in-out infinite;';
+  toolRow.appendChild(activeDot);
+
+  function checkActiveUsers() {
+    const sample = annotationsOptions && annotationsOptions.getActiveSample();
+    if (!sample) return;
+    fetch(`${baseUrl}/active_users?sample=${encodeURIComponent(sample)}`)
+      .then(r => r.json())
+      .then(res => {
+        const users = (res && res.users) || [];
+        activeDot.style.display = users.length ? 'block' : 'none';
+        activeDot.title = users.length ? `Also active on this sample: ${users.join(', ')}` : '';
+      })
+      .catch(() => {});
+  }
+  checkActiveUsers();
+  setInterval(checkActiveUsers, 20000);
+
   // ── Row 1b: §6 annotation library tools (polygon / freehand / vertex-edit / ruler) ──
   if (annotationsOptions && annotationsOptions.annotationsCanvas) {
     const _ac = annotationsOptions.annotationsCanvas;
@@ -1431,5 +1458,6 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     setInputLocked,
     setMonoActive,
     setSecChVisible,
+    checkActiveUsers,
   };
 }

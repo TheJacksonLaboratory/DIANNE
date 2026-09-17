@@ -686,6 +686,7 @@ function setActiveSample(sampleName) {
     _updateWandPixelSource();
     if (toolbar && typeof toolbar.setMonoActive === 'function')
       toolbar.setMonoActive(!!(SAMPLE_IS_MONO[ACTIVE_SAMPLE]));
+    if (toolbar && typeof toolbar.checkActiveUsers === 'function') toolbar.checkActiveUsers();
     _overlayCtrlApi.clearPredPoints();
     _overlayCtrlApi.clearContours();
     _overlayCtrlApi.drawPredLayer();

@@ -110,6 +110,7 @@ class ViewerServer:
             GET  /inference_progress → phase/fraction of the in-flight run_inference,
                                         run_subtile_inference, or search call, for progress UI
             POST /cancel_inference   → cooperative-cancel the in-flight run/search call (Esc in the UI)
+            GET  /active_users?sample=  → other users' usernames actively viewing `sample`
     """
 
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
@@ -219,6 +220,12 @@ class ViewerServer:
         # file alongside the per-sample GeoJSON annotation files, so
         # different annotators keep independent color schemes.
         self.class_colors = self._load_class_colors_from_disk()
+        # Multi-user "who's looking at what" indicator: a per-user lock file
+        # in annotations_dir records this user's active sample + timestamp,
+        # refreshed on every /choose_sample. Other clients poll /active_users
+        # to show a blinking dot when someone else is on the same sample; a
+        # lock older than 1h (app closed without hitting Stop) is ignored.
+        self._write_lock_file(self.chosen_sample)
         self._tile_coords_fn  = None   # callable(sample) -> {'x': [...], 'y': [...]}
         self._tile_size       = None   # int, secondary-space pixels
         self._visium_ads      = {}     # dict[sample] -> AnnData (spots × genes)
@@ -283,8 +290,52 @@ class ViewerServer:
 
     def stop(self):
         self._stopped = True
+        self._remove_lock_file()
         self._inference_queue.put(None)   # stop worker
         self._server.shutdown()
+
+    # ── multi-user active-sample lock files (see _write_lock_file above) ──────
+
+    def _lock_file_path(self):
+        return os.path.join(self.annotations_dir, f'.{self._safe_filename_component(self.username)}-active.lock')
+
+    def _write_lock_file(self, sample):
+        self._ensure_annotations_dir()
+        try:
+            with open(self._lock_file_path(), 'w') as f:
+                json.dump({'sample': sample, 'timestamp': datetime.now(timezone.utc).isoformat()}, f)
+            os.chmod(self._lock_file_path(), 0o664)
+        except OSError:
+            pass
+
+    def _remove_lock_file(self):
+        try:
+            os.remove(self._lock_file_path())
+        except OSError:
+            pass
+
+    def get_active_users(self, sample):
+        """Other users' lock files pointing at `sample` within the last hour."""
+        users = []
+        try:
+            entries = os.listdir(self.annotations_dir)
+        except OSError:
+            return users
+        now = datetime.now(timezone.utc)
+        own = self._safe_filename_component(self.username)
+        for name in entries:
+            m = re.fullmatch(r'\.(.+)-active\.lock', name)
+            if not m or m.group(1) == own:
+                continue
+            try:
+                with open(os.path.join(self.annotations_dir, name)) as f:
+                    data = json.load(f)
+                ts = datetime.fromisoformat(data['timestamp'])
+                if data.get('sample') == sample and (now - ts).total_seconds() < 3600:
+                    users.append(m.group(1))
+            except (OSError, ValueError, KeyError):
+                continue
+        return users
 
     # ── §8 annotation persistence (independent of the named classifier save) ──
 
@@ -827,6 +878,7 @@ class ViewerServer:
         self.image = self.images[sample_name]
         self.xenium = self.xenium_by_sample.get(sample_name)
         self.xenium_cells = self.xenium_cells_by_sample.get(sample_name)
+        self._write_lock_file(sample_name)
 
     def _sample_from_qs(self, qs):
         requested = qs.get('sample', [self.chosen_sample])[0]
@@ -862,6 +914,10 @@ class ViewerServer:
                         'chosen_sample': srv.chosen_sample,
                         'samples': list(srv.images.keys()),
                     }).encode()
+                    self._respond(200, body, 'application/json')
+
+                elif parsed.path == '/active_users':
+                    body = json.dumps({'users': srv.get_active_users(sample_name)}).encode()
                     self._respond(200, body, 'application/json')
 
                 elif parsed.path == '/inference_progress':
