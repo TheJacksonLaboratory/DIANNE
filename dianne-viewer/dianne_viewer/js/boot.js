@@ -17,6 +17,7 @@ const SAMPLE_XENIUM_META       = __SAMPLE_XENIUM_META__;
 const SAMPLE_CELLS_META        = __SAMPLE_CELLS_META__;
 const HAS_RUN_INFERENCE        = __HAS_RUN_INFERENCE__;
 const HAS_RUN_SUBTILE_INFERENCE = __HAS_RUN_SUBTILE_INFERENCE__;
+const HAS_RUN_SEARCH            = __HAS_RUN_SEARCH__;
 const HAS_CUDA                 = __HAS_CUDA__;
 const HAS_SAVE                 = __HAS_SAVE__;
 const HAS_LOAD                 = __HAS_LOAD__;
@@ -477,6 +478,7 @@ function _pushPromotedStroke(sample, cls, copies, groupId) {
 // ── Toolbar ────────────────────────────────────────────────────────────────
 const toolbar = createToolbar(root, viewport, draw, BASE_URL,
   HAS_RUN_INFERENCE ? { onRun: (btn) => _overlayCtrlApi.runInference(btn) } : null,
+  HAS_RUN_SEARCH ? { onRun: (btn) => _overlayCtrlApi.runSearch(btn) } : null,
   HAS_RUN_SUBTILE_INFERENCE ? { onRun: (btn) => _overlayCtrlApi.runSubtileInference(btn) } : null,
   (HAS_SAVE || HAS_LOAD) ? {
     onSave: HAS_SAVE ? async function(name, btn) {
@@ -584,8 +586,10 @@ _overlayCtrlApi = createOverlayControls({
   tileLayer, secondaryCanvas: secLayer.secondaryCanvas,
   HAS_RUN_INFERENCE,
   HAS_RUN_SUBTILE_INFERENCE,
+  HAS_RUN_SEARCH,
   drawSecondaryLayer: (t) => secLayer.drawSecondaryLayer(t),
   setActiveSampleFn: (s) => setActiveSample(s),
+  scrollSampleRibbonFn: (s) => sampleRibbonApi.scrollToSample(s),
   strokesBySample,
   buildServerStrokesPayload: _buildServerStrokesPayload,
   annotations,

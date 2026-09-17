@@ -105,13 +105,14 @@ class ViewerServer:
             POST /strokes       → {strokes_positive:[...], strokes_negative:[...]}
             POST /run_inference → tile-level classifier train + inference
             POST /run_subtile_inference → same, but GPU subtile-level inference
-            GET  /inference_progress → phase/fraction of the in-flight run_inference
-                                        or run_subtile_inference call, for progress UI
+            POST /search        → re-train classifier, propose an uncurated patch to review
+            GET  /inference_progress → phase/fraction of the in-flight run_inference,
+                                        run_subtile_inference, or search call, for progress UI
     """
 
     def __init__(self, image=None, images=None, chosen_sample=None, host=None, port=None,
                  xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
-                 run_inference_fn=None, run_subtile_inference_fn=None, sample_sizes=None,
+                 run_inference_fn=None, run_subtile_inference_fn=None, run_search_fn=None, sample_sizes=None,
                  save_fn=None, load_fn=None, list_names_fn=None,
                  secondary_images=None, annotations_dir=None, username=None):
         if images is None:
@@ -154,6 +155,7 @@ class ViewerServer:
                 self.host = '127.0.0.1'
         self.run_inference_fn = run_inference_fn
         self.run_subtile_inference_fn = run_subtile_inference_fn
+        self.run_search_fn = run_search_fn
         self.sample_sizes = {
             str(k): int(v)
             for k, v in sample_sizes.items()
@@ -1455,6 +1457,61 @@ class ViewerServer:
                         }
                         payload = {'ok': True, 'sample': sample_out,
                                    'overlay': {'xi': xi, 'yi': yi, 'pi': pi, 'style': style}}
+                        body = json.dumps(payload).encode()
+                        self._respond(200, body, 'application/json')
+                    except Exception as exc:
+                        import traceback
+                        traceback.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                        self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/search':
+                    # Re-train the tile-level classifier on the latest +/- strokes
+                    # (across every sample, already flushed by the client before
+                    # this POST) and propose an uncurated patch to review next —
+                    # see dianne_utils.utils.makeSearchFn.
+                    if srv.run_search_fn is None:
+                        body = json.dumps({'ok': False, 'error': 'search not configured'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    result_event = threading.Event()
+                    result_box   = {}
+                    try:
+                        srv._inference_queue.put_nowait((
+                            srv.run_search_fn,
+                            {'strokes_by_sample': srv.strokes_by_sample},
+                            result_event,
+                            result_box,
+                        ))
+                    except queue.Full:
+                        body = json.dumps({'ok': False, 'error': 'inference already running'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    result_event.wait()  # block HTTP handler thread until done
+                    if 'error' in result_box:
+                        import traceback as _tb
+                        _tb.print_exc()
+                        body = json.dumps({'ok': False, 'error': str(result_box['error'])}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        result = result_box['result']
+                        if result is None:
+                            body = json.dumps({'ok': False,
+                                'error': 'No proposal available (need at least one positive and one '
+                                         'negative annotation, and at least one uncurated patch left).'}).encode()
+                            self._respond(200, body, 'application/json')
+                            return
+                        payload = {
+                            'ok': True,
+                            'sample': str(result['sample']),
+                            'bbox': {
+                                'x0': float(result['x0']), 'y0': float(result['y0']),
+                                'x1': float(result['x1']), 'y1': float(result['y1']),
+                            },
+                            'probability': float(result.get('probability', 0.0)),
+                        }
                         body = json.dumps(payload).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:

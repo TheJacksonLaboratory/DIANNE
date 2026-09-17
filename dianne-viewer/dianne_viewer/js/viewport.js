@@ -12,6 +12,7 @@
  *   viewport.toImageSpace(vpX, vpY)  → {x, y}  (image pixels, can be fractional)
  *   viewport.toScreenSpace(imgX, imgY) → {x, y} (viewport pixels)
  *   viewport.getTransform()          → {scale, ox, oy}
+ *   viewport.fitBBox(x0,y0,x1,y1)    pan/zoom so the image-space rect fills the view
  *   viewport.onChange(fn)            register callback fired after every change
  */
 
@@ -93,6 +94,22 @@ function createViewport(container, imageWidth, imageHeight) {
     _notify();
   }
 
+  // ── fit an image-space rectangle into the container (small margin) ─────────
+  function fitBBox(x0, y0, x1, y1, marginFrac = 0.06) {
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const bw = Math.max(1e-6, x1 - x0);
+    const bh = Math.max(1e-6, y1 - y0);
+    const pad = 1 + 2 * marginFrac;
+    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(cw / (bw * pad), ch / (bh * pad))));
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    scale = newScale;
+    ox = cw / 2 - cx * newScale;
+    oy = ch / 2 - cy * newScale;
+    _notify();
+  }
+
   // ── change notifications ───────────────────────────────────────────────────
   function onChange(fn) {
     listeners.push(fn);
@@ -106,5 +123,5 @@ function createViewport(container, imageWidth, imageHeight) {
   // fit on creation
   reset();
 
-  return { panBy, zoomAt, reset, setImageSize, setTransform, toImageSpace, toScreenSpace, getTransform, getImageSize, onChange };
+  return { panBy, zoomAt, reset, setImageSize, setTransform, fitBBox, toImageSpace, toScreenSpace, getTransform, getImageSize, onChange };
 }

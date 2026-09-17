@@ -14,7 +14,7 @@
  *   Row 3* — Width [slider]
  *   Row 4* — Smoothing [slider]
  *   Row 5  — flush ⬇ | visibility 👀 | tiles
- *   Row 6  — save 💾 | load 📂 | inference ▶ | Run subtile   (only if any are enabled)
+ *   Row 6  — save 💾 | load 📂 | inference ▶ | Search | Run subtile   (only if any are enabled)
  *   Row 7† — [2D Options] [genes]
  *
  *   *  Only visible while a draw tool is active.
@@ -25,7 +25,7 @@
  *   toolbar.setTool(name)
  */
 
-function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, runSubtileInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions, annotationsOptions) {
+function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, searchOptions, runSubtileInferenceOptions, saveLoadOptions, settings, patchOverlay, visiumOverlay, monoOptions, secChOptions, hoverInteraction, alignOptions, annotationsOptions) {
   const ZOOM_SPEED = 0.001;
 
   let activeTool = 'pan';
@@ -712,6 +712,26 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       if (!runBtn.disabled) runInferenceOptions.onRun(runBtn);
     });
     _saveRow.appendChild(runBtn);
+
+    // Search button — only ever shown alongside Run; proposes an uncurated
+    // patch to review next, using the same classifier Run trains (see
+    // dianne_utils.utils.makeSearchFn).
+    if (searchOptions && typeof searchOptions.onRun === 'function') {
+      const searchBtn = document.createElement('button');
+      searchBtn.title = 'Re-train classifier & propose an uncurated patch to review';
+      searchBtn.textContent = 'Search';
+      searchBtn.dataset.demoId = 'search-btn';
+      searchBtn.style.cssText = [
+        'background:rgba(0,255,136,0.12)', 'border:1px solid #00cc55',
+        'color:#8cffc4', 'border-radius:4px', 'padding:2px 8px',
+        'cursor:pointer', 'font-size:12px', 'line-height:1.4',
+        'transition:opacity 0.2s',
+      ].join(';');
+      searchBtn.addEventListener('click', () => {
+        if (!searchBtn.disabled) searchOptions.onRun(searchBtn);
+      });
+      _saveRow.appendChild(searchBtn);
+    }
   }
 
   // Run subtile inference button (optional; only built when the server has a

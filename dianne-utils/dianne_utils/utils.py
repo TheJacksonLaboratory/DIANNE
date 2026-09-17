@@ -1038,6 +1038,96 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_job
 
     return _runfn
 
+def makeSearchFn(patchCoordinates, patchesCDFs, ads, samples, qs, ts, mpp, PCMA_alpha=0.8,
+                  tile_size=448, patch_size=8, body_overlap=0.25, top_frac=0.05, top_k_min=50):
+    """Return a run_search_fn compatible with viewer.create_viewer().
+
+    Re-trains the tile-level classifier on the latest +/- annotations (exactly
+    like makeRunFn's run fn) and uses it to propose an *uncurated* region for
+    the user to review next.
+
+    ``patchCoordinates``/``patchesCDFs`` here are the FULL, static ``patch_size``
+    x ``patch_size`` tile grid covering every sample (as returned by
+    ``loadDataAndPreparePatches``), not the irregular, stroke-shaped patches
+    ``getClassifierForFromStrokes`` builds on the fly for training -- those two
+    "patch" id spaces are unrelated, so a grid patch's curated/uncurated status
+    is decided directly from tile overlap with existing stroke contours rather
+    than from the ad-hoc training patch ids.
+
+    Parameters
+    ----------
+    patchCoordinates : DataFrame, index (sample, barcode), columns x, y, patch
+        The static grid patch each tile belongs to (column 'patch').
+    patchesCDFs : DataFrame, index (sample, patch)
+        Per-grid-patch representation for every patch of every sample.
+    top_frac, top_k_min : the candidate pool for the weighted random pick is
+        the top ``max(top_k_min, ceil(top_frac * n_uncurated))`` most probable
+        uncurated patches; one of those is then chosen at random, weighted by
+        its predicted probability.
+
+    Returns
+    -------
+    Callable suitable for ``run_search_fn=`` in ``viewer.create_viewer()``.
+    Returns None (no proposal) if no classifier can be trained yet, or if
+    every patch is already curated.
+    """
+
+    def _searchfn(*, strokes_by_sample):
+        clf, _, _ = getClassifierForFromStrokes(
+            strokes_by_sample, patchCoordinates, tile_size, body_overlap, patch_size,
+            ads, samples, qs, augFunc=PCMA, alpha=PCMA_alpha, seed=0)
+        if clf is None:
+            return None
+
+        # Curated static-grid patches: any grid patch with at least one tile
+        # touched (>= body_overlap) by an existing positive/negative contour,
+        # on any sample.
+        curated_keys = set()
+        for sample in samples:
+            strokes = strokes_by_sample.get(sample)
+            if not strokes:
+                continue
+            if not (strokes.get('strokes_positive') or strokes.get('strokes_negative')):
+                continue
+            sample_coords = patchCoordinates[['x', 'y']].xs(sample, level='sample', axis=0, drop_level=False)
+            dataPS = preparePatchesFromStrokes(strokes, sample_coords, tile_size=tile_size,
+                                                body_overlap=body_overlap, patch_size=patch_size)
+            annotated_tiles = set()
+            for cl in ('positive', 'negative'):
+                for tile_ids in dataPS[cl].values():
+                    annotated_tiles.update(tile_ids)
+            if not annotated_tiles:
+                continue
+            patch_ids = patchCoordinates.loc[list(annotated_tiles), 'patch']
+            curated_keys.update((sample, p) for p in patch_ids.values)
+
+        mask = ~patchesCDFs.index.isin(list(curated_keys)) if curated_keys else np.ones(len(patchesCDFs), dtype=bool)
+        uncurated = patchesCDFs.index[mask]
+        if len(uncurated) == 0:
+            return None
+
+        y_pred = clf.predict_proba(patchesCDFs.loc[uncurated].values)[:, 1]
+
+        n = len(y_pred)
+        k = min(n, max(top_k_min, int(np.ceil(n * top_frac))))
+        top_idx = np.argsort(y_pred)[-k:]
+        weights = y_pred[top_idx].astype(float)
+        weights = weights / weights.sum() if weights.sum() > 0 else np.full(k, 1.0 / k)
+
+        choice_i = np.random.choice(len(top_idx), p=weights)
+        pos = top_idx[choice_i]
+        chosen_sample, chosen_patch = uncurated[pos]
+
+        patch_tiles = patchCoordinates.xs(chosen_sample, level='sample')
+        patch_tiles = patch_tiles[patch_tiles['patch'] == chosen_patch]
+        half = tile_size / 2.0
+        return dict(sample=chosen_sample,
+                    x0=float(patch_tiles['x'].min() - half), x1=float(patch_tiles['x'].max() + half),
+                    y0=float(patch_tiles['y'].min() - half), y1=float(patch_tiles['y'].max() + half),
+                    probability=float(y_pred[pos]))
+
+    return _searchfn
+
 def _load_subtile_grid(img_path, F=1, model='ctranspath'):
     """Load the tile grid (array_row/array_col + full-res pixel position) needed by
     the subtile feature-extraction/inference pipeline, inferring its path from the

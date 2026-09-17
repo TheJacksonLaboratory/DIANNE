@@ -179,7 +179,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   xenium_mpp=0.2125, category_colors=None, max_cells=2000,
                   mpp=None,
                   xenium_bundle_paths=None, matrices=None, annotations=None,
-                  run_inference_fn=None, run_subtile_inference_fn=None, sample_sizes=None,
+                  run_inference_fn=None, run_subtile_inference_fn=None, run_search_fn=None, sample_sizes=None,
                   save_func=None, load_func=None, list_names_func=None,
                   secondary_images=None, secondary_matrices=None,
                   draw_on_secondary=False, visium_ads=None,
@@ -227,6 +227,21 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         When provided, a "Run subtile" toolbar button becomes available, gated by the
         "Enable subtile inference" Settings-panel checkbox (itself only enable-able
         when the server process has CUDA available).
+    run_search_fn : optional Python callable
+        If provided, a "Search" toolbar button appears next to the ▶ Run button.
+        When clicked the viewer flushes strokes, then calls::
+
+            result = run_search_fn(strokes_by_sample=strokes_by_sample)
+
+        The callable re-trains the tile-level classifier on the latest +/-
+        annotations (across all samples) and proposes one not-yet-curated
+        region to review next. It must return either ``None`` (no proposal —
+        e.g. no classifier could be trained yet, or every patch is already
+        curated) or a dict with keys ``sample``, ``x0``, ``y0``, ``x1``, ``y1``
+        (a bounding box in the same image-pixel space as ``run_inference_fn``'s
+        ``xi``/``yi``) and ``probability``. On a proposal the viewer switches to
+        that sample, pans/zooms so the box fills the viewing area, and scrolls
+        the sample ribbon to it. See ``dianne_utils.utils.makeSearchFn``.
     sample_sizes : optional dict[sample] -> int
         Number of cells per sample, used to time the loading animation
         (see ``INFERENCE_MS_PER_CELL`` in this module).  If omitted the
@@ -534,6 +549,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           xenium_cells_by_sample=xenium_cells_by_sample,
           run_inference_fn=run_inference_fn,
           run_subtile_inference_fn=run_subtile_inference_fn,
+          run_search_fn=run_search_fn,
           sample_sizes=sample_sizes,
           save_fn=save_func,
           load_fn=load_func,
@@ -694,6 +710,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       meta                 = meta_json,
       has_run_inference    = 'true' if run_inference_fn is not None else 'false',
       has_run_subtile_inference = 'true' if run_subtile_inference_fn is not None else 'false',
+      has_run_search       = 'true' if run_search_fn is not None else 'false',
       has_cuda             = 'true' if has_cuda else 'false',
       has_save             = 'true' if save_func is not None else 'false',
       has_load             = 'true' if (load_func is not None and list_names_func is not None) else 'false',

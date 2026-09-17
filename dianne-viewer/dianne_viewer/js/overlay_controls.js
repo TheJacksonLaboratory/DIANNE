@@ -13,8 +13,10 @@
  *     SAMPLE_SIZES, settings,
  *     tileLayer, secondaryCanvas,
  *     HAS_RUN_INFERENCE,
+ *     HAS_RUN_SEARCH,
  *     drawSecondaryLayer,
  *     setActiveSampleFn,
+ *     scrollSampleRibbonFn,
  *     annotations,
  *     onAnnotationsAdded,
  *   })
@@ -23,7 +25,7 @@
  *       getSecondaryFetchEnabled, getSecondaryOpacity,
  *       updateOpacitySliderVisibility,
  *       showLoader, hideLoader,
- *       runInference, runSubtileInference,
+ *       runInference, runSubtileInference, runSearch,
  *       drawContourLayer, clearContours,
  *     }
  *
@@ -39,8 +41,10 @@ function createOverlayControls({
   tileLayer, secondaryCanvas,
   HAS_RUN_INFERENCE,
   HAS_RUN_SUBTILE_INFERENCE,
+  HAS_RUN_SEARCH,
   drawSecondaryLayer,
   setActiveSampleFn,
+  scrollSampleRibbonFn,
   strokesBySample,
   buildServerStrokesPayload,
   annotations,
@@ -534,16 +538,24 @@ function createOverlayControls({
              y: mat.m10 * x + mat.m11 * y + mat.ty };
   }
 
+  // Flush every sample's current in-memory strokes to the server (converting
+  // to secondary space if needed) — the shared first step of Run/Run subtile/
+  // Search, all of which train on srv.strokes_by_sample server-side.
+  async function _flushStrokes() {
+    const ACTIVE_SAMPLE = ACTIVE_SAMPLE_REF();
+    strokesBySample[ACTIVE_SAMPLE] = toolbar.draw.getStrokes();
+    await fetch(BASE_URL + '/strokes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ by_sample: buildServerStrokesPayload() }),
+    });
+  }
+
   async function _runInferenceRequest(endpoint, runBtn) {
     const ACTIVE_SAMPLE = ACTIVE_SAMPLE_REF();
-    // 1. Flush current strokes to server (converting to secondary space if needed)
-    strokesBySample[ACTIVE_SAMPLE] = toolbar.draw.getStrokes();
+    // 1. Flush current strokes to server
     try {
-      await fetch(BASE_URL + '/strokes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ by_sample: buildServerStrokesPayload() }),
-      });
+      await _flushStrokes();
     } catch (e) {
       log('Flush error: ' + e);
       return;
@@ -619,6 +631,58 @@ function createOverlayControls({
     return _runInferenceRequest('/run_subtile_inference', runBtn);
   }
 
+  // Search: re-train the classifier on the latest +/- annotations (across
+  // every sample) and jump to an uncurated patch it's proposed for review —
+  // see dianne_utils.utils.makeSearchFn / the '/search' route.
+  async function runSearch(searchBtn) {
+    if (!HAS_RUN_SEARCH) return;
+    try {
+      await _flushStrokes();
+    } catch (e) {
+      log('Flush error: ' + e);
+      return;
+    }
+    if (searchBtn) { searchBtn.disabled = true; searchBtn.style.opacity = '0.5'; }
+    clearContours();
+    showLoader(4000);
+    log('Searching for an uncurated patch to review…');
+    try {
+      const resp = await fetch(BASE_URL + '/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const result = await resp.json();
+      hideLoader();
+      if (result.ok) {
+        const sample = result.sample;
+        let { x0, y0, x1, y1 } = result.bbox;
+        // bbox is in the same coordinate space as run_inference_fn's xi/yi —
+        // transform secondary → primary the same way that overlay does.
+        if (DRAW_ON_SECONDARY) {
+          const mat = SAMPLE_SECONDARY_MATRIX[sample];
+          if (mat) {
+            const p0 = _secToPrim(mat, x0, y0);
+            const p1 = _secToPrim(mat, x1, y1);
+            x0 = Math.min(p0.x, p1.x); x1 = Math.max(p0.x, p1.x);
+            y0 = Math.min(p0.y, p1.y); y1 = Math.max(p0.y, p1.y);
+          }
+        }
+        if (sample !== ACTIVE_SAMPLE_REF()) setActiveSampleFn(sample);
+        viewport.fitBBox(x0, y0, x1, y1);
+        if (typeof scrollSampleRibbonFn === 'function') scrollSampleRibbonFn(sample);
+        log('Search: proposed a patch on ' + sample + ' (p=' + result.probability.toFixed(2) + ')');
+      } else {
+        log('Search: ' + (result.error || 'no proposal'));
+      }
+    } catch (err) {
+      hideLoader();
+      log('Search request failed: ' + err);
+    } finally {
+      if (searchBtn) { searchBtn.disabled = false; searchBtn.style.opacity = '1'; }
+    }
+  }
+
   // ── window API ─────────────────────────────────────────────────────────────
   window.ivSetOverlayPoints = function(points, style) {
     predPoints = Array.isArray(points) ? points : [];
@@ -650,6 +714,7 @@ function createOverlayControls({
     hideLoader,
     runInference,
     runSubtileInference,
+    runSearch,
     clearPredPoints: () => { predPoints = []; },
     drawContourLayer,
     clearContours,

@@ -7,7 +7,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dianne_utils.utils import loadDataAndPreparePatches, loadSTQParams
-from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSubtileRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
+from dianne_utils.utils import getTilesInContour, preparePatchesFromStrokes, visualizePatches, getClassifierForFromStrokes, makeRunFn, makeSearchFn, makeSubtileRunFn, makeSaveFn, makeLoadFn, makeListFn, get_tile_mask_means3
 from .viewer import create_viewer
 import matplotlib.colors as mcolors
 import pickle
@@ -132,6 +132,9 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
         runfn = makeRunFn(patchCoordinates, ads, valid_samples, qs, ts, mpp, tile_size=tile_size,
                         patch_size=patch_size, PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode)
 
+        searchfn = makeSearchFn(patchCoordinates, patchesCDFs, ads, valid_samples, qs, ts, mpp,
+                        tile_size=tile_size, patch_size=patch_size, PCMA_alpha=PCMA_alpha)
+
         # Subtile inference (GPU) reuses the same tile-level classifier training,
         # so it's only meaningful for the ctranspath feature model it's derived from.
         # Note: it always reads the base single-tile (F=1) CTransPath grid — the
@@ -162,7 +165,7 @@ def viewSTQ(dpath, imfname='image.ome.tiff', load_features=False, samples=None, 
             sample_metadata_ = None
 
         return create_viewer(valid_samples, imgs, height=height, run_inference_fn=runfn,
-                                        run_subtile_inference_fn=subtile_runfn, sample_sizes=sizes,
+                                        run_subtile_inference_fn=subtile_runfn, run_search_fn=searchfn, sample_sizes=sizes,
                                         save_func=savefn, load_func=loadfn, list_names_func=listfn,
                                         sample_metadata=sample_metadata_, mpp=mpp, save_path=save_path, username=username)[1]
 
@@ -210,6 +213,8 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
         sizes = {s: ads[s].shape[0] for s in samples}
         runfn = makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, tile_size=tile_size, patch_size=patch_size,
                                  PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode, body_overlap=body_overlap)
+        searchfn = makeSearchFn(patchCoordinates, patchesCDFs, ads, samples, qs, ts, mpp, tile_size=tile_size,
+                                 patch_size=patch_size, PCMA_alpha=PCMA_alpha, body_overlap=body_overlap)
         # Subtile inference (GPU) reuses the same tile-level classifier training,
         # so it's only meaningful for the ctranspath feature model it's derived from.
         # Note: it always reads the base single-tile (F=1) CTransPath grid — the
@@ -223,7 +228,7 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
         loadfn = makeLoadFn(classifierPaths)
         listfn = makeListFn(classifierPaths)
     else:
-        runfn, subtile_runfn, savefn, loadfn, listfn, sizes = None, None, None, None, None, None
+        runfn, subtile_runfn, searchfn, savefn, loadfn, listfn, sizes = None, None, None, None, None, None, None
     
     matrices = {s: idm for s in samples}
     bundle_paths = {s:f'{dataPath}{s}' for s  in samples}
@@ -240,7 +245,7 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
     annotationsPalette = {a: mcolors.to_hex(color) for i, a in enumerate(uannotations)}
     
     drawings = create_viewer(samples, imgs, height="800px", run_inference_fn=runfn,
-                                    run_subtile_inference_fn=subtile_runfn, sample_sizes=sizes,
+                                    run_subtile_inference_fn=subtile_runfn, run_search_fn=searchfn, sample_sizes=sizes,
                                     xenium_mpp=mpp, max_cells=max_cells, matrices=matrices, xenium_bundle_paths=bundle_paths,
                                     annotations=all_annotations, category_colors=annotationsPalette,
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn,
