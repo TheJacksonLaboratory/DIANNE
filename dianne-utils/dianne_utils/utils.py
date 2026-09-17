@@ -1192,7 +1192,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
     def _ensure_features(sample, df_grid, progress_cb=None, cancel_event=None):
         cache_path = _features_cache_path(sample)
         if os.path.isfile(cache_path):
-            print(f'[subtile] using cached features: {cache_path}')
+            # print(f'[subtile] using cached features: {cache_path}')
             try:
                 os.chmod(cache_path, 0o664) # Legacy to ensure group write access; will be removed later
             except PermissionError:
@@ -1206,7 +1206,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
             if progress_cb:
                 progress_cb('features_cached', f'Using cached features for {sample}', fraction=1.0)
             return pd.read_parquet(cache_path)
-        print(f'[subtile] no cached features at {cache_path}; extracting...')
+        # print(f'[subtile] no cached features at {cache_path}; extracting...')
         if progress_cb:
             progress_cb('computing_features',
                         f'Computing image features for {sample} (first run only, ~30s)…',
@@ -1302,7 +1302,7 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
             progress_cb('running_inference', 'Running GPU inference…', fraction=None)
         y, x, p = inferSubtileFromFeatures(
             df_features, df_grid[['array_row', 'array_col']], clf,
-            radius=radius, qs=qs, subgrid=subgrid, val_range=val_range)
+            radius=radius, qs=qs, subgrid=subgrid, val_range=val_range, verbose=False)
 
         # min pxl_row/col_in_wsi is the *center* of the top-left tile; its top-left
         # corner (where fine index 0 starts) is ctranspath_ts/2 above/left of that.
