@@ -1,28 +1,20 @@
 #!/bin/bash --login
-
-#SBATCH --job-name="jwsi"
-#SBATCH -t 12:00:00
+#SBATCH --job-name="dianne"
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=120GB
-#SBATCH -q batch
-#SBATCH -p compute
 #SBATCH -e err_jupyter.err
 #SBATCH -o out_jupyter.out
+#SBATCH --export=ALL
 
 cd $SLURM_SUBMIT_DIR
 unset XDG_RUNTIME_DIR
-
 module load singularity
 
-IP=`hostname -i`
+IP=$(hostname -i)
 PORT=$(shuf -i10000-11999 -n1)
-
-bindDir="/projects/"
-notebookDir="../"
-container="/projects/chuang-lab/USERS/domans/containers/scanpy-seurat-v3.sif"
 
 export PYTHONUNBUFFERED=1
 
-singularity exec -B "${bindDir}" --env PYTHONUNBUFFERED=1 "${container}" \
-    stdbuf -oL -eL jupyter notebook --no-browser --port=$PORT --ip=$IP --notebook-dir "${notebookDir}"
+singularity exec ${NV_FLAG:-} -B /projects/ --env PYTHONUNBUFFERED=1 "$CONTAINER" \
+    stdbuf -oL -eL jupyter notebook --no-browser --port=$PORT --ip=$IP --notebook-dir ../
