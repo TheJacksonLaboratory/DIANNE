@@ -1,0 +1,30 @@
+#!/bin/bash --login
+
+#SBATCH --job-name="jwsi"
+#SBATCH -t 02:00:00
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=16
+#SBATCH --gres=gpu:1
+#SBATCH --mem=120GB
+#SBATCH -q gpu_inference
+#SBATCH -p gpu_a100
+#SBATCH -e err_jupyter.err
+#SBATCH -o out_jupyter.out
+#SBATCH --export=ALL
+
+cd $SLURM_SUBMIT_DIR
+unset XDG_RUNTIME_DIR
+
+module load singularity
+
+IP=`hostname -i`
+PORT=$(shuf -i10000-11999 -n1)
+
+bindDir="/projects/"
+notebookDir="../"
+container="/projects/chuang-lab/USERS/domans/containers/mtimm-python.sif"
+
+export PYTHONUNBUFFERED=1
+
+singularity exec --nv -B "${bindDir}" --env PYTHONUNBUFFERED=1 "${container}" \
+    stdbuf -oL -eL jupyter notebook --no-browser --port=$PORT --ip=$IP --notebook-dir "${notebookDir}"

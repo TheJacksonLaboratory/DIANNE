@@ -1,7 +1,7 @@
 #!/bin/bash
 # launch-DIANNE.sh --time <N>h --gpu|--cpu
 set -euo pipefail
-SB=run-jupyter-notebook.sb
+SB=assistant-launcher.sb
 DEVICE=cpu TIME=""
 
 while [[ $# -gt 0 ]]; do
