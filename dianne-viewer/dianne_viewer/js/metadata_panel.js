@@ -510,15 +510,15 @@ function createMetadataPanel({
     const metaHtml = metaEntries.length
       ? '<table style="border-collapse:collapse;margin-top:6px;">'
         + metaEntries.map(([k, v]) =>
-            `<tr><td style="color:#888;padding:1px 8px 1px 0;font-weight:bold;white-space:nowrap;" title="${k}">${_truncate(k, TOOLTIP_MAX_LABEL_CHARS)}</td>`
-            + `<td style="color:#eee;word-break:break-all;" title="${v}">${_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS)}</td></tr>`
+            `<tr><td style="color:#888;padding:1px 8px 1px 0;font-weight:bold;white-space:nowrap;" title="${_escapeHtml(k)}">${_escapeHtml(_truncate(k, TOOLTIP_MAX_LABEL_CHARS))}</td>`
+            + `<td style="color:#eee;word-break:break-all;" title="${_escapeHtml(v)}">${_escapeHtml(_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS))}</td></tr>`
           ).join('')
         + (_capped ? `<tr><td colspan="2" style="color:#666;padding:2px 8px 0;font-style:italic;">… ${_allMetaEntries.length - TOOLTIP_MAX_ROWS} more</td></tr>` : '')
         + '</table>'
       : '';
 
     _thumbPreview.innerHTML =
-      `<div style="font:12px monospace;color:#53d9ff;margin-bottom:6px;">${sampleName}</div>`
+      `<div style="font:12px monospace;color:#53d9ff;margin-bottom:6px;">${_escapeHtml(sampleName)}</div>`
       + `<img src="${thumbUrl}" style="width:128px;height:128px;object-fit:contain;background:#0f0f0f;display:block;border-radius:4px;">`
       + metaHtml;
     _thumbPreview.style.display = 'block';

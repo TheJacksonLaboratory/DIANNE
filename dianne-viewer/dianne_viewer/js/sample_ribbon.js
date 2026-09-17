@@ -79,8 +79,8 @@ function createSampleRibbon({
     const entries = _capped ? _allEntries.slice(0, TOOLTIP_MAX_ROWS) : _allEntries;
     const rows = entries.map(([k, v]) =>
       `<tr>
-        <td style="color:#888;padding:1px 8px 1px 0;white-space:nowrap;font-weight:bold;" title="${k}">${_truncate(k, TOOLTIP_MAX_LABEL_CHARS)}</td>
-        <td style="color:#eee;padding:1px 0;word-break:break-all;" title="${v}">${_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS)}</td>
+        <td style="color:#888;padding:1px 8px 1px 0;white-space:nowrap;font-weight:bold;" title="${_escapeHtml(k)}">${_escapeHtml(_truncate(k, TOOLTIP_MAX_LABEL_CHARS))}</td>
+        <td style="color:#eee;padding:1px 0;word-break:break-all;" title="${_escapeHtml(v)}">${_escapeHtml(_truncate(String(v), TOOLTIP_MAX_LABEL_CHARS))}</td>
       </tr>`
     ).join('');
     const moreRow = _capped

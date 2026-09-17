@@ -1275,6 +1275,10 @@ class ViewerServer:
 
                 elif parsed.path == '/save_classifier':
                     name = data.get('name', '').strip() if isinstance(data, dict) else ''
+                    # Sanitize before it's used to build a filesystem path in save_fn
+                    # (classifierPaths/{name}.pklz) — a raw '/' or '..' would otherwise
+                    # let a client write/read outside classifierPaths.
+                    name = srv._safe_filename_component(name) if name else name
                     if not name:
                         body = json.dumps({'ok': False, 'error': 'missing name'}).encode()
                         self._respond(200, body, 'application/json')
@@ -1294,6 +1298,8 @@ class ViewerServer:
 
                 elif parsed.path == '/load_classifier':
                     name = data.get('name', '').strip() if isinstance(data, dict) else ''
+                    # See /save_classifier above: same path-traversal sanitization.
+                    name = srv._safe_filename_component(name) if name else name
                     if not name:
                         body = json.dumps({'ok': False, 'error': 'missing name'}).encode()
                         self._respond(200, body, 'application/json')

@@ -19,6 +19,16 @@
  * No external dependencies; runs in a plain browser context (Jupyter).
  */
 
+// Escapes a value for safe interpolation into an innerHTML template string.
+// Shared across the concatenated viewer JS (hover.js, sample_ribbon.js,
+// metadata_panel.js tooltips) since data like category/gene names or
+// per-sample metadata isn't necessarily static/trusted text.
+function _escapeHtml(v) {
+  return String(v).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 // ── SpatialIndex ──────────────────────────────────────────────────────────────
 class SpatialIndex {
   /**
@@ -488,7 +498,7 @@ function createHoverInteraction(container, viewport, baseUrl) {
       const stats = _contourStats(contour);
       const bkd   = Object.entries(stats.counts).sort((a, b) => b[1] - a[1]).slice(0, 5);
       const bkdHtml = bkd.map(([c, n]) =>
-        `<span style="color:#99b;">${c}: ${n}</span>`).join('<br>');
+        `<span style="color:#99b;">${_escapeHtml(c)}: ${n}</span>`).join('<br>');
       _showTooltip(vpX, vpY,
         `<b style="color:#7ac;">Contour</b>&nbsp;` +
         `<span style="color:#dde;">${stats.total} cells</span>` +
@@ -501,8 +511,8 @@ function createHoverInteraction(container, viewport, baseUrl) {
     if (cell) {
       const cat = (cell.category != null) ? String(cell.category) : '';
       _showTooltip(vpX, vpY,
-        `<b style="color:#7ac;">Cell&nbsp;${cell.cell_id}</b>` +
-        (cat ? `<br><span style="color:#a8c8a0;">${cat}</span>` : ''));
+        `<b style="color:#7ac;">Cell&nbsp;${_escapeHtml(cell.cell_id)}</b>` +
+        (cat ? `<br><span style="color:#a8c8a0;">${_escapeHtml(cat)}</span>` : ''));
       _addToHistory(cell);
       return;
     }
@@ -512,7 +522,7 @@ function createHoverInteraction(container, viewport, baseUrl) {
       const tx = txIndex.nearest(imgX, imgY, hitR * 1.6, _txVisibleFn);
       if (tx) {
         _showTooltip(vpX, vpY,
-          `<b style="color:#f0c060;">${tx.gene}</b>`);
+          `<b style="color:#f0c060;">${_escapeHtml(tx.gene)}</b>`);
         return;
       }
     }

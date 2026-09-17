@@ -34,6 +34,15 @@ def _render(template: str, **values: str) -> str:
     return template
 
 
+def _json_for_script(obj, **kwargs) -> str:
+    """json.dumps for a value that gets inlined into the literal <script>
+    block in shell.html. json.dumps doesn't escape '/', so a string value
+    containing '</script>' would otherwise close the tag early and turn the
+    rest of the payload into live HTML; escaping '/' -> '\\/' is invisible to
+    JSON/JS parsing but prevents that literal match."""
+    return json.dumps(obj, **kwargs).replace('/', '\\/')
+
+
 def _resolve_username(username):
     """Resolve the annotator identity recorded as author/last-editor.
 
@@ -461,7 +470,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       raise TypeError('sample_metadata must be a dict[sample] -> dict[str, Any]')
     else:
       sample_metadata = {str(k): (v if isinstance(v, dict) else {}) for k, v in sample_metadata.items()}
-    sample_metadata_json = json.dumps(
+    sample_metadata_json = _json_for_script(
       {s: sample_metadata.get(s, {}) for s in sample_list}, default=str
     )
 
@@ -600,13 +609,13 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     # output widget for server-side log (optional, hidden by default)
     out = widgets.Output(layout=widgets.Layout(display='none'))
 
-    meta_json = json.dumps(image.metadata)
-    samples_json = json.dumps(sample_list)
-    sample_meta_json = json.dumps({s: sample_images[s].metadata for s in sample_list})
-    sample_xenium_meta_json = json.dumps(sample_xenium_meta)
-    sample_cells_meta_json       = json.dumps(sample_cells_meta)
-    sample_secondary_meta_json   = json.dumps(sample_secondary_meta)
-    sample_secondary_matrix_json = json.dumps(sample_secondary_matrix)
+    meta_json = _json_for_script(image.metadata)
+    samples_json = _json_for_script(sample_list)
+    sample_meta_json = _json_for_script({s: sample_images[s].metadata for s in sample_list})
+    sample_xenium_meta_json = _json_for_script(sample_xenium_meta)
+    sample_cells_meta_json       = _json_for_script(sample_cells_meta)
+    sample_secondary_meta_json   = _json_for_script(sample_secondary_meta)
+    sample_secondary_matrix_json = _json_for_script(sample_secondary_matrix)
     base_url  = server.base_url
 
     def _ann_to_json_str(ann):
@@ -702,7 +711,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       js                   = js,
       width   = width,
       height  = height,
-      base_url= json.dumps(base_url),
+      base_url= _json_for_script(base_url),
       samples = samples_json,
       sample_meta          = sample_meta_json,
       sample_xenium_meta   = sample_xenium_meta_json,
@@ -714,28 +723,28 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       has_cuda             = 'true' if has_cuda else 'false',
       has_save             = 'true' if save_func is not None else 'false',
       has_load             = 'true' if (load_func is not None and list_names_func is not None) else 'false',
-      sample_sizes         = json.dumps(sample_sizes or {}),
+      sample_sizes         = _json_for_script(sample_sizes or {}),
       inference_ms_per_cell= str(INFERENCE_MS_PER_CELL),
       max_cells            = str(max_cells),
       is_multichannel      = 'true' if is_multichannel else 'false',
       is_monochannel       = 'true' if is_monochannel else 'false',
-      sample_is_mono       = json.dumps({s: isinstance(img, MonochannelImage) for s, img in sample_images.items()}),
-      mono_meta            = json.dumps(mono_meta) if mono_meta else 'null',
+      sample_is_mono       = _json_for_script({s: isinstance(img, MonochannelImage) for s, img in sample_images.items()}),
+      mono_meta            = _json_for_script(mono_meta) if mono_meta else 'null',
       sample_secondary_meta   = sample_secondary_meta_json,
       sample_secondary_matrix = sample_secondary_matrix_json,
       draw_on_secondary    = 'true' if draw_on_secondary else 'false',
       has_tile_coords      = 'true' if _tile_coords_fn else 'false',
       tile_size            = str(tile_size) if tile_size is not None else 'null',
       has_visium           = 'true' if _has_visium else 'false',
-      visium_genes_by_sample = json.dumps(_visium_genes_by_sample),
-      sample_mapping       = json.dumps({str(k): str(v) for k, v in sample_mapping.items()} if sample_mapping else {}),
+      visium_genes_by_sample = _json_for_script(_visium_genes_by_sample),
+      sample_mapping       = _json_for_script({str(k): str(v) for k, v in sample_mapping.items()} if sample_mapping else {}),
       sample_metadata      = sample_metadata_json,
       mpp                  = str(float(mpp)) if mpp is not None else 'null',
-      stop_url             = json.dumps(_stop_url),
+      stop_url             = _json_for_script(_stop_url),
       has_matrices         = 'true' if has_matrices else 'false',
       adjust_primary_matrices = 'true' if adjust_primary_matrices else 'false',
-      current_user         = json.dumps(current_user),
-      persisted_settings   = json.dumps(persisted_settings),
+      current_user         = _json_for_script(current_user),
+      persisted_settings   = _json_for_script(persisted_settings),
     )
     # print(f'[DIANNE] HTML build: {_time.monotonic()-_ts:.2f}s', flush=True)
 
