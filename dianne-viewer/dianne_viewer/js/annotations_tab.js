@@ -99,6 +99,12 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   selectAllBtn.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
   selectAllBtn.addEventListener('click', () => { selectedIds = new Set(currentAnnIds); refresh(); });
   selectRow.appendChild(selectAllBtn);
+  const selectInvertBtn = document.createElement('button');
+  selectInvertBtn.textContent = '*';
+  selectInvertBtn.title = 'Invert selection';
+  selectInvertBtn.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
+  selectInvertBtn.addEventListener('click', () => { selectedIds = new Set(currentAnnIds.filter(id => !selectedIds.has(id))); refresh(); });
+  selectRow.appendChild(selectInvertBtn);
   const selectNoneBtn = document.createElement('button');
   selectNoneBtn.textContent = 'None';
   selectNoneBtn.style.cssText = 'background:#222;border:1px solid #555;color:#eee;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
@@ -546,6 +552,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
     const allSelected = currentAnnIds.length > 0 && currentAnnIds.every(id => selectedIds.has(id));
     _setEnabled(selectAllBtn, currentAnnIds.length > 0 && !allSelected);
+    _setEnabled(selectInvertBtn, currentAnnIds.length > 0);
     _setEnabled(selectNoneBtn, hasSelection);
 
     const sample = getActiveSample();
