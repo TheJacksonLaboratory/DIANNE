@@ -481,7 +481,7 @@ function createOverlayControls({
                'stroke-dashoffset="' + _loaderCircumference.toFixed(2) + '"/>',
       '</svg>',
       '<div id="iv-loader-pct" style="color:#00ff88;font:700 20px monospace;letter-spacing:2px;">0%</div>',
-      '<div id="iv-loader-phase" style="color:#aaa;font:12px monospace;text-align:center;max-width:260px;">Training &amp; running inference…</div>',
+      '<div id="iv-loader-phase" style="color:#00ff88;font:12px monospace;text-align:center;max-width:260px;">Training &amp; running inference…</div>',
     '</div>',
   ].join('');
   root.appendChild(inferenceLoader);
