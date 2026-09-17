@@ -20,23 +20,23 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
 
   const DEFAULTS = Object.assign({
     zoomSpeed          : 0.001,      // zoom factor per mouse-wheel deltaY unit
-    levelSensitivity   : 1.0,        // multiplier for pyramid level-switch threshold
+    levelSensitivity   : 0.5,        // multiplier for pyramid level-switch threshold
     tileCacheSize      : 300,        // max image tile blobs held in browser memory
     prefetchBorder     : 1,          // extra tile rows/cols loaded outside viewport
     renderQuality      : 'pixelated',// CSS image-rendering for tile <img> elements
     jpegQuality        : 90,         // JPEG compression quality for image tiles (1–95)
     cellCacheSize      : 500,        // max cell JSON tile responses in memory
-    maxCellsBoundaries : 10000,       // force dots when visible cell count exceeds this (0 = off)
+    maxCellsBoundaries : 25000,      // force dots when visible cell count exceeds this (0 = off)
     inferMsPerCell     : 0.25,       // loader animation ms per cell in inference sample
     patchOpacity       : 0.35,       // semi-transparency of the patch/tile overlay (0–1)
     contourSimplify    : true,       // auto-simplify newly drawn library annotation contours
-    contourSimplifyPx  : 1.5,        // simplification tolerance, in *screen* px (scale-independent)
+    contourSimplifyPx  : 1.0,        // simplification tolerance, in *screen* px (scale-independent)
     contourSimplifyOnExport : false, // additionally re-simplify at GeoJSON export time
     contourSimplifyExportPx : 50,    // export tolerance, in *image*-space px (not screen-scaled)
     probContourThreshold : 0.5,      // "show contours"/"Add" probability cutoff (0-1)
-    probContourSigma     : 75,       // Gaussian blur sigma before thresholding, full-res image px
-    probContourMinArea   : 1000000,  // minimum contour area to keep, full-res image px²
-    enableSubtileInference : false, // show the "Run subtile" toolbar button (requires CUDA)
+    probContourSigma     : 30,       // Gaussian blur sigma before thresholding, full-res image px
+    probContourMinArea   : 5000,     // minimum contour area to keep, full-res image px²
+    enableSubtileInference : false,  // show the "Run subtile" toolbar button (requires CUDA)
   }, defaults || {});
 
   const _hasCuda = !!hasCuda;
