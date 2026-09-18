@@ -1,5 +1,8 @@
 # DIANNE Viewer — Testing & Tutorial Guide
 
+# ***This app is intended to run in Google Chrome internet browser***
+(Other browsers like Safari or Edge will block the interactive features.)
+
 This guide walks a new user through the functional surface of the DIANNE viewer
 (the Jupyter-embedded whole-slide image annotation, classifier-training and 
 inference tool).
