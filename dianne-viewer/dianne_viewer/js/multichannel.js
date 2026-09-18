@@ -633,7 +633,17 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
     const chNames = m.channel_names || Array.from({ length: nCh }, (_, i) => 'Channel ' + i);
     const channelFullRanges = m.channel_full_ranges || [];
 
-    for (let ch = 0; ch < nCh; ch++) {
+    // Display order: alphabetical by name, but DAPI (any case/variant) always first.
+    // `ch` below still indexes the real/raw channel number, so chState/grayCache/
+    // fetchTile('channel='+ch)/channel_ranges stay correctly linked to the actual data.
+    const isDapi = name => /dapi/i.test(name);
+    const order = Array.from({ length: nCh }, (_, i) => i).sort((a, b) => {
+      const aDapi = isDapi(chNames[a]), bDapi = isDapi(chNames[b]);
+      if (aDapi !== bDapi) return aDapi ? -1 : 1;
+      return chNames[a].localeCompare(chNames[b], undefined, { sensitivity: 'base', numeric: true });
+    });
+
+    for (const ch of order) {
       const row = document.createElement('div');
       row.style.cssText = [
         'display:flex', 'align-items:center', 'gap:6px',

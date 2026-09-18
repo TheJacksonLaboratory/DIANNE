@@ -331,6 +331,9 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       ))
       return [], {}, lambda: None
 
+    if samples is None:
+        samples = sorted(list(images.keys()))
+
     if isinstance(samples, (list, tuple)):
       sample_list = [str(s) for s in samples]
     else:
