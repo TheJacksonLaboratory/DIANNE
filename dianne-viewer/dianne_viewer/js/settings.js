@@ -106,6 +106,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
   // container or the toolbar's stacking context.
   const panel = document.createElement('div');
   panel.dataset.ivUi = 'true';
+  panel.dataset.demoId = 'settings-panel';
   panel.style.cssText = [
     'position:absolute', 'z-index:20',
     'min-width:318px', 'max-height:78vh', 'overflow-y:auto',
@@ -133,7 +134,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
   }
 
   // ── UI helpers ───────────────────────────────────────────────────────────────
-  function _makeSectionHeader(label) {
+  function _makeSectionHeader(label, demoId) {
     const h = document.createElement('div');
     h.style.cssText = [
       'padding:8px 12px 4px', 'font-weight:700', 'font-size:11px',
@@ -141,6 +142,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
       'border-bottom:1px solid #2a2a2a',
     ].join(';');
     h.textContent = label;
+    if (demoId) h.dataset.demoId = demoId;
     return h;
   }
 
@@ -258,6 +260,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     const closeX = document.createElement('button');
     closeX.textContent = '✕';
     closeX.title = 'Close';
+    closeX.dataset.demoId = 'settings-close-btn';
     closeX.style.cssText = [
       'background:transparent', 'border:none', 'color:#777',
       'cursor:pointer', 'font-size:14px', 'padding:0 2px', 'line-height:1',
@@ -268,7 +271,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     panel.appendChild(titleRow);
 
     // ── Navigation ─────────────────────────────────────────────────────────────
-    panel.appendChild(_makeSectionHeader('Navigation'));
+    panel.appendChild(_makeSectionHeader('Navigation', 'settings-section-navigation'));
 
     panel.appendChild(_makeRow(
       'Scroll / zoom speed',
@@ -286,7 +289,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     panel.appendChild(_makeHint('◄ Sharper / more data ──────── Faster / coarser ►'));
 
     // ── Tile cache ─────────────────────────────────────────────────────────────
-    panel.appendChild(_makeSectionHeader('Tile Cache'));
+    panel.appendChild(_makeSectionHeader('Tile Cache', 'settings-section-tile-cache'));
 
     panel.appendChild(_makeRow(
       'Max cached tiles',
@@ -322,7 +325,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     panel.appendChild(_makeHint('\u25c4 Smaller / faster ────────────────── Sharper / larger ►'));
 
     // ── Cell overlay ───────────────────────────────────────────────────────────
-    panel.appendChild(_makeSectionHeader('Cell Overlay'));
+    panel.appendChild(_makeSectionHeader('Cell Overlay', 'settings-section-cell-overlay'));
 
     panel.appendChild(_makeRow(
       'Max cached cell tiles',
@@ -339,7 +342,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     panel.appendChild(_makeHint('0 = always honour server  •  suggested: 2 000 – 10 000'));
 
     // ── Inference loader ───────────────────────────────────────────────────────
-    panel.appendChild(_makeSectionHeader('Inference Loader'));
+    panel.appendChild(_makeSectionHeader('Inference Loader', 'settings-section-inference-loader'));
 
     panel.appendChild(_makeRow(
       'Animation ms / cell',
@@ -350,7 +353,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     panel.appendChild(_makeHint('Matches server-side INFERENCE_MS_PER_CELL'));
 
     // ── Subtile inference ("Run subtile" toolbar button) ────────────────────────
-    panel.appendChild(_makeSectionHeader('Subtile Inference'));
+    panel.appendChild(_makeSectionHeader('Subtile Inference', 'settings-section-subtile-inference'));
 
     panel.appendChild(_makeRow(
       'Enable subtile inference',
@@ -362,7 +365,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     if (!_hasCuda) panel.appendChild(_makeHint('Disabled: no CUDA device available on the server.'));
 
     // ── Probability contours ("show contours" eye button / "Add" button) ───────
-    panel.appendChild(_makeSectionHeader('Probability Contours'));
+    panel.appendChild(_makeSectionHeader('Probability Contours', 'settings-section-probability-contours'));
 
     panel.appendChild(_makeRow(
       'Probability threshold',
@@ -385,7 +388,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
       'discarded as noise. Default 1,000,000 px² (~ 1000×1000 px).'));
 
     // ── Patch overlay ──────────────────────────────────────────────────────────
-    panel.appendChild(_makeSectionHeader('Patch Overlay'));
+    panel.appendChild(_makeSectionHeader('Patch Overlay', 'settings-section-patch-overlay'));
 
     panel.appendChild(_makeRow(
       'Patch opacity',
@@ -394,7 +397,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
       'Fill opacity for the Tiles overlay rectangles (0 = invisible, 1 = solid).'));
 
     // ── Annotation contours ─────────────────────────────────────────────────
-    panel.appendChild(_makeSectionHeader('Annotation Contours'));
+    panel.appendChild(_makeSectionHeader('Annotation Contours', 'settings-section-annotation-contours'));
 
     panel.appendChild(_makeRow(
       'Auto-simplify on draw',
@@ -442,6 +445,7 @@ function createSettings(toolbarEl, rootEl, defaults, baseUrl, persistedSettings,
     const resetBtn = document.createElement('button');
     resetBtn.textContent = 'Reset to defaults';
     resetBtn.title = 'Restore all settings to built-in defaults (clears saved values)';
+    resetBtn.dataset.demoId = 'settings-reset-btn';
     resetBtn.style.cssText = [
       'padding:4px 10px', 'border-radius:4px', 'border:1px solid #555',
       'background:#333', 'color:#bbb', 'cursor:pointer', 'font:11px monospace',

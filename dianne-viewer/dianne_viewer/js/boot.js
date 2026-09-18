@@ -916,14 +916,30 @@ const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive',
 function _isUiEventTarget(target) {
   return Boolean(target && target.closest && target.closest('[data-iv-ui="true"]'));
 }
+// Cmd/Meta + drag on the "draw" tool (annot_draw) → temporary pan, same
+// behavior as draw+/draw- in toolbar.js. Hides annotationsCanvas's own
+// crosshair for the duration so it doesn't freeze at its pre-drag position.
+let annotCmdPanning = false, annotPanX = 0, annotPanY = 0;
 root.addEventListener('mousedown', e => {
   const tool = toolbar.getActiveTool();
   if (ANNOT_MOUSE_TOOLS.includes(tool) && !_isUiEventTarget(e.target)) {
+    if (tool === 'annot_draw' && e.metaKey) {
+      annotCmdPanning = true;
+      annotPanX = e.clientX; annotPanY = e.clientY;
+      root.style.cursor = 'grabbing';
+      annotationsCanvas.onMouseLeave();
+      return;
+    }
     const r = root.getBoundingClientRect();
     annotationsCanvas.onMouseDown(e.clientX - r.left, e.clientY - r.top, e.altKey);
   }
 });
 root.addEventListener('mousemove', e => {
+  if (annotCmdPanning) {
+    viewport.panBy(e.clientX - annotPanX, e.clientY - annotPanY);
+    annotPanX = e.clientX; annotPanY = e.clientY;
+    return;
+  }
   const tool = toolbar.getActiveTool();
   if (ANNOT_MOUSE_TOOLS.includes(tool)) {
     const r = root.getBoundingClientRect();
@@ -931,12 +947,26 @@ root.addEventListener('mousemove', e => {
   }
 });
 root.addEventListener('mouseup', () => {
+  if (annotCmdPanning) { annotCmdPanning = false; root.style.cursor = 'none'; return; }
   const tool = toolbar.getActiveTool();
   if (ANNOT_MOUSE_TOOLS.includes(tool)) annotationsCanvas.onMouseUp();
 });
 root.addEventListener('mouseleave', () => {
   const tool = toolbar.getActiveTool();
   if (ANNOT_MOUSE_TOOLS.includes(tool)) annotationsCanvas.onMouseLeave();
+});
+// Cmd key held/released on the "draw" tool → update cursor in real time,
+// mirroring toolbar.js's draw+/draw- behavior.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Meta' && toolbar.getActiveTool() === 'annot_draw' && !annotCmdPanning) {
+    root.style.cursor = 'grab';
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === 'Meta' && toolbar.getActiveTool() === 'annot_draw') {
+    annotCmdPanning = false;
+    root.style.cursor = 'none';
+  }
 });
 document.addEventListener('keydown', e => {
   const tool = toolbar.getActiveTool();

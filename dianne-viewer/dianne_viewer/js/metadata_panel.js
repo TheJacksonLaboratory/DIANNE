@@ -107,6 +107,9 @@ function createMetadataPanel({
   const tabSamples     = _makeTabBtn('Samples', true);
   const tabMeta        = _makeTabBtn('Metadata', false);
   const tabAnnotations = _makeTabBtn('Annotations', false);
+  tabSamples.dataset.demoId     = 'tab-samples';
+  tabMeta.dataset.demoId        = 'tab-metadata';
+  tabAnnotations.dataset.demoId = 'tab-annotations';
   tabStrip.appendChild(tabSamples);
   if (_hasAnyMeta) tabStrip.appendChild(tabMeta);
   tabStrip.appendChild(tabAnnotations);
@@ -365,6 +368,7 @@ function createMetadataPanel({
 
   // ── Filter bar ────────────────────────────────────────────────────────
   const filterBar = document.createElement('div');
+  filterBar.dataset.demoId = 'metadata-filter-bar';
   filterBar.style.cssText = [
     'display:grid',
     'grid-template-columns:repeat(auto-fill,minmax(180px,1fr))',
@@ -439,6 +443,7 @@ function createMetadataPanel({
 
   // ── Table ─────────────────────────────────────────────────────────────
   const tableWrap = document.createElement('div');
+  tableWrap.dataset.demoId = 'metadata-table';
   tableWrap.style.cssText = 'flex:1 1 auto;overflow:auto;min-height:0;';
 
   const table = document.createElement('table');

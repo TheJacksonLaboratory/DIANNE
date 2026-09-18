@@ -9,15 +9,18 @@
  *   - baseUrl   (click tool → POST /click)
  *
  * Button layout (vertical groups):
- *   Row 1  — pan ✥ | draw+ | draw-
- *   Row 2* — brush-mode | color-picker | undo
- *   Row 3* — Width [slider]
- *   Row 4* — Smoothing [slider]
- *   Row 5  — flush ⬇ | visibility 👀 | tiles
- *   Row 6  — save 💾 | load 📂 | inference ▶ | Search | Run subtile   (only if any are enabled)
- *   Row 7† — [2D Options] [genes]
+ *   Row 1   — pan ✥ | draw (annot_draw) | draw+ | draw-
+ *   Row 1b‡ — ruler | polygon | lasso | vertex-edit | split | erase | grow | undo/redo/export/import
+ *   Row 2*  — brush-mode | color-picker | undo
+ *   Row 3*  — Width [slider]
+ *   Row 4*  — Smoothing [slider]
+ *   Row 5   — flush ⬇ | visibility 👀 | tiles
+ *   Row 6   — save 💾 | load 📂 | inference ▶ | Search | Run subtile   (only if any are enabled)
+ *   Row 7†  — [2D Options] [genes]
  *
- *   *  Only visible while a draw tool is active.
+ *   *  Only visible while draw+/draw- is active.
+ *   ‡  Hidden while pan (the default tool) or draw+/draw- is active; shown
+ *      once "draw" (annot_draw) or one of its own tools is selected.
  *   †  Only present when a monochannel image and/or visium overlay is active.
  *
  * Exposes:
@@ -63,9 +66,9 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
 
   const tools = [
     { name: 'pan',           label: '✥',     title: 'Pan / zoom' },
+    { name: 'annot_draw',    label: 'draw',  title: 'Freehand/disk brush → unclassified library annotation', freehandCls: 'unclassified' },
     { name: 'draw_positive', label: 'draw+', title: 'Draw positive contour' },
     { name: 'draw_negative', label: 'draw-', title: 'Draw negative contour' },
-    { name: 'annot_draw',        label: 'draw',  title: 'Freehand/disk brush → unclassified library annotation', freehandCls: 'unclassified' },
     // { name: 'click',         label: '⊕',     title: 'Click to record point' },
   ];
 
@@ -98,12 +101,13 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
 
   // ── Active-sample indicator: blinking green dot when another user's
   // ".{user}-active.lock" file (written server-side on /choose_sample)
-  // points at this same sample within the last hour. Placed right after
-  // the "draw" button.
+  // points at this same sample within the last hour. Placed at the end of
+  // Row 1, after the last tool button.
   const _activeDotBlink = document.createElement('style');
   _activeDotBlink.textContent = '@keyframes iv-active-blink { 0%,100%{opacity:1} 50%{opacity:0.15} }';
   document.head.appendChild(_activeDotBlink);
   const activeDot = document.createElement('span');
+  activeDot.dataset.demoId = 'active-user-dot';
   activeDot.style.cssText = 'display:none;width:25px;height:25px;border-radius:50%;flex-shrink:0;' +
     'background:#22ff55;box-shadow:0 0 6px 2px rgba(34,255,85,0.8);animation:iv-active-blink 1s ease-in-out infinite;';
   toolRow.appendChild(activeDot);
@@ -180,6 +184,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     const undoAnnotBtn = document.createElement('button');
     undoAnnotBtn.textContent = '↩︎';
     undoAnnotBtn.title = 'Undo annotation geometry edit';
+    undoAnnotBtn.dataset.demoId = 'annot-undo-btn';
     undoAnnotBtn.style.cssText = _btnCss;
     undoAnnotBtn.addEventListener('click', () => { _ann.undo(annotationsOptions.getActiveSample()); _ac.redraw(); });
     annotRow.appendChild(undoAnnotBtn);
@@ -194,6 +199,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     const exportBtn = document.createElement('button');
     exportBtn.textContent = '⤓ GeoJSON';
     exportBtn.title = 'Export annotations to QuPath-compatible GeoJSON';
+    exportBtn.dataset.demoId = 'annot-export-btn';
     exportBtn.style.cssText = _btnCss + ';font-size:11px;';
     exportBtn.addEventListener('click', () => {
       const simplifyPx = (settings && settings.get('contourSimplifyOnExport')) ? settings.get('contourSimplifyExportPx') : 0;
@@ -444,6 +450,17 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
         annotWandSizeSlider.value = String(_ac.getWandRadius ? _ac.getWandRadius() : 60);
         annotWandTolSlider.value = String(_ac.getWandTolerance ? _ac.getWandTolerance() : 24);
       }
+    };
+
+    // The annotation-library tools row (ruler/polygon/lasso/vertex-edit/
+    // split/erase/grow + undo/redo/export/import) is only relevant once
+    // you're working with library annotations — hidden for the default
+    // pan tool and for the draw+/draw- strokes tool, which don't use it.
+    // Clicking "draw" (annot_draw) reveals it, same as any of its own tools.
+    const _origSyncAnnotBrushRow3 = annotationsOptions._syncAnnotBrushRow;
+    annotationsOptions._syncAnnotBrushRow = (name) => {
+      _origSyncAnnotBrushRow3(name);
+      annotRow.style.display = (name === 'pan' || _isDrawTool(name)) ? 'none' : 'flex';
     };
   }
 
@@ -1271,10 +1288,13 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       container.style.cursor = 'grabbing';
     } else if (_isDrawTool(activeTool)) {
       if (e.metaKey) {
-        // Command held → temporary pan
+        // Command held → temporary pan. Hide the crosshair for the duration —
+        // mousemove below skips draw.onMouseMove while cmdPanning, so without
+        // this it would otherwise stay frozen at its pre-drag position.
         cmdPanning = true;
         panX = e.clientX; panY = e.clientY;
         container.style.cursor = 'grabbing';
+        if (typeof draw.onMouseLeave === 'function') draw.onMouseLeave();
       } else {
         drawing = true;
         draw.onMouseDown(vpX, vpY);

@@ -19,6 +19,7 @@ function createScaleBar(root, viewport, mpp) {
   // ── DOM ──────────────────────────────────────────────────────────────────
   const wrapper = document.createElement('div');
   wrapper.dataset.ivUi = 'true';
+  wrapper.dataset.demoId = 'scale-bar';
   wrapper.style.cssText = [
     'position:absolute',
     'left:12px',

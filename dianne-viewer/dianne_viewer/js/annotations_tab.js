@@ -58,6 +58,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
   // ── toolbar: search / filter / sort ────────────────────────────────────
   const bar = document.createElement('div');
+  bar.dataset.demoId = 'annot-tab-toolbar';
   bar.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex-shrink:0;';
   container.appendChild(bar);
 
@@ -91,6 +92,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   // row, so the user can select/deselect every currently-listed annotation
   // for deletion/export without clicking each checkbox individually.
   const selectRow = document.createElement('div');
+  selectRow.dataset.demoId = 'annot-tab-bulk-row';
   selectRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;align-items:center;flex-shrink:0;';
   container.appendChild(selectRow);
   let currentAnnIds = [];
@@ -309,6 +311,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   bulkCopyNegBtn.style.cssText = 'background:#321;border:1px solid #ff5233;color:#ff5233;border-radius:4px;cursor:pointer;font:10px monospace;padding:2px 6px;';
 
   const listEl = document.createElement('div');
+  listEl.dataset.demoId = 'annot-tab-list';
   listEl.style.cssText = 'display:flex;flex-direction:column;gap:4px;flex:1 1 auto;overflow-y:auto;min-height:0;';
   container.appendChild(listEl);
 
@@ -327,6 +330,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
+    checkbox.dataset.demoId = 'annot-row-checkbox';
     checkbox.checked = selectedIds.has(ann.id);
     checkbox.addEventListener('click', e => e.stopPropagation());
     checkbox.addEventListener('change', () => {
@@ -347,6 +351,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     // behavior (and inconsistent across browsers) that can't be turned off,
     // so a small hand-rolled overlay is used instead.
     const classWrap = document.createElement('div');
+    classWrap.dataset.demoId = 'annot-row-class';
     classWrap.style.cssText = 'position:relative;display:inline-block;';
 
     const classInput = document.createElement('input');
@@ -424,6 +429,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     // persisted alongside the rest of the annotation data.
     const colorInput = document.createElement('input');
     colorInput.type = 'color';
+    colorInput.dataset.demoId = 'annot-row-color';
     colorInput.value = annotations.getClassColor(ann.class) || _defaultClassColor(ann.class);
     colorInput.title = 'Color for class "' + ann.class + '"';
     colorInput.style.cssText = 'width:18px;height:18px;border:none;background:none;cursor:pointer;padding:0;';
@@ -450,6 +456,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     // string (rather than a placeholder value like "Untitled") so a fresh
     // annotation just shows an empty box with a "Notes" placeholder hint.
     const labelEl = document.createElement('input');
+    labelEl.dataset.demoId = 'annot-row-notes';
     labelEl.value = ann.label || '';
     labelEl.placeholder = 'Notes';
     labelEl.style.cssText = 'flex:1;min-width:100px;background:#111;border:1px solid #333;border-radius:3px;color:#eee;font:10px monospace;padding:2px 4px;';
@@ -470,10 +477,15 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
       span.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="${color}"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>`;
       return span;
     }
-    top.appendChild(_userIcon('#a58bff', `Created by ${ann.author || 'unknown'}\n${ann.created_at ? new Date(ann.created_at).toLocaleString() : ''}`));
-    top.appendChild(_userIcon('#7ec8ff', `Last edited by ${ann.last_editor || 'unknown'}\n${ann.updated_at ? new Date(ann.updated_at).toLocaleString() : ''}`));
+    const authorIcon = _userIcon('#a58bff', `Created by ${ann.author || 'unknown'}\n${ann.created_at ? new Date(ann.created_at).toLocaleString() : ''}`);
+    authorIcon.dataset.demoId = 'annot-row-creator';
+    top.appendChild(authorIcon);
+    const editorIcon = _userIcon('#7ec8ff', `Last edited by ${ann.last_editor || 'unknown'}\n${ann.updated_at ? new Date(ann.updated_at).toLocaleString() : ''}`);
+    editorIcon.dataset.demoId = 'annot-row-editor';
+    top.appendChild(editorIcon);
 
     const visBtn = document.createElement('button');
+    visBtn.dataset.demoId = 'annot-row-visibility';
     const isVis = typeof annotationsCanvas.isVisible === 'function' ? annotationsCanvas.isVisible(ann.id) : true;
     visBtn.textContent = '👀';
     visBtn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:13px;' +
@@ -492,6 +504,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     top.appendChild(visBtn);
 
     const delBtn = document.createElement('button');
+    delBtn.dataset.demoId = 'annot-row-delete';
     delBtn.textContent = '\u2715';
     delBtn.title = 'Delete';
     delBtn.style.cssText = 'background:transparent;border:none;color:#f66;cursor:pointer;font-size:12px;';
@@ -511,6 +524,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
     // (task feedback: faster than opening a <select>). "Draft" is pressed by
     // default; clicking another status un-presses it.
     const statusRow = document.createElement('div');
+    statusRow.dataset.demoId = 'annot-row-status';
     statusRow.style.cssText = 'display:flex;gap:2px;';
     for (const s of annotations.STATUS_VALUES) {
       const b = document.createElement('button');
