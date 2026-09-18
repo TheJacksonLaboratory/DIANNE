@@ -725,10 +725,20 @@ const sampleRibbonApi = createSampleRibbon({
 });
 sampleRibbonApi.buildSampleRibbon();
 function _refreshAnnotationBadges() {
-  sampleRibbonApi.updateAnnotationBadges(s => ({
-    dirty: annotations.isDirty(s),
-    count: annotations.listAnnotations(s, 'library').length,
-  }));
+  // A sample not yet visited this session has an empty in-memory annotations
+  // store regardless of what's actually saved for it (same caveat as
+  // getAnnotationSummary below), so its badge must fall back to the
+  // server-side /annotations/summary snapshot instead of falsely showing 0.
+  sampleRibbonApi.updateAnnotationBadges(s => {
+    if (!_visitedSamples.has(s)) {
+      const summary = _annotationsSummaryBySample[s];
+      return { dirty: false, count: summary ? (summary.library || 0) : 0 };
+    }
+    return {
+      dirty: annotations.isDirty(s),
+      count: annotations.listAnnotations(s, 'library').length,
+    };
+  });
   // Keep the per-thumbnail annotation-preview dots/outlines in sync too.
   // This piggybacks on the same (infrequent: on mutation + 5s poll) cadence
   // as the badges above, rather than the high-frequency viewport pan/zoom
@@ -801,6 +811,7 @@ fetch(BASE_URL + '/annotations/summary').then(r => r.json()).then(res => {
   if (res && res.ok && res.summary) {
     _annotationsSummaryBySample = res.summary;
     if (_metadataPanel) _metadataPanel.refreshTable();
+    _refreshAnnotationBadges();
   }
 }).catch(() => {});
 

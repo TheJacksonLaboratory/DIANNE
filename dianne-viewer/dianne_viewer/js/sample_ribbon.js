@@ -355,7 +355,8 @@ function createSampleRibbon({
       badge.textContent = hasXe ? 'XE' : 'HE';
       badge.title = hasXe ? 'Xenium overlays available' : 'H&E image only';
       badge.style.cssText = [
-        'font:10px monospace', 'align-self:flex-start',
+        'font:10px monospace', 'align-self:flex-start', 'flex:none',
+        'width:fit-content', 'white-space:nowrap',
         'padding:1px 6px', 'border-radius:999px',
         'border:1px solid ' + (hasXe ? '#1f7a3a' : '#555'),
         'color:' + (hasXe ? '#8cffb1' : '#bdbdbd'),
@@ -370,7 +371,8 @@ function createSampleRibbon({
       const annotBadge = document.createElement('div');
       annotBadge.dataset.annotBadge = sampleName;
       annotBadge.style.cssText = [
-        'font:10px monospace', 'align-self:flex-start', 'display:none',
+        'font:10px monospace', 'align-self:flex-start', 'flex:none',
+        'width:fit-content', 'white-space:nowrap', 'display:none',
         'padding:1px 6px', 'border-radius:999px',
         'border:1px solid #ffb020', 'color:#ffd27a',
         'background:rgba(255,176,32,0.15)',
