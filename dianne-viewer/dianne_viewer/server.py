@@ -106,7 +106,8 @@ class ViewerServer:
             POST /strokes       → {strokes_positive:[...], strokes_negative:[...]}
             POST /run_inference → tile-level classifier train + inference
             POST /run_subtile_inference → same, but GPU subtile-level inference
-            POST /search        → re-train classifier, propose an uncurated patch to review
+            POST /search        → re-train classifier, propose an uncurated patch to review,
+                                   with a preview inference overlay restricted to that patch
             GET  /inference_progress → phase/fraction of the in-flight run_inference,
                                         run_subtile_inference, or search call, for progress UI
             POST /cancel_inference   → cooperative-cancel the in-flight run/search call (Esc in the UI)
@@ -1597,6 +1598,19 @@ class ViewerServer:
                             },
                             'probability': float(result.get('probability', 0.0)),
                         }
+                        overlay = result.get('overlay')
+                        if overlay:
+                            payload['overlay'] = {
+                                'xi': [float(v) for v in overlay['xi']],
+                                'yi': [float(v) for v in overlay['yi']],
+                                'pi': [float(v) for v in overlay['pi']],
+                                'style': {
+                                    'delta':     float(overlay.get('delta', 448)),
+                                    'alpha':     float(overlay.get('alpha', 0.5)),
+                                    'colorLow':  str(overlay.get('color_low',  '#FFA500')),
+                                    'colorHigh': str(overlay.get('color_high', '#0000FF')),
+                                },
+                            }
                         body = json.dumps(payload).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:

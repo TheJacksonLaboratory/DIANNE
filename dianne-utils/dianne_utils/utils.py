@@ -1048,7 +1048,8 @@ def makeRunFn(patchCoordinates, ads, samples, qs, ts, mpp, PCMA_alpha=0.8, n_job
     return _runfn
 
 def makeSearchFn(patchCoordinates, patchesCDFs, ads, samples, qs, ts, mpp, PCMA_alpha=0.8,
-                  tile_size=448, patch_size=8, body_overlap=0.25, top_frac=0.05, top_k_min=50):
+                  tile_size=448, patch_size=8, body_overlap=0.25, top_frac=0.05, top_k_min=50,
+                  R=2, multiplier=4, alpha_img=0.5):
     """Return a run_search_fn compatible with viewer.create_viewer().
 
     Re-trains the tile-level classifier on the latest +/- annotations (exactly
@@ -1073,6 +1074,8 @@ def makeSearchFn(patchCoordinates, patchesCDFs, ads, samples, qs, ts, mpp, PCMA_
         the top ``max(top_k_min, ceil(top_frac * n_uncurated))`` most probable
         uncurated patches; one of those is then chosen at random, weighted by
         its predicted probability.
+    R, multiplier, alpha_img : same meaning as in makeRunFn -- used to build a
+        preview overlay restricted to the proposed patch (see _inferPatchOverlay).
 
     Returns
     -------
@@ -1080,6 +1083,33 @@ def makeSearchFn(patchCoordinates, patchesCDFs, ads, samples, qs, ts, mpp, PCMA_
     Returns None (no proposal) if no classifier can be trained yet, or if
     every patch is already curated.
     """
+
+    def _inferPatchOverlay(clf, sample, patch):
+        """Per-tile probability for just `patch`'s tiles, interpolated into a
+        denser overlay exactly like makeRunFn's whole-slide pass. A ring of
+        neighboring tiles around the patch is pulled in first so inferProbFast's
+        own per-tile neighborhood lookup and the erosion pass both have real
+        context at the patch's edges, then discarded via `wh` -- only the
+        patch's own tiles feed the overlay.
+
+        NOTE: assumes the patch + its neighbor ring fits inside a single
+        inferProbFast internal chunk (default chunk side 4000px) so that the
+        returned x/y/p order matches wrkTiles' order for the `wh` mask below;
+        true for any reasonably sized patch_size, but not enforced.
+        """
+        sh = (ts / mpp) / 2.0
+        df_temp = patchCoordinates.xs(sample, level='sample', axis=0)
+        infTiles = df_temp[df_temp['patch'] == patch].index.sort_values()
+        tree = KDTree(df_temp[['x', 'y']].values)
+        indices = tree.query_ball_point(df_temp.loc[infTiles, ['x', 'y']].values, R * 2 * sh + 2)
+        wrkTiles = df_temp.index[np.unique(np.concatenate(indices))]
+        x_inf, y_inf, p_inf = inferProbFast(ads[sample][wrkTiles].copy(), clf, qs,
+                                             tsize=2 * sh, R=R, verbose=False, parallel=False, erode=True)
+        x_inf, y_inf, p_inf = np.asarray(x_inf), np.asarray(y_inf), np.asarray(p_inf)
+        wh = wrkTiles.isin(infTiles)  # Index.isin already returns an ndarray, not a Series
+        xi, yi, pi = interpolatePoints(x_inf[wh], y_inf[wh], p_inf[wh], multiplier=multiplier)
+        return dict(xi=xi, yi=yi, pi=pi, delta=(ts / mpp) / multiplier, alpha=alpha_img,
+                    color_low='#FFA500', color_high='#0000FF')
 
     def _searchfn(*, strokes_by_sample):
         clf, _, _ = getClassifierForFromStrokes(
@@ -1130,10 +1160,17 @@ def makeSearchFn(patchCoordinates, patchesCDFs, ads, samples, qs, ts, mpp, PCMA_
         patch_tiles = patchCoordinates.xs(chosen_sample, level='sample')
         patch_tiles = patch_tiles[patch_tiles['patch'] == chosen_patch]
         half = tile_size / 2.0
-        return dict(sample=chosen_sample,
-                    x0=float(patch_tiles['x'].min() - half), x1=float(patch_tiles['x'].max() + half),
-                    y0=float(patch_tiles['y'].min() - half), y1=float(patch_tiles['y'].max() + half),
-                    probability=float(y_pred[pos]))
+        result = dict(sample=chosen_sample,
+                      x0=float(patch_tiles['x'].min() - half), x1=float(patch_tiles['x'].max() + half),
+                      y0=float(patch_tiles['y'].min() - half), y1=float(patch_tiles['y'].max() + half),
+                      probability=float(y_pred[pos]))
+        try:
+            result['overlay'] = _inferPatchOverlay(clf, chosen_sample, chosen_patch)
+        except Exception as exc:
+            # The bbox proposal itself is the important part; a failure to build
+            # the patch preview overlay must not block navigating to it.
+            print(f"Search: failed to compute patch preview overlay: {exc}")
+        return result
 
     return _searchfn
 

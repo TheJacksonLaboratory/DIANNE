@@ -586,6 +586,29 @@ function createOverlayControls({
     fetch(BASE_URL + '/cancel_inference', { method: 'POST' }).catch(() => {});
   });
 
+  // Apply a run_inference-style overlay ({xi,yi,pi,style}) to the prediction
+  // layer, transforming secondary → primary image space first when
+  // DRAW_ON_SECONDARY. Shared by runInference/runSubtileInference and
+  // Search's patch-restricted preview overlay. Returns the point count.
+  function _applyOverlayResult(ov, sample) {
+    let points = ov.xi.map((xi, i) => ({ xi, yi: ov.yi[i], pi: ov.pi[i] }));
+    const style = { delta: ov.style.delta, alpha: ov.style.alpha,
+                     colorLow: ov.style.colorLow, colorHigh: ov.style.colorHigh };
+    if (DRAW_ON_SECONDARY) {
+      const mat = SAMPLE_SECONDARY_MATRIX[sample];
+      if (mat) {
+        points = points.map(pt => {
+          const p = _secToPrim(mat, pt.xi, pt.yi);
+          return { xi: p.x, yi: p.y, pi: pt.pi };
+        });
+        const det = mat.m00 * mat.m11 - mat.m01 * mat.m10;
+        style.delta = style.delta * Math.sqrt(Math.abs(det));
+      }
+    }
+    window.ivSetOverlayPoints(points, style);
+    return points.length;
+  }
+
   async function _runInferenceRequest(endpoint, runBtn) {
     const ACTIVE_SAMPLE = ACTIVE_SAMPLE_REF();
     // 1. Flush current strokes to server
@@ -624,28 +647,9 @@ function createOverlayControls({
       if (result.cancelled) {
         log('Inference cancelled.');
       } else if (result.ok) {
-        const ov = result.overlay;
-        let points = ov.xi.map((xi, i) => ({ xi, yi: ov.yi[i], pi: ov.pi[i] }));
-        const style  = { delta: ov.style.delta, alpha: ov.style.alpha,
-                         colorLow: ov.style.colorLow, colorHigh: ov.style.colorHigh };
-        // If DRAW_ON_SECONDARY, inference returns coords in secondary space;
-        // transform back to primary image space for display.
-        if (DRAW_ON_SECONDARY) {
-          const _ovSample = result.sample || ACTIVE_SAMPLE;
-          const _ovMat = SAMPLE_SECONDARY_MATRIX[_ovSample];
-          if (_ovMat) {
-            points = points.map(pt => {
-              const p = _secToPrim(_ovMat, pt.xi, pt.yi);
-              return { xi: p.x, yi: p.y, pi: pt.pi };
-            });
-            // delta is in secondary pixel units; scale to primary pixel units.
-            const _det = _ovMat.m00 * _ovMat.m11 - _ovMat.m01 * _ovMat.m10;
-            style.delta = style.delta * Math.sqrt(Math.abs(_det));
-          }
-        }
         if (result.sample && result.sample !== ACTIVE_SAMPLE) setActiveSampleFn(result.sample);
-        window.ivSetOverlayPoints(points, style);
-        log('Inference complete: ' + points.length + ' points on ' + (result.sample || ACTIVE_SAMPLE));
+        const n = _applyOverlayResult(result.overlay, result.sample || ACTIVE_SAMPLE);
+        log('Inference complete: ' + n + ' points on ' + (result.sample || ACTIVE_SAMPLE));
       } else {
         log('Inference error: ' + (result.error || 'unknown'));
       }
@@ -718,6 +722,10 @@ function createOverlayControls({
         if (sample !== ACTIVE_SAMPLE_REF()) setActiveSampleFn(sample);
         viewport.fitBBox(x0, y0, x1, y1);
         if (typeof scrollSampleRibbonFn === 'function') scrollSampleRibbonFn(sample);
+        // bbox coords are already transformed above; the overlay (in the same
+        // secondary/primary space run_inference_fn returns) is transformed
+        // independently by _applyOverlayResult.
+        if (result.overlay) _applyOverlayResult(result.overlay, sample);
         log('Search: proposed a patch on ' + sample + ' (p=' + result.probability.toFixed(2) + ')');
       } else {
         log('Search: ' + (result.error || 'no proposal'));
