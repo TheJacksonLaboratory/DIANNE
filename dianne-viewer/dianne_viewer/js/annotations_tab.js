@@ -36,6 +36,7 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
   let filterClass = '';
   let filterStatus = '';
   let selectedIds = new Set();
+  let _selectionSample = null; // sample selectedIds/selectedKind/selectedRowId belong to
 
   // ── single-row selection highlight (distinct from the multi-select
   // checkboxes above, which drive bulk actions) — tracks whichever row was
@@ -665,6 +666,16 @@ function createAnnotationsTab({ container, annotations, annotationsCanvas, getAc
 
   function refresh() {
     const sample = getActiveSample();
+    // Bulk-action checkmarks and the single-row highlight are scoped to
+    // whichever sample they were made on; carrying them over to a newly
+    // active sample would let a bulk action (Delete/Simplify/Copy) reach
+    // ids the user never checked on THIS slide.
+    if (sample !== _selectionSample) {
+      _selectionSample = sample;
+      selectedIds.clear();
+      selectedKind = null;
+      selectedRowId = null;
+    }
     _refreshClassSelect();
     listEl.innerHTML = '';
     if (!sample) return;
