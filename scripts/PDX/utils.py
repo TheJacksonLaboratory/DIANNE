@@ -94,6 +94,10 @@ mpis = {'results.MDA.Dataset_breast_PT_PDX': [f'{rpath}/MDA.mda-breast-pt-pdx-sv
 NS = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 
 def viewHistologyDataset(ds, bucket='dianne-store', func=None, height="800px"):
+
+    classifierPaths = '/opt/shared_classifiers/'
+    dianne.setupClassifierPaths(classifierPaths)
+
     dataPath = f'/results/{ds}/'
     samples = [d.split('/')[-1] for d in fs.ls(bucket + dataPath) if not 'pipeline' in d]
     imgs = {s: f'/{bucket}{dataPath}{s}/image.ome.tiff' for s in samples}
@@ -101,7 +105,7 @@ def viewHistologyDataset(ds, bucket='dianne-store', func=None, height="800px"):
     df_meta = load_pdx_metadata(ds, mpis, fs=fs)
     df_meta = df_meta.loc[[not v is None for v in df_meta.index]]
     metadata = df_meta.reindex(samples).fillna('NA').T.to_dict()
-    drawings = func(samples, imgs, height=height, sample_metadata=metadata, fullscreen_on_load=False)[1]
+    drawings = func(samples, imgs, height=height, sample_metadata=metadata, fullscreen_on_load=False, save_path=classifierPaths)[1]
     return drawings
 
 def getDsSizes():
@@ -243,7 +247,7 @@ def viewSamples(samples=None, func=None, load_features=True):
     secondary_matrices = xenium_to_he_matrices.copy()
     secondary_images = {k:gurl(f'/{bucket}{v}', s3, bucket=bucket, ExpiresIn=3600) for k,v in secondary_images.items()}
     
-    classifierPaths = 'classifiers/'
+    classifierPaths = '/opt/shared_classifiers/'
     dianne.setupClassifierPaths(classifierPaths)
     
     if load_features:
@@ -285,7 +289,7 @@ def viewSamples(samples=None, func=None, load_features=True):
                                     xenium_mpp=0.2125, max_cells=20000, matrices=xenium_to_he_matrices, xenium_bundle_paths=xenium_bundle_paths,
                                     secondary_images=imgs, secondary_matrices=secondary_matrices, draw_on_secondary=True,
                                     annotations=all_annotations, category_colors=annotationsPalette,
-                                    sample_metadata=metadata,
+                                    sample_metadata=metadata, save_path=classifierPaths,
                                     save_func=savefn, load_func=loadfn, list_names_func=listfn, s3=s3, s3_bucket=bucket)[1]
     return drawings
 
