@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "dianne-utils"
@@ -41,9 +41,24 @@ dependencies = [
     "joblib>=1.2",
     "tqdm>=4.64",
     "psutil>=5.9",
-    "opencv-python>=4.7",
+    "opencv-python-headless>=4.7",
+    "scikit-image>=0.20",
+    "zarr>=2.14",
+    "fsspec>=2023.1",
+    "packaging>=21.0",
     "ipywidgets>=8.0",
     "ipython>=8.0",
+]
+
+[project.optional-dependencies]
+# Needed only by dianne_utils.ctranspath / dianne_utils.subtilegpu
+# (tile feature extraction); not imported by dianne_utils/__init__.py.
+features = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "timm>=0.9",
+    "openslide-python>=1.2",
+    "Pillow>=9.4",
 ]
 
 [project.urls]
