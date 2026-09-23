@@ -934,7 +934,9 @@ let annotCmdPanning = false, annotPanX = 0, annotPanY = 0;
 root.addEventListener('mousedown', e => {
   const tool = toolbar.getActiveTool();
   if (ANNOT_MOUSE_TOOLS.includes(tool) && !_isUiEventTarget(e.target)) {
-    if (tool === 'annot_draw' && e.metaKey) {
+    if (tool === 'annot_draw' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      e.stopPropagation();
       annotCmdPanning = true;
       annotPanX = e.clientX; annotPanY = e.clientY;
       root.style.cursor = 'grabbing';
@@ -969,12 +971,12 @@ root.addEventListener('mouseleave', () => {
 // Cmd key held/released on the "draw" tool → update cursor in real time,
 // mirroring toolbar.js's draw+/draw- behavior.
 document.addEventListener('keydown', e => {
-  if (e.key === 'Meta' && toolbar.getActiveTool() === 'annot_draw' && !annotCmdPanning) {
+  if ((e.key === 'Meta' || e.code === 'ControlLeft') && toolbar.getActiveTool() === 'annot_draw' && !annotCmdPanning) {
     root.style.cursor = 'grab';
   }
 });
 document.addEventListener('keyup', e => {
-  if (e.key === 'Meta' && toolbar.getActiveTool() === 'annot_draw') {
+  if ((e.key === 'Meta' || e.code === 'ControlLeft') && toolbar.getActiveTool() === 'annot_draw') {
     annotCmdPanning = false;
     root.style.cursor = 'none';
   }

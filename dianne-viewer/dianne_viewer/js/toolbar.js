@@ -1237,7 +1237,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
 
   let panning = false, panX = 0, panY = 0, panOx = 0, panOy = 0;
   let drawing  = false;
-  let cmdPanning = false;  // Cmd/Meta held in draw mode → temporary pan
+  let cmdPanning = false;  // Cmd/Meta (or left Ctrl) held in draw mode → temporary pan
   let mouseDownPos = null;
   const clicks = [];
 
@@ -1287,10 +1287,14 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       panOx = t.ox; panOy = t.oy;
       container.style.cursor = 'grabbing';
     } else if (_isDrawTool(activeTool)) {
-      if (e.metaKey) {
-        // Command held → temporary pan. Hide the crosshair for the duration —
+      if (e.metaKey || e.ctrlKey) {
+        // Command/Ctrl held → temporary pan. Hide the crosshair for the duration —
         // mousemove below skips draw.onMouseMove while cmdPanning, so without
         // this it would otherwise stay frozen at its pre-drag position.
+        // preventDefault also blocks the OS/browser's Ctrl+click → context-menu
+        // emulation (seen e.g. under Jupyter on Linux) from hijacking the drag.
+        e.preventDefault();
+        e.stopPropagation();
         cmdPanning = true;
         panX = e.clientX; panY = e.clientY;
         container.style.cursor = 'grabbing';
@@ -1327,6 +1331,12 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     }
   });
 
+  // Ctrl+click is remapped to right-click on some platforms (e.g. Jupyter on
+  // Linux) — suppress the resulting context menu so it doesn't hijack the drag.
+  container.addEventListener('contextmenu', e => {
+    if (e.ctrlKey) { e.preventDefault(); e.stopPropagation(); }
+  });
+
   container.addEventListener('mouseleave', () => {
     if (typeof draw.onMouseLeave === 'function') draw.onMouseLeave();
     if (hoverInteraction) hoverInteraction.onMouseLeave();
@@ -1359,14 +1369,14 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     mouseDownPos = null;
   });
 
-  // Cmd key held/released in draw mode → update cursor in real time
+  // Cmd/Ctrl key held/released in draw mode → update cursor in real time
   document.addEventListener('keydown', e => {
-    if (e.key === 'Meta' && _isDrawTool(activeTool) && !drawing) {
+    if ((e.key === 'Meta' || e.code === 'ControlLeft') && _isDrawTool(activeTool) && !drawing) {
       container.style.cursor = 'grab';
     }
   });
   document.addEventListener('keyup', e => {
-    if (e.key === 'Meta' && _isDrawTool(activeTool)) {
+    if ((e.key === 'Meta' || e.code === 'ControlLeft') && _isDrawTool(activeTool)) {
       cmdPanning = false;
       container.style.cursor = 'none';
     }
