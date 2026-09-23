@@ -2,6 +2,7 @@
  * footer_controls.js
  *
  * Persistent footer controls at the bottom of the viewer shell:
+ *   - Hide/show sample panels button
  *   - Clear all annotations button
  *   - Clear sample annotations button
  *   - About button
@@ -16,6 +17,7 @@
  *     drawPredLayer, clearPredPoints,
  *     modalHelpers,
  *     log,
+ *     resizePredLayer, forceResizeSampleRibbon,
  *   })
  *   → (no public API after construction)
  */
@@ -26,6 +28,9 @@ function createFooterControls({
   drawPredLayer, clearPredPoints,
   modalHelpers,
   log,
+  resizePredLayer,        // optional: called after toggling panel visibility so overlays re-fit iv-root's new size
+  forceResizeSampleRibbon, // optional: called on re-show so ribbon thumbnail canvases re-fit (display:none → visible isn't always caught by ResizeObserver)
+  refitViewport,          // optional: called after toggling so tiles re-fetch/cover the newly (un)revealed area (tiles.js/multichannel.js only redraw on viewport.onChange, not on plain resize)
 }) {
   const makeSmallBtn = (title, innerHtml) => {
     const b = document.createElement('button');
@@ -38,6 +43,27 @@ function createFooterControls({
     b.innerHTML = innerHtml;
     return b;
   };
+
+  // ── Hide/show sample panels ─────────────────────────────────────────────
+  // Collapses #iv-samples (ribbon/metadata/annotations tabs) entirely and
+  // lets #iv-main (the canvas column) take the freed-up width, so the main
+  // canvas gets the whole shell width when the panels aren't needed.
+  const togglePanelsBtn = makeSmallBtn('Hide sample panels',
+    '<span style="font-size:11px">◀</span>');
+  togglePanelsBtn.dataset.demoId = 'toggle-panels-btn';
+  let panelsHidden = false;
+  togglePanelsBtn.addEventListener('click', () => {
+    panelsHidden = !panelsHidden;
+    const samplesEl = document.getElementById('iv-samples');
+    const ivMain    = document.getElementById('iv-main');
+    samplesEl.style.display = panelsHidden ? 'none' : 'flex';
+    ivMain.style.width       = panelsHidden ? '100%' : '90%';
+    togglePanelsBtn.innerHTML = '<span style="font-size:11px">' + (panelsHidden ? '▶' : '◀') + '</span>';
+    togglePanelsBtn.title = panelsHidden ? 'Show sample panels' : 'Hide sample panels';
+    if (typeof resizePredLayer === 'function') resizePredLayer();
+    if (!panelsHidden && typeof forceResizeSampleRibbon === 'function') forceResizeSampleRibbon();
+    if (typeof refitViewport === 'function') refitViewport();
+  });
 
   const clearAllBtn = makeSmallBtn('Clear all annotations',
     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 17.25L8.5 10.75L14.5 16.75L8 23.25H2V17.25Z" fill="#fff" opacity="0.14"/><path d="M21.71 11.29L18.71 8.29C18.32 7.9 17.69 7.9 17.3 8.29L15.17 10.42L19.58 14.83L21.71 12.7C22.1 12.31 22.1 11.68 21.71 11.29Z" fill="#fff" opacity="0.9"/></svg> <span style="font-size:11px">Clear all</span>');
@@ -166,6 +192,7 @@ function createFooterControls({
   const ivFooter = document.createElement('div');
   ivFooter.id = 'iv-footer';
   ivFooter.style.cssText = 'position:absolute;left:0;right:0;bottom:70px;height:56px;display:flex;align-items:center;padding-left:12px;gap:8px;z-index:2147483648;pointer-events:auto;background:transparent;';
+  ivFooter.appendChild(togglePanelsBtn);
   ivFooter.appendChild(clearAllBtn);
   ivFooter.appendChild(clearSampleBtn);
   ivFooter.appendChild(aboutBtn);

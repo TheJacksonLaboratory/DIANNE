@@ -843,6 +843,12 @@ createFooterControls({
   clearPredPoints: _overlayCtrlApi.clearPredPoints,
   modalHelpers,
   log,
+  resizePredLayer: _overlayCtrlApi.resizePredLayer,
+  forceResizeSampleRibbon: sampleRibbonApi.forceResizeAll,
+  // tiles.js / multichannel.js only redraw on viewport.onChange (pan/zoom),
+  // not on a plain container resize, so re-notify with the unchanged
+  // transform to make them re-fetch/cover the newly (un)revealed area.
+  refitViewport: () => { const t = viewport.getTransform(); viewport.setTransform(t.scale, t.ox, t.oy); },
 });
 
 // ── Root event listeners ──────────────────────────────────────────────────
