@@ -621,7 +621,8 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     saveBtn.textContent = '💾';
     saveBtn.dataset.demoId = 'save-btn';
     saveBtn.style.cssText = _btnCss + ';font-size:14px;';
-    saveBtn.addEventListener('click', () => {
+    saveBtn.addEventListener('click', async () => {
+      const names = (saveLoadOptions.listNames && await saveLoadOptions.listNames()) || [];
       const overlay = document.createElement('div');
       overlay.style.cssText = [
         'position:fixed','left:0','top:0','width:100%','height:100%',
@@ -640,6 +641,17 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       input.type = 'text';
       input.placeholder = 'Classifier name…';
       input.style.cssText = 'width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #555;border-radius:4px;padding:5px 6px;font:13px monospace;margin-bottom:12px;outline:none;';
+      if (names.length) {
+        input.setAttribute('list', 'save-classifier-names');
+        const datalist = document.createElement('datalist');
+        datalist.id = 'save-classifier-names';
+        for (const n of names) {
+          const opt = document.createElement('option');
+          opt.value = n;
+          datalist.appendChild(opt);
+        }
+        box.appendChild(datalist);
+      }
       const btnRow = document.createElement('div');
       btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
       const cancelBtn = document.createElement('button');
