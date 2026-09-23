@@ -558,7 +558,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   // annotations visibility toggle
   let annotationsVisible = true;
   const toggleAnnotBtn = document.createElement('button');
-  toggleAnnotBtn.textContent = '👀';
+  toggleAnnotBtn.textContent = 'Hide';
   toggleAnnotBtn.title = 'Toggle annotations visibility';
   toggleAnnotBtn.dataset.demoId = 'toggle-annot-btn';
   toggleAnnotBtn.style.cssText = [
@@ -747,7 +747,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
       'display:flex', 'align-items:center', 'justify-content:center',
       'color:#003322', 'font-weight:700',
     ].join(';');
-    runBtn.textContent = '▶';
+    runBtn.textContent = 'Run';
     runBtn.dataset.demoId = 'run-inference-btn';
     runBtn.addEventListener('mouseenter', () => {
       if (!runBtn.disabled) runBtn.style.boxShadow = '0 0 14px 5px rgba(0,255,136,0.95)';

@@ -103,22 +103,22 @@ overlayControls.style.cssText = [
 ].join(';');
 overlayControls.innerHTML = [
   '<span id="iv-primary-opacity-wrap" title="Primary image opacity" style="display:none;align-items:center;gap:4px;">',
-  '  <span>Primary</span>',
+  '  <span>1st</span>',
   '  <input id="iv-primary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
   '</span>',
   '<span id="iv-secondary-opacity-wrap" title="Secondary image opacity" style="display:none;align-items:center;gap:4px;">',
   '  <input id="iv-secondary-enabled" type="checkbox" checked title="Enable secondary image fetching (uncheck to stop fetching for better network performance)" style="cursor:pointer;margin:0 2px 0 0;">',
-  '  <span>Secondary</span>',
+  '  <span>2nd</span>',
   '  <input id="iv-secondary-opacity" type="range" min="0" max="1" step="0.01" value="1" style="width:80px;">',
   '</span>',
-  '<button id="iv-contour-show" title="Show contours from inferred probabilities (threshold/sigma/min-area in Settings)" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">\u{1F440}</button>',
+  '<button id="iv-contour-show" title="Show contours from inferred probabilities (threshold/sigma/min-area in Settings)" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">Get</button>',
   '<button id="iv-contour-add" title="Create draft annotations from contours" style="cursor:pointer;background:#222;border:1px solid #555;color:#eee;border-radius:4px;font:12px monospace;padding:2px 6px;">Add</button>',
-  '<span title="Overlay transparency">Prob. Opacity</span>',
-  '<input id="iv-alpha" type="range" min="0" max="1" step="0.01" value="0.55" style="width:90px;">',
-  '<span title="Low probability color">Low prob.</span>',
-  '<input id="iv-low" type="color" value="#FFA500" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
-  '<span title="High probability color">High prob.</span>',
-  '<input id="iv-high" type="color" value="#0000FF" style="width:24px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
+  '<span title="Overlay transparency"> </span>',
+  '<input id="iv-alpha" type="range" min="0" max="1" step="0.01" value="0.55" style="width:35px;">',
+  '<span title="Low probability color"> </span>',
+  '<input id="iv-low" type="color" value="#FFA500" style="width:18px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
+  '<span title="High probability color"> </span>',
+  '<input id="iv-high" type="color" value="#0000FF" style="width:18px;height:24px;border:none;background:none;padding:0;cursor:pointer;">',
 ].join('');
 root.appendChild(overlayControls);
 
