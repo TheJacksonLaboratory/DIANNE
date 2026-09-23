@@ -974,6 +974,37 @@ root.addEventListener('mouseleave', () => {
   const tool = toolbar.getActiveTool();
   if (ANNOT_MOUSE_TOOLS.includes(tool)) annotationsCanvas.onMouseLeave();
 });
+
+// ── touch support (iOS/mobile): 1-finger draw/interact for annot_* tools.
+// 2-finger pan + pinch-zoom is handled centrally in toolbar.js (tool-agnostic);
+// if a second finger lands mid-stroke here, hand off to that by ending ours.
+let annotTouching = false;
+root.addEventListener('touchstart', e => {
+  if (e.touches.length >= 2) {
+    if (annotTouching) { annotationsCanvas.onMouseUp(); annotTouching = false; }
+    return;
+  }
+  const tool = toolbar.getActiveTool();
+  if (e.touches.length === 1 && ANNOT_MOUSE_TOOLS.includes(tool) && !_isUiEventTarget(e.target)) {
+    e.preventDefault();
+    const r = root.getBoundingClientRect();
+    annotTouching = true;
+    annotationsCanvas.onMouseDown(e.touches[0].clientX - r.left, e.touches[0].clientY - r.top, false);
+  }
+}, { passive: false });
+root.addEventListener('touchmove', e => {
+  if (annotTouching && e.touches.length === 1) {
+    e.preventDefault();
+    const r = root.getBoundingClientRect();
+    annotationsCanvas.onMouseMove(e.touches[0].clientX - r.left, e.touches[0].clientY - r.top);
+  }
+}, { passive: false });
+function _endAnnotTouch(e) {
+  if (annotTouching && e.touches.length === 0) { annotationsCanvas.onMouseUp(); annotTouching = false; }
+}
+root.addEventListener('touchend', _endAnnotTouch, { passive: false });
+root.addEventListener('touchcancel', _endAnnotTouch, { passive: false });
+
 // Cmd key held/released on the "draw" tool → update cursor in real time,
 // mirroring toolbar.js's draw+/draw- behavior.
 document.addEventListener('keydown', e => {

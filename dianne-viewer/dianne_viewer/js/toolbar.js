@@ -1458,6 +1458,72 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     viewport.zoomAt(vpX, vpY, -e.deltaY * zs);
   }, { passive: false });
 
+  // ── Touch support (iOS/mobile): 1-finger pan/draw, 2-finger pan + pinch-zoom.
+  // Once a gesture starts with N fingers it runs until all fingers lift (no
+  // reseeding mid-gesture) — simplest way to avoid position jumps when a
+  // finger count changes mid-touch. 2-finger pan/zoom is tool-agnostic, so it
+  // also works while an annot_* library tool is active (see boot.js, which
+  // handles 1-finger touch for those tools).
+  container.style.touchAction = 'none';
+  let touchMode = null; // null | 'pan' | 'draw' | 'multi'
+  let tPanX = 0, tPanY = 0;
+  let pinchMidPrev = null, pinchDistPrev = null;
+
+  function _touchPt(t) {
+    const r = container.getBoundingClientRect();
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+  function _touchMid(a, b) { return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }; }
+  function _touchDist(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+  function _endTouch() {
+    if (touchMode === 'draw') draw.onMouseUp();
+    touchMode = null;
+    pinchMidPrev = null; pinchDistPrev = null;
+  }
+
+  container.addEventListener('touchstart', e => {
+    if (_isUiEventTarget(e.target)) return;
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      _endTouch(); // cancel any in-progress 1-finger pan/draw first
+      touchMode = 'multi';
+      pinchMidPrev  = _touchMid(e.touches[0], e.touches[1]);
+      pinchDistPrev = _touchDist(e.touches[0], e.touches[1]);
+    } else if (e.touches.length === 1 && !touchMode) {
+      const { x: vpX, y: vpY } = _touchPt(e.touches[0]);
+      if (activeTool === 'pan') {
+        touchMode = 'pan';
+        tPanX = e.touches[0].clientX; tPanY = e.touches[0].clientY;
+      } else if (_isDrawTool(activeTool)) {
+        touchMode = 'draw';
+        draw.onMouseDown(vpX, vpY);
+      }
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchmove', e => {
+    if (_isUiEventTarget(e.target)) return;
+    e.preventDefault();
+    if (touchMode === 'multi' && e.touches.length === 2) {
+      const mid  = _touchMid(e.touches[0], e.touches[1]);
+      const dist = _touchDist(e.touches[0], e.touches[1]);
+      viewport.panBy(mid.x - pinchMidPrev.x, mid.y - pinchMidPrev.y);
+      const r = container.getBoundingClientRect();
+      viewport.zoomAt(mid.x - r.left, mid.y - r.top, dist / pinchDistPrev - 1);
+      pinchMidPrev = mid; pinchDistPrev = dist;
+    } else if (touchMode === 'pan' && e.touches.length === 1) {
+      viewport.panBy(e.touches[0].clientX - tPanX, e.touches[0].clientY - tPanY);
+      tPanX = e.touches[0].clientX; tPanY = e.touches[0].clientY;
+    } else if (touchMode === 'draw' && e.touches.length === 1) {
+      const { x: vpX, y: vpY } = _touchPt(e.touches[0]);
+      draw.onMouseMove(vpX, vpY);
+    }
+  }, { passive: false });
+
+  function _onTouchEnd(e) { if (e.touches.length === 0) _endTouch(); }
+  container.addEventListener('touchend', _onTouchEnd, { passive: false });
+  container.addEventListener('touchcancel', _onTouchEnd, { passive: false });
+
   // ── click → POST to server ─────────────────────────────────────────────────
   function _sendClick(vpX, vpY) {
     const img  = viewport.toImageSpace(vpX, vpY);
