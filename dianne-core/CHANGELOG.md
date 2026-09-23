@@ -5,6 +5,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- Build backend changed from the non-existent `setuptools.backends.legacy:build` to `setuptools.build_meta`, so the package can be built/installed (including `pip install "git+...#subdirectory=dianne-core"`).
+
 ## [0.1.0] — 2026-05-31
 
 ### Added
