@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- Build backend changed to `setuptools.build_meta` (was the non-existent `setuptools.backends.legacy:build`).
+- `html/*` added to package data — `html/shell.html` (loaded by `viewer.py`) was missing from built wheels.
+- Declared previously-undeclared runtime dependencies: `numcodecs`, `matplotlib`, `opencv-python-headless`, `scikit-image`.
+- Added optional extra `s3` (`s3fs`) for S3-backed slides.
+
 ## [0.1.0] — 2026-05-31
 
 ### Added
