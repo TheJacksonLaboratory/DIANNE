@@ -141,6 +141,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     //   { name: 'annot_draw_positive', label: 'draw+', title: 'Freehand/disk brush → positive library annotation', freehandCls: 'positive' },
     //   { name: 'annot_draw_negative', label: 'draw-', title: 'Freehand/disk brush → negative library annotation', freehandCls: 'negative' },
       { name: 'annot_vertex_edit', label: '*',  title: 'Vertex edit: drag/insert/delete vertices' },
+      { name: 'annot_drag',        label: '✛',  title: 'Drag: click to select a named contour, then drag to reposition it; drag the circle around it to rotate' },
       { name: 'annot_split',       label: '✂',  title: 'Split: draw a line fully across the selected annotation to divide it' },
       { name: 'annot_erase',       label: '⊖',  title: 'Erase: chomp out area from the selected annotation with an adjustable disk' },
       { name: 'annot_grow',        label: '⊕',  title: 'Grow: add area onto the selected annotation with an adjustable disk' },
@@ -1212,6 +1213,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     }
     container.style.cursor =
       name === 'pan'        ? 'grab' :
+      name === 'annot_drag' ? 'grab' :
       (_isDrawTool(name) || _isAnnotDrawTool2(name) || _isSculptTool2(name) || _isWandTool2(name)) ? 'none' :
       'cell';
   }

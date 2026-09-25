@@ -504,6 +504,34 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     return true;
   }
 
+  /** Whole-shape drag/rotate tool (annotations_canvas.js): the caller has
+   *  already mutated every sibling's `ann.rings` in place, sharing groupId,
+   *  for live preview during the drag, and captured a before/after snapshot
+   *  keyed by annotation id — this just registers that as one atomic
+   *  undo/redo op covering the whole group at once (mirrors replaceGeometry,
+   *  but for every piece of a multi-contour shape together). */
+  function transformAnnotationGroup(sample, cls, groupId, oldRingsById, newRingsById) {
+    const anns = listGroupSiblings(sample, cls, groupId);
+    if (!anns.length) return false;
+    for (const ann of anns) if (!guardGeometryEdit(sample, cls, ann.id)) return false;
+    const user = _currentUser();
+    const now = new Date().toISOString();
+    for (const ann of anns) {
+      ann.rings = newRingsById[ann.id];
+      recomputeMetrics(ann);
+      ann.last_editor = user;
+      ann.updated_at = now;
+    }
+    markDirty(sample);
+    pushUndo(sample, {
+      undo: () => { for (const ann of anns) { ann.rings = oldRingsById[ann.id]; recomputeMetrics(ann); } },
+      redo: () => { for (const ann of anns) { ann.rings = newRingsById[ann.id]; recomputeMetrics(ann); } },
+    });
+    logAndRecord(anns.length === 1 ? `Moved "${anns[0].label}"` : `Moved "${anns[0].label}" (${anns.length}-piece group)`);
+    _notify(sample);
+    return true;
+  }
+
   // ── §5 promotion workflow (always an independent snapshot copy) ───────
   function _cloneRings(rings) { return rings.map(r => r.map(p => ({ x: p.x, y: p.y }))); }
 
@@ -1091,7 +1119,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     makeAnnotation, recomputeMetrics,
     assembleRingsIntoPieces, buildAnnotationsFromRings,
     addAnnotation, addAnnotationGroup, deleteAnnotation, deleteAnnotationGroup,
-    replaceGeometry, findAnnotation, listAnnotations, listGroupSiblings, groupAnnotationsByGroupId,
+    replaceGeometry, transformAnnotationGroup, findAnnotation, listAnnotations, listGroupSiblings, groupAnnotationsByGroupId,
     setStatus, editMetadata, isLocked, guardGeometryEdit, requestUnlockForEdit,
     promoteToPosNeg, promoteToLibrary,
     setClassColor, getClassColor, getClassColors, resetClassColors, knownClasses,

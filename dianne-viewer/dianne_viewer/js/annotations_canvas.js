@@ -52,6 +52,16 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
   // vertex-edit drag state
   let dragTarget = null; // { id, ringIdx, vertIdx }
   const VERTEX_HIT_RADIUS_VP = 8; // px in viewport space
+  // drag tool state: translate/rotate every sibling of the selected
+  // annotation's group_id together as one rigid shape. Both are applied live
+  // to ann.rings on every mousemove, recomputed from a frozen pre-drag
+  // snapshot each time (not incrementally) so repeated float rounding can't
+  // drift the shape, and only committed to the undo stack (via
+  // annotations.transformAnnotationGroup) on mouseup.
+  let dragMoveState = null;   // { groupId, siblings, oldRingsById, startPt, moved }
+  let dragRotateState = null; // { groupId, siblings, oldRingsById, center, startAngle, angle, moved }
+  const ROTATE_HANDLE_RADIUS_SCREEN_PX = 110; // fixed on-screen radius of the rotate-handle circle (constant at any zoom)
+  const ROTATE_RING_HIT_TOLERANCE_VP = 12;   // grab band around the circle's circumference, in screen px
   // split tool state: freehand open trace, applied on mouseup against the
   // selected annotation (annotations.splitAnnotation)
   let splitPoints = null;
@@ -154,6 +164,57 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       if (!_classVisible(ann)) continue;
       const highlighted = (selectedGroupId != null && ann.group_id === selectedGroupId) || lassoSelectedIds.has(ann.id);
       _drawAnnotation(ann, highlighted);
+    }
+
+    // drag tool: rotate handle — a full circle around the selected group's
+    // centroid (grab anywhere on it to rotate) plus its X/Y axis vectors,
+    // drawn at the current in-progress rotation angle (0 when not actively
+    // rotating, since geometry itself — not a stored angle — is the only
+    // persisted state). Only shown while the drag tool is active and
+    // something's selected.
+    if (tool === 'drag' && selectedAnn) {
+      const siblings = annotations.listGroupSiblings(sample, 'library', selectedAnn.group_id);
+      const center = _groupCentroid(siblings);
+      const cVp = _toVp(center);
+      const angle = dragRotateState ? dragRotateState.angle : 0;
+      const r = ROTATE_HANDLE_RADIUS_SCREEN_PX;
+      ctx.save();
+      ctx.strokeStyle = dragRotateState ? '#7fd0ff' : '#2596ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cVp.x, cVp.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      // X axis (red) and Y axis (green), rotated by the live angle
+      ctx.strokeStyle = '#ff5555';
+      ctx.beginPath();
+      ctx.moveTo(cVp.x, cVp.y);
+      ctx.lineTo(cVp.x + r * Math.cos(angle), cVp.y + r * Math.sin(angle));
+      ctx.stroke();
+      ctx.fillStyle = '#ff5555';
+      ctx.font = 'bold 22px monospace';
+      ctx.fillText('X', cVp.x + (r + 16) * Math.cos(angle) - 8, cVp.y + (r + 16) * Math.sin(angle) + 8);
+      ctx.strokeStyle = '#55ff55';
+      ctx.beginPath();
+      ctx.moveTo(cVp.x, cVp.y);
+      ctx.lineTo(cVp.x + r * Math.cos(angle - Math.PI / 2), cVp.y + r * Math.sin(angle - Math.PI / 2));
+      ctx.stroke();
+      ctx.fillStyle = '#55ff55';
+      ctx.fillText('Y', cVp.x + (r + 16) * Math.cos(angle - Math.PI / 2) - 8, cVp.y + (r + 16) * Math.sin(angle - Math.PI / 2) + 8);
+      // center dot
+      ctx.beginPath();
+      ctx.arc(cVp.x, cVp.y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#2596ff';
+      ctx.fill();
+      ctx.restore();
+      // current rotation, shown in degrees next to the mouse pointer while dragging
+      if (dragRotateState) {
+        const deg = Math.round(angle * 180 / Math.PI);
+        ctx.save();
+        ctx.font = 'bold 28px monospace';
+        ctx.fillStyle = '#2596ff';
+        ctx.fillText(deg + '°', cursorVpX + 14, cursorVpY - 10);
+        ctx.restore();
+      }
     }
 
     // in-progress polygon tool
@@ -486,6 +547,30 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     return (best && bestD <= VERTEX_HIT_RADIUS_VP) ? best : null;
   }
 
+  // ── drag tool: whole-group bbox/centroid (rotate-handle circle's pivot) ──
+  function _cloneRingsList(rings) { return rings.map(r => r.map(p => ({ x: p.x, y: p.y }))); }
+  function _snapshotGroupRings(siblings) {
+    const out = {};
+    for (const ann of siblings) out[ann.id] = _cloneRingsList(ann.rings);
+    return out;
+  }
+  function _groupBBox(siblings) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const ann of siblings) {
+      for (const ring of ann.rings) {
+        for (const p of ring) {
+          if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+          if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        }
+      }
+    }
+    return { minX, minY, maxX, maxY };
+  }
+  function _groupCentroid(siblings) {
+    const bb = _groupBBox(siblings);
+    return { x: (bb.minX + bb.maxX) / 2, y: (bb.minY + bb.maxY) / 2 };
+  }
+
   // ── mouse handlers (invoked by toolbar routing, mirroring draw.js's API) ─
   function onMouseDown(vpX, vpY, altKey) {
     const imgPt = viewport.toImageSpace(vpX, vpY);
@@ -582,6 +667,48 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       redraw();
       return;
     }
+    if (tool === 'drag') {
+      const selAnn = selectedId != null ? annotations.findAnnotation(sample, 'library', selectedId) : null;
+      if (selAnn) {
+        const siblings = annotations.listGroupSiblings(sample, 'library', selAnn.group_id);
+        const center = _groupCentroid(siblings);
+        const cVp = _toVp(center);
+        const distFromCenter = Math.hypot(cVp.x - vpX, cVp.y - vpY);
+        // Grab anywhere on the circle's circumference (a band around its
+        // radius), not just a single point on it.
+        if (Math.abs(distFromCenter - ROTATE_HANDLE_RADIUS_SCREEN_PX) <= ROTATE_RING_HIT_TOLERANCE_VP) {
+          const startRotate = () => {
+            dragRotateState = {
+              groupId: selAnn.group_id, siblings,
+              oldRingsById: _snapshotGroupRings(siblings),
+              center, startAngle: Math.atan2(imgPt.y - center.y, imgPt.x - center.x),
+              angle: 0, moved: false,
+            };
+          };
+          if (annotations.isLocked(selAnn)) {
+            annotations.requestUnlockForEdit(sample, 'library', selAnn.id).then(ok => { if (ok) startRotate(); });
+          } else startRotate();
+          return;
+        }
+      }
+      const hit = hitTest(imgPt);
+      if (hit && selAnn && hit.group_id === selAnn.group_id) {
+        // Click landed on the already-selected shape's body → start
+        // translating it; a click on a *different* shape (or empty space,
+        // handled by the fallthrough below) only (re)selects, mirroring
+        // vertex_edit/split's "select first, next click acts" convention.
+        const siblings = annotations.listGroupSiblings(sample, 'library', selAnn.group_id);
+        const startDrag = () => {
+          dragMoveState = { groupId: selAnn.group_id, siblings, oldRingsById: _snapshotGroupRings(siblings), startPt: imgPt, moved: false };
+        };
+        if (annotations.isLocked(hit)) {
+          annotations.requestUnlockForEdit(sample, 'library', hit.id).then(ok => { if (ok) startDrag(); });
+        } else startDrag();
+        return;
+      }
+      setSelected(hit ? hit.id : null);
+      return;
+    }
     if (tool === 'split' || tool === 'erase' || tool === 'grow') {
       if (selectedId == null) {
         // Mirror vertex_edit's convention: a click with nothing selected
@@ -631,6 +758,33 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       const sample = getActiveSample();
       dragTarget.ann.rings[dragTarget.ringIdx][dragTarget.vertIdx] = imgPt;
       annotations.recomputeMetrics(dragTarget.ann);
+      redraw();
+      return;
+    }
+    if (tool === 'drag' && dragRotateState) {
+      const { center, startAngle, siblings, oldRingsById } = dragRotateState;
+      const angle = Math.atan2(imgPt.y - center.y, imgPt.x - center.x) - startAngle;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      for (const ann of siblings) {
+        ann.rings = oldRingsById[ann.id].map(ring => ring.map(p => {
+          const dx = p.x - center.x, dy = p.y - center.y;
+          return { x: center.x + dx * cos - dy * sin, y: center.y + dx * sin + dy * cos };
+        }));
+        annotations.recomputeMetrics(ann);
+      }
+      dragRotateState.angle = angle;
+      dragRotateState.moved = true;
+      cursorVpX = vpX; cursorVpY = vpY;
+      redraw();
+      return;
+    }
+    if (tool === 'drag' && dragMoveState) {
+      const dx = imgPt.x - dragMoveState.startPt.x, dy = imgPt.y - dragMoveState.startPt.y;
+      for (const ann of dragMoveState.siblings) {
+        ann.rings = dragMoveState.oldRingsById[ann.id].map(ring => ring.map(p => ({ x: p.x + dx, y: p.y + dy })));
+        annotations.recomputeMetrics(ann);
+      }
+      dragMoveState.moved = true;
       redraw();
       return;
     }
@@ -695,6 +849,18 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       const newPt = ann.rings[ringIdx][vertIdx];
       annotations.moveVertex(sample, 'library', ann.id, ringIdx, vertIdx, newPt);
       dragTarget = null;
+      redraw();
+      return;
+    }
+    if (tool === 'drag' && (dragRotateState || dragMoveState)) {
+      const st = dragRotateState || dragMoveState;
+      if (st.moved) {
+        const newRingsById = {};
+        for (const ann of st.siblings) newRingsById[ann.id] = ann.rings;
+        annotations.transformAnnotationGroup(sample, 'library', st.groupId, st.oldRingsById, newRingsById);
+      }
+      dragRotateState = null;
+      dragMoveState = null;
       redraw();
       return;
     }
@@ -1125,7 +1291,17 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       else if (tool === 'ruler') { annotations.rulerClear(); redraw(); }
       else if (tool === 'wand') { _wandReset(); redraw(); }
       else if (tool === 'lasso') { _lassoReset(); redraw(); }
+      else if (tool === 'drag') { _dragReset(); redraw(); }
     }
+  }
+  // Cancels an in-progress drag/rotate, restoring every affected sibling's
+  // rings from the pre-drag snapshot rather than leaving the live preview
+  // committed with no undo entry.
+  function _dragReset() {
+    const st = dragRotateState || dragMoveState;
+    if (st) for (const ann of st.siblings) { ann.rings = st.oldRingsById[ann.id]; annotations.recomputeMetrics(ann); }
+    dragRotateState = null;
+    dragMoveState = null;
   }
 
   // Clears the lasso's drawn area + highlight only — deliberately leaves the
@@ -1145,6 +1321,7 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
     dragTarget = null;
     splitPoints = null;
     sculptPoints = null;
+    _dragReset();
     _wandReset();
     _lassoReset();
     cursorVisible = false;

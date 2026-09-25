@@ -929,7 +929,7 @@ setInterval(_refreshAnnotationBadges, 5000);
 window.addEventListener('beforeunload', () => { annotations.saveIfDirty(ACTIVE_SAMPLE); });
 
 // ── route annotation-tool mouse/keyboard events (polygon/freehand/vertex/ruler) ──
-const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'annot_split', 'annot_erase', 'annot_grow', 'annot_wand', 'annot_lasso', 'ruler'];
+const ANNOT_MOUSE_TOOLS = ['annot_polygon', 'annot_draw', 'annot_draw_positive', 'annot_draw_negative', 'annot_vertex_edit', 'annot_drag', 'annot_split', 'annot_erase', 'annot_grow', 'annot_wand', 'annot_lasso', 'ruler'];
 function _isUiEventTarget(target) {
   return Boolean(target && target.closest && target.closest('[data-iv-ui="true"]'));
 }
@@ -1020,7 +1020,7 @@ document.addEventListener('keyup', e => {
 });
 document.addEventListener('keydown', e => {
   const tool = toolbar.getActiveTool();
-  if (['annot_polygon', 'annot_wand', 'annot_lasso', 'ruler'].includes(tool)) annotationsCanvas.onKeyDown(e);
+  if (['annot_polygon', 'annot_wand', 'annot_lasso', 'annot_drag', 'ruler'].includes(tool)) annotationsCanvas.onKeyDown(e);
 });
 
 // ── wand pixel source: picks the pixel provider matching whichever renderer
