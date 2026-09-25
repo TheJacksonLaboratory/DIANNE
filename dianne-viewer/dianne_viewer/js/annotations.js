@@ -917,6 +917,69 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     return { ok: true, newIds: newAnns.map(a => a.id) };
   }
 
+  /** Merge tool: union the selected ("target") annotation's full geometry
+   *  (across every sibling of its group_id) with another ("other")
+   *  annotation's, keeping the merged shape under the target's own
+   *  id/group_id/class/label — per the tool's contract, the result takes on
+   *  the FIRST-picked annotation's class — and discarding `other` (and its
+   *  siblings) entirely. Refuses the merge if the combined piece count
+   *  doesn't actually shrink, i.e. the two don't truly overlap/touch (same
+   *  "must actually interact" spirit as splitAnnotation's "must completely
+   *  cross" check); the canvas layer (annotations_canvas.js) also pre-checks
+   *  this with a cheap outer-ring touch test before ever calling this, so a
+   *  rejection here should be rare. */
+  function mergeAnnotations(sample, cls, targetId, otherId) {
+    if (targetId === otherId) return { ok: false, reason: 'same' };
+    if (!guardGeometryEdit(sample, cls, targetId) || !guardGeometryEdit(sample, cls, otherId)) return { ok: false, reason: 'locked' };
+    const b = _bucket(sample);
+    const target = findAnnotation(sample, cls, targetId);
+    const other = findAnnotation(sample, cls, otherId);
+    if (!target || !other) return { ok: false, reason: 'not-found' };
+
+    const targetSiblings = listGroupSiblings(sample, cls, target.group_id);
+    const otherSiblings = listGroupSiblings(sample, cls, other.group_id);
+    const resultRings = booleanOp(targetSiblings.flatMap(a => a.rings), otherSiblings.flatMap(a => a.rings), 'union');
+    const pieces = assembleRingsIntoPieces(resultRings);
+    if (!pieces.length || pieces.length >= targetSiblings.length + otherSiblings.length) return { ok: false, reason: 'no-overlap' };
+
+    const removed = otherSiblings.concat(targetSiblings.filter(a => a !== target));
+    for (const ann of removed) { const i = b[cls].indexOf(ann); if (i >= 0) b[cls].splice(i, 1); }
+
+    const oldRings = target.rings;
+    const [first, ...rest] = pieces;
+    const newRings = [first.outer, ...first.holes];
+    target.rings = newRings;
+    recomputeMetrics(target);
+    target.last_editor = _currentUser();
+    target.updated_at = new Date().toISOString();
+
+    const extraAnns = rest.map(p => {
+      const copy = makeAnnotation({ sample, rings: [p.outer, ...p.holes], label: target.label, cls: target.class, author: target.author, groupId: target.group_id });
+      recomputeMetrics(copy);
+      return copy;
+    });
+    b[cls].push(...extraAnns);
+
+    markDirty(sample);
+    pushUndo(sample, {
+      undo: () => {
+        target.rings = oldRings;
+        recomputeMetrics(target);
+        for (const extra of extraAnns) { const i = b[cls].indexOf(extra); if (i >= 0) b[cls].splice(i, 1); }
+        b[cls].push(...removed);
+      },
+      redo: () => {
+        target.rings = newRings;
+        recomputeMetrics(target);
+        for (const ann of removed) { const i = b[cls].indexOf(ann); if (i >= 0) b[cls].splice(i, 1); }
+        b[cls].push(...extraAnns);
+      },
+    });
+    logAndRecord(`Merged "${other.label || other.class}" into "${target.label || target.class}"`);
+    _notify(sample);
+    return { ok: true, targetId: target.id };
+  }
+
   // ── §6 vertex-level editing (drag / insert / delete / simplify) ───────
   function moveVertex(sample, cls, id, ringIdx, vertIdx, newPt) {
     if (!guardGeometryEdit(sample, cls, id)) return false;
@@ -1123,7 +1186,7 @@ function createAnnotations({ viewport, log, getMppForSample, baseUrl, onPromoted
     setStatus, editMetadata, isLocked, guardGeometryEdit, requestUnlockForEdit,
     promoteToPosNeg, promoteToLibrary,
     setClassColor, getClassColor, getClassColors, resetClassColors, knownClasses,
-    booleanOp, applyBooleanOp, sculptAnnotation, splitAnnotation,
+    booleanOp, applyBooleanOp, sculptAnnotation, splitAnnotation, mergeAnnotations,
     moveVertex, insertVertex, deleteVertex, simplifyRing, simplifyAnnotation,
     rulerStart, rulerUpdate, rulerFinish, rulerClear, getRuler, rulerLengthPx,
     unitsForSample, formatArea, formatLength, computeAreaPx2, computePerimeterPx,

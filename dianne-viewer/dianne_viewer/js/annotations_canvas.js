@@ -709,6 +709,35 @@ function createAnnotationsCanvas({ container, viewport, annotations, getActiveSa
       setSelected(hit ? hit.id : null);
       return;
     }
+    if (tool === 'merge') {
+      const hit = hitTest(imgPt);
+      const target = selectedId != null ? annotations.findAnnotation(sample, 'library', selectedId) : null;
+      if (target && hit && hit.group_id !== target.group_id) {
+        const overlaps = target.rings[0] && hit.rings[0] && _ringsTouch(target.rings[0], hit.rings[0]);
+        if (overlaps) {
+          const doMerge = () => {
+            const result = annotations.mergeAnnotations(sample, 'library', target.id, hit.id);
+            setSelected(result && result.ok ? result.targetId : target.id);
+          };
+          if (annotations.isLocked(target) || annotations.isLocked(hit)) {
+            Promise.all([
+              annotations.requestUnlockForEdit(sample, 'library', target.id),
+              annotations.requestUnlockForEdit(sample, 'library', hit.id),
+            ]).then(([ok1, ok2]) => { if (ok1 && ok2) doMerge(); });
+          } else {
+            doMerge();
+          }
+          return;
+        }
+        if (typeof log === 'function') {
+          log(`"${hit.label || hit.class}" doesn't overlap "${target.label || target.class}" — pick an overlapping annotation to merge, or select a new anchor.`);
+        }
+      }
+      // No target yet, hit a different non-overlapping shape, or clicked
+      // empty space → (re)select, same click-through as the 'none' tool.
+      setSelected(hit ? hit.id : null);
+      return;
+    }
     if (tool === 'split' || tool === 'erase' || tool === 'grow') {
       if (selectedId == null) {
         // Mirror vertex_edit's convention: a click with nothing selected
