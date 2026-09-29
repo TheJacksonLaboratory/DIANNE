@@ -577,6 +577,237 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
   ].join(';');
   panel.appendChild(dropdown);
 
+  // ── channel presets: Reset / Save / Load / Download ────────────────────────
+  // Save/Load persist to the server, alongside the per-user settings file
+  // (see settings.js), as .channels.<name>.json in the notebook's cwd —
+  // shared (not per-user), keyed by channel *name* so a preset saved from one
+  // sample still applies to any other sample with matching channel names.
+  let chNames = [];
+  let channelFullRanges = [];
+  let order = [];
+  const rowsContainer = document.createElement('div');
+  dropdown.appendChild(rowsContainer);
+
+  function _defaultStateFor(m) {
+    const nCh = m.n_channels || 0;
+    return Array.from({ length: nCh }, (_, i) => ({
+      enabled      : i === 0,
+      color        : DEFAULT_COLORS[i % DEFAULT_COLORS.length],
+      opacity      : 1.0,
+      intensityMin : m.channel_ranges[i][0],
+      intensityMax : m.channel_ranges[i][1],
+    }));
+  }
+
+  function _presetPayload() {
+    const out = {};
+    for (let ch = 0; ch < chState.length; ch++) {
+      const s = chState[ch];
+      out[chNames[ch]] = {
+        enabled: s.enabled, color: s.color, opacity: s.opacity,
+        intensityMin: s.intensityMin, intensityMax: s.intensityMax,
+      };
+    }
+    return out;
+  }
+
+  // Applies a saved preset by matching its keys against the current sample's
+  // channel names (case/whitespace-insensitive); channels with no match keep
+  // their current settings untouched.
+  function _applyPreset(presetChannels) {
+    if (!presetChannels) return;
+    const byName = {};
+    for (const [name, s] of Object.entries(presetChannels)) byName[name.trim().toLowerCase()] = s;
+    for (let ch = 0; ch < chState.length; ch++) {
+      const s = byName[(chNames[ch] || '').trim().toLowerCase()];
+      if (s) Object.assign(chState[ch], s);
+    }
+    invalidateComposites();
+    _renderRows();
+    scheduleRedraw();
+  }
+
+  async function _fetchPresetNames() {
+    try {
+      const names = await (await fetch(`${baseUrl}/channels/list`)).json();
+      return Array.isArray(names) ? names : [];
+    } catch (e) { return []; }
+  }
+
+  // Small modal, styled after toolbar.js's Save/Load classifier dialogs.
+  function _channelModal(titleText, bodyEl, confirmLabel, onConfirm) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = [
+      'position:fixed', 'left:0', 'top:0', 'width:100%', 'height:100%',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'z-index:2147483649', 'background:rgba(0,0,0,0.55)',
+    ].join(';');
+    const box = document.createElement('div');
+    box.style.cssText = [
+      'min-width:260px', 'background:#1b1b1b', 'color:#eee',
+      'border-radius:8px', 'border:1px solid #3a3a3a',
+      'box-shadow:0 6px 24px rgba(0,0,0,0.8)',
+      'padding:16px 18px', 'font:13px monospace',
+    ].join(';');
+    const titleEl = document.createElement('div');
+    titleEl.textContent = titleText;
+    titleEl.style.cssText = 'font-weight:700;color:#53d9ff;margin-bottom:10px;';
+    box.appendChild(titleEl);
+    box.appendChild(bodyEl);
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:12px;';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding:5px 10px;border-radius:6px;border:1px solid #555;background:#333;color:#bbb;cursor:pointer;font:12px monospace';
+    const okBtn = document.createElement('button');
+    okBtn.textContent = confirmLabel;
+    okBtn.style.cssText = 'padding:5px 14px;border-radius:6px;border:none;background:#1f8cff;color:#fff;cursor:pointer;font:12px monospace';
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(okBtn);
+    box.appendChild(btnRow);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    function _close() { overlay.remove(); document.removeEventListener('keydown', _key, true); }
+    function _key(e) {
+      if (e.key === 'Enter') { e.stopImmediatePropagation(); onConfirm(_close); }
+      else if (e.key === 'Escape' || e.key === 'Esc') { e.stopImmediatePropagation(); e.preventDefault(); _close(); }
+    }
+    cancelBtn.addEventListener('click', _close);
+    okBtn.addEventListener('click', () => onConfirm(_close));
+    overlay.addEventListener('click', e => { if (e.target === overlay) _close(); });
+    document.addEventListener('keydown', _key, true);
+  }
+
+  const _presetBtnCss = [
+    'background:rgba(255,255,255,0.08)', 'border:1px solid #555',
+    'color:#ddd', 'border-radius:4px', 'padding:2px 6px',
+    'cursor:pointer', 'font:11px monospace',
+  ].join(';');
+
+  const controlsRow = document.createElement('div');
+  controlsRow.style.cssText = 'display:flex;gap:5px;padding-bottom:6px;border-bottom:1px solid #333;margin-bottom:4px;';
+  dropdown.insertBefore(controlsRow, rowsContainer);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset';
+  resetBtn.title = 'Reset all channels to defaults (first channel on, others off, auto levels)';
+  resetBtn.style.cssText = _presetBtnCss;
+  resetBtn.addEventListener('click', () => {
+    chState = _defaultStateFor(currentMeta);
+    invalidateComposites();
+    _renderRows();
+    scheduleRedraw();
+  });
+  controlsRow.appendChild(resetBtn);
+
+  const savePresetBtn = document.createElement('button');
+  savePresetBtn.textContent = 'Save';
+  savePresetBtn.title = 'Save current channel settings as a named preset';
+  savePresetBtn.style.cssText = _presetBtnCss;
+  savePresetBtn.addEventListener('click', async () => {
+    const names = await _fetchPresetNames();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Preset name…';
+    input.style.cssText = 'width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #555;border-radius:4px;padding:5px 6px;font:13px monospace;outline:none;';
+    if (names.length) {
+      input.setAttribute('list', 'channel-preset-names');
+      const datalist = document.createElement('datalist');
+      datalist.id = 'channel-preset-names';
+      for (const n of names) {
+        const opt = document.createElement('option');
+        opt.value = n;
+        datalist.appendChild(opt);
+      }
+      input.appendChild(datalist);
+    }
+    _channelModal('Save channel preset', input, 'Save', async (close) => {
+      const name = input.value.trim();
+      if (!name) return;
+      close();
+      try {
+        await fetch(`${baseUrl}/channels/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, channels: _presetPayload() }),
+        });
+      } catch (e) {}
+    });
+    setTimeout(() => input.focus(), 0);
+  });
+  controlsRow.appendChild(savePresetBtn);
+
+  const loadPresetBtn = document.createElement('button');
+  loadPresetBtn.textContent = 'Load';
+  loadPresetBtn.title = 'Load a saved channel preset (applied by matching channel name)';
+  loadPresetBtn.style.cssText = _presetBtnCss;
+  loadPresetBtn.addEventListener('click', async () => {
+    const names = await _fetchPresetNames();
+    if (!names.length) { alert('No saved channel presets found.'); return; }
+    const select = document.createElement('select');
+    select.style.cssText = 'width:100%;background:#111;color:#eee;border:1px solid #555;border-radius:4px;padding:4px;font:13px monospace;';
+    for (const n of names) {
+      const opt = document.createElement('option');
+      opt.value = n; opt.textContent = n;
+      select.appendChild(opt);
+    }
+    _channelModal('Load channel preset', select, 'Load', async (close) => {
+      const chosen = select.value;
+      close();
+      if (!chosen) return;
+      try {
+        const res = await (await fetch(`${baseUrl}/channels/load`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: chosen }),
+        })).json();
+        if (res && res.ok) _applyPreset(res.channels);
+      } catch (e) {}
+    });
+  });
+  controlsRow.appendChild(loadPresetBtn);
+
+  const downloadPresetBtn = document.createElement('button');
+  downloadPresetBtn.textContent = 'Download';
+  downloadPresetBtn.title = 'Download current channel settings as a JSON file';
+  downloadPresetBtn.style.cssText = _presetBtnCss;
+  downloadPresetBtn.addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(_presetPayload(), null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `channels.${activeSample || 'preset'}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  controlsRow.appendChild(downloadPresetBtn);
+
+  const uploadInput = document.createElement('input');
+  uploadInput.type = 'file';
+  uploadInput.accept = '.json,application/json';
+  uploadInput.style.display = 'none';
+  uploadInput.addEventListener('change', () => {
+    const file = uploadInput.files && uploadInput.files[0];
+    uploadInput.value = ''; // allow re-uploading the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        _applyPreset(JSON.parse(reader.result));
+      } catch (e) {
+        alert(`Upload channel preset: "${file.name}" is not valid JSON.`);
+      }
+    };
+    reader.readAsText(file);
+  });
+  controlsRow.appendChild(uploadInput);
+
+  const uploadPresetBtn = document.createElement('button');
+  uploadPresetBtn.textContent = 'Upload';
+  uploadPresetBtn.title = 'Upload a channel preset JSON file (applied by matching channel name)';
+  uploadPresetBtn.style.cssText = _presetBtnCss;
+  uploadPresetBtn.addEventListener('click', () => uploadInput.click());
+  controlsRow.appendChild(uploadPresetBtn);
+
   function _closeChannelsPanel() {
     dropdown.style.display = 'none';
     toggleBtn.textContent  = 'Channels \u25be';
@@ -608,13 +839,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       for (const [, ctrl] of inflights[ch]) ctrl.abort();
 
     // Build default state, then restore saved state for this sample if available
-    const defaultState = Array.from({ length: nCh }, (_, i) => ({
-      enabled      : i === 0,
-      color        : DEFAULT_COLORS[i % DEFAULT_COLORS.length],
-      opacity      : 1.0,
-      intensityMin : m.channel_ranges[i][0],
-      intensityMax : m.channel_ranges[i][1],
-    }));
+    const defaultState = _defaultStateFor(m);
     const saved = chStateCache[activeSample];
     chState = (saved && saved.length === nCh)
       ? saved.map((s, i) => Object.assign({}, defaultState[i], s))
@@ -627,22 +852,29 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
 
     // Hide panel when there are no channels (e.g. RGB image)
     panel.style.display = nCh > 0 ? '' : 'none';
-    dropdown.innerHTML  = '';
     _closeChannelsPanel();
 
-    const chNames = m.channel_names || Array.from({ length: nCh }, (_, i) => 'Channel ' + i);
-    const channelFullRanges = m.channel_full_ranges || [];
+    chNames = m.channel_names || Array.from({ length: nCh }, (_, i) => 'Channel ' + i);
+    channelFullRanges = m.channel_full_ranges || [];
 
     // Display order: alphabetical by name, but DAPI (any case/variant) always first.
     // `ch` below still indexes the real/raw channel number, so chState/grayCache/
     // fetchTile('channel='+ch)/channel_ranges stay correctly linked to the actual data.
     const isDapi = name => /dapi/i.test(name);
-    const order = Array.from({ length: nCh }, (_, i) => i).sort((a, b) => {
+    order = Array.from({ length: nCh }, (_, i) => i).sort((a, b) => {
       const aDapi = isDapi(chNames[a]), bDapi = isDapi(chNames[b]);
       if (aDapi !== bDapi) return aDapi ? -1 : 1;
       return chNames[a].localeCompare(chNames[b], undefined, { sensitivity: 'base', numeric: true });
     });
 
+    _renderRows();
+  }
+
+  // (Re)builds just the per-channel rows from the current chState/chNames/
+  // order, without touching tile caches — used on meta/sample rebuild as
+  // well as after Reset/Load, which only change display settings.
+  function _renderRows() {
+    rowsContainer.innerHTML = '';
     for (const ch of order) {
       const row = document.createElement('div');
       row.style.cssText = [
@@ -724,7 +956,7 @@ function createMultichannelTiles(tileLayer, baseUrl, meta, viewport, sampleName)
       row.appendChild(colorPicker);
       row.appendChild(opSlider);
       row.appendChild(rangeSlider);
-      dropdown.appendChild(row);
+      rowsContainer.appendChild(row);
     }
   }
 

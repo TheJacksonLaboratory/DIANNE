@@ -545,6 +545,45 @@ class ViewerServer:
         with open(self._user_settings_path(), 'w', encoding='utf-8') as f:
             json.dump(settings_dict, f)
 
+    def _channels_preset_path(self, name):
+        # Shared (not per-user) — a channel preset describes a multiplex
+        # panel's display settings, meant to be reusable by any annotator
+        # working on the same/similar panel. Lives in the notebook's cwd,
+        # alongside the per-user settings file (see _user_settings_path).
+        return os.path.join(os.getcwd(), f'.channels.{self._safe_filename_component(name)}.json')
+
+    def list_channel_presets(self):
+        """'/channels/list' route: names of all saved channel presets."""
+        prefix, suffix = '.channels.', '.json'
+        try:
+            names = [
+                fn[len(prefix):-len(suffix)] for fn in os.listdir(os.getcwd())
+                if fn.startswith(prefix) and fn.endswith(suffix)
+            ]
+        except OSError:
+            names = []
+        return sorted(names)
+
+    def save_channel_preset(self, name, channels):
+        """'/channels/save' route: write {channel_name: {enabled, color,
+        opacity, intensityMin, intensityMax}} to .channels.<name>.json."""
+        if not isinstance(channels, dict):
+            return
+        with open(self._channels_preset_path(name), 'w', encoding='utf-8') as f:
+            json.dump(channels, f)
+
+    def load_channel_preset(self, name):
+        """'/channels/load' route: read a saved channel preset, or {} if none."""
+        path = self._channels_preset_path(name)
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
     def _load_class_colors_from_disk(self):
         path = self._class_colors_path()
         if not os.path.exists(path):
@@ -1144,6 +1183,10 @@ class ViewerServer:
                             body = json.dumps({'error': str(exc)}).encode()
                     self._respond(200, body, 'application/json')
 
+                elif parsed.path == '/channels/list':
+                    body = json.dumps(srv.list_channel_presets()).encode()
+                    self._respond(200, body, 'application/json')
+
                 elif parsed.path == '/secondary_tile':
                     sec_image = srv.secondary_images.get(sample_name)
                     if sec_image is None:
@@ -1386,6 +1429,34 @@ class ViewerServer:
                     try:
                         srv.save_user_settings(data.get('settings') if isinstance(data, dict) else None)
                         body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/channels/save':
+                    name = data.get('name', '').strip() if isinstance(data, dict) else ''
+                    if not name:
+                        body = json.dumps({'ok': False, 'error': 'missing name'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        srv.save_channel_preset(name, data.get('channels'))
+                        body = json.dumps({'ok': True}).encode()
+                    except Exception as exc:
+                        body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/channels/load':
+                    name = data.get('name', '').strip() if isinstance(data, dict) else ''
+                    if not name:
+                        body = json.dumps({'ok': False, 'error': 'missing name'}).encode()
+                        self._respond(200, body, 'application/json')
+                        return
+                    try:
+                        channels = srv.load_channel_preset(name)
+                        body = json.dumps({'ok': True, 'channels': channels}).encode()
                     except Exception as exc:
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
                     self._respond(200, body, 'application/json')

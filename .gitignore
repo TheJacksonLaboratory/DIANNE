@@ -7,6 +7,8 @@ __pycache__/
 *.so
 *.sif
 
+*.channels.*.json
+
 identity-matrix.csv
 *settings.json
 CLAUDE.md
