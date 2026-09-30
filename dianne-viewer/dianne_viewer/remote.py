@@ -27,7 +27,6 @@ class PooledTiffStore(MutableMapping):
         first = self._make()
         self._n = 1
         self._pool.put(first)
-        self._keys = set(first[1])
 
     def _make(self):
         tif = tifffile.TiffFile(open_remote(self._path))
@@ -51,8 +50,6 @@ class PooledTiffStore(MutableMapping):
             if v is not None:
                 self._cache.move_to_end(key)
                 return v
-        if key not in self._keys:
-            raise KeyError(key)
         h = self._acquire()
         try:
             v = h[1][key]
@@ -69,8 +66,16 @@ class PooledTiffStore(MutableMapping):
                     self._cbytes -= len(old)
         return v
 
-    def __contains__(self, key): return key in self._keys
-    def __iter__(self): return iter(self._keys)
-    def __len__(self): return len(self._keys)
+    def _with(self, fn):
+        h = self._acquire()
+        try:
+            return fn(h[1])
+        finally:
+            self._pool.put(h)
+
+    def __contains__(self, key): return key in self._cache or self._with(lambda st: key in st)
+    def __iter__(self): return iter(self._with(list))
+    def __len__(self): return self._with(len)
+    def listdir(self, path=''): return self._with(lambda st: st.listdir(path))  # zarr uses this for len(group)
     def __setitem__(self, k, v): raise PermissionError('read-only store')
     def __delitem__(self, k): raise PermissionError('read-only store')
