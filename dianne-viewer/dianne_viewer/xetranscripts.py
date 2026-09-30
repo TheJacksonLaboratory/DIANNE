@@ -131,10 +131,13 @@ class XeniumTranscripts:
     def _open_root(self):
         """Open a fresh zarr root for remote stores (s3fs handles are not thread-safe)."""
         if self._zip_meta is not None and self._zip_meta['type'] == 'fsspec':
+            if getattr(self, '_remote_root', None) is not None:  # callers hold self._lock; reuse the open zip/dir
+                return self._remote_root
             _fo = self._zip_meta['fs'].open(self._zip_meta['path'], 'rb')
             zip_fs = ZipFileSystem(_fo, mode='r')
             store = FSMap('', zip_fs, check=False)
-            return zarr.open(store, mode='r')
+            self._remote_root = zarr.open(store, mode='r')
+            return self._remote_root
         return self._root
 
     def get_tile_transcripts(self, grid, level, row, col, genes):
