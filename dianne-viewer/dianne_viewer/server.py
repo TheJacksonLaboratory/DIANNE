@@ -332,11 +332,9 @@ class ViewerServer:
                 with open(os.path.join(self.annotations_dir, name)) as f:
                     data = json.load(f)
                 ts = datetime.fromisoformat(data['timestamp'])
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
                 if data.get('sample') == sample and (now - ts).total_seconds() < 3600:
                     users.append(m.group(1))
-            except Exception:  # stale/foreign lock file must never break the poll
+            except (OSError, ValueError, KeyError):
                 continue
         return users
 

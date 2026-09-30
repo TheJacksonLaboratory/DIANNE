@@ -110,8 +110,9 @@ def _open_image(path):
     path_str = str(path)
     is_url = path_str.startswith('http://') or path_str.startswith('https://')
     if is_url:
-        from .remote import PooledTiffStore
-        store = PooledTiffStore(path_str)
+        _fh  = fsspec.open(path_str, 'rb').open()
+        _tif = tifffile.TiffFile(_fh)
+        store = _tif.aszarr()
     else:
         store = tifffile.imread(str(path), aszarr=True)
     z = zarr.open(store, mode='r')
@@ -156,7 +157,6 @@ def _fetch_xe_zip(bundle_path, fname, fs=None, s3=None, s3_bucket=None):
                 key=_creds.access_key,
                 secret=_creds.secret_key,
                 token=_creds.token,
-                default_block_size=256 * 1024, default_cache_type='blockcache',
                 client_kwargs={'endpoint_url': s3.meta.endpoint_url},
             )
             key = full.lstrip('/')

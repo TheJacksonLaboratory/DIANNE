@@ -11,8 +11,8 @@ import re
 def get_channel_names(path: str, clean: bool = True) -> list[str]:
     is_url = path.startswith('http://') or path.startswith('https://')
     if is_url:
-        from .remote import open_remote
-        fh = open_remote(path)
+        import fsspec
+        fh = fsspec.open(path, 'rb').open()
         tif_ctx = tifffile.TiffFile(fh)
     else:
         tif_ctx = tifffile.TiffFile(path)
