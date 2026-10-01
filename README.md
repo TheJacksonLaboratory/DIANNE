@@ -77,7 +77,7 @@ This method allows you to use DIANNE without manual installation or command-line
 ```bash
 conda create --name dianne python=3.10 -y
 conda activate dianne
-conda install -y -c conda-forge jupyter ipywidgets ipykernel "notebook>=7" numpy numba pandas pyarrow scanpy scipy scikit-image scikit-learn matplotlib tifffile imagecodecs tqdm opencv zarr fsspec
+conda install -y -c conda-forge jupyter ipywidgets ipykernel "notebook>=7" numpy numba pandas pyarrow scanpy scipy scikit-image scikit-learn matplotlib tifffile imagecodecs tqdm opencv "zarr<3" fsspec
 
 jupyter notebook
 ```
