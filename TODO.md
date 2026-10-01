@@ -26,7 +26,7 @@
 
 ## License
 
-- [ ] **`LICENSE` file must be copied into each sub-package directory before building.**
+- [x] **`LICENSE` file must be copied into each sub-package directory before building.** Done via `dianne-*/LICENSE -> ../LICENSE` symlinks, so the root file stays the single copy.
   All three `pyproject.toml` files declare `license = { file = "LICENSE" }`.
   Add `cp ../LICENSE .` to your build/release script or CI workflow for each package.
 

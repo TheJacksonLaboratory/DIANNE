@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- Build backend changed to `setuptools.build_meta` (was the non-existent `setuptools.backends.legacy:build`).
+- Declared previously-undeclared runtime dependencies: `scikit-image`, `zarr`, `fsspec`, `packaging` (a clean install failed on `import dianne_utils` with `No module named 'fsspec'`).
+- `zarr` pinned to v2 (`>=2.14,<3`): DIANNE needs the zarr 2 API, and is tested with 2.18.2 and 2.18.3.
+- Switched `opencv-python` to `opencv-python-headless` (same `cv2` API; avoids clashing with headless installs and needs no GUI system libraries).
+- Added optional extra `features` (`torch`, `torchvision`, `timm`, `openslide-python`, `Pillow`) for `ctranspath` / `subtilegpu`.
+
 ## [0.1.0] — 2026-05-31
 
 ### Added
