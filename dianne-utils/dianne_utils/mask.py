@@ -351,7 +351,7 @@ def analyze_membrane_masks(df, A, B, C):
 
     return result
 
-def showMasksMembr(classifierPaths, fshape=(37807, 44066), donor='11', rotate=True):
+def showMasksMembr(classifierPaths, fshape=(37807, 44066), donor='11', rotate=True, savepath=None):
 
     prefix = f'Amnion-{donor}'
     rA = readContoursFromGeoJSON(f'{classifierPaths}/{prefix}.geojson', output_shape=fshape, downfactor=16) / 255.
@@ -413,6 +413,13 @@ def showMasksMembr(classifierPaths, fshape=(37807, 44066), donor='11', rotate=Tr
     ax.set_xlabel('Coordinate x, mm', fontsize=16)
     ax.set_ylabel('Coordinate y, mm', fontsize=16)
 
+    x_ticks = [0,2,4,6,8]
+    y_ticks = [0,2,4,6,8,10]
+    ax.set_xticks(x_ticks)
+    ax.set_yticks(y_ticks)
+    ax.set_xticklabels(x_ticks)
+    ax.set_yticklabels(y_ticks)
+
     # Add legend patches
     from matplotlib.patches import Patch
     legend_elements = [
@@ -421,8 +428,11 @@ def showMasksMembr(classifierPaths, fshape=(37807, 44066), donor='11', rotate=Tr
         Patch(facecolor='purple', edgecolor='none', label='Decidua'),
         Patch(facecolor='lightgray', edgecolor='none', label='No tissue')
     ]
-    ax.legend(handles=legend_elements, loc='upper right', fontsize=16, bbox_to_anchor=(1.65, 1), fancybox=False, frameon=False)
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=16, bbox_to_anchor=(1.85, 1), fancybox=False, frameon=False)
     
+    if not savepath is None:
+        plt.savefig(savepath, bbox_inches='tight', dpi=300)
+
     plt.show()
     return
 

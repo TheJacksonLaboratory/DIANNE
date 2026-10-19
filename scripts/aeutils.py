@@ -206,7 +206,8 @@ def group_cells_into_components(xy, mask, min_dist=2.5, min_size=5,
         return components, sizes, M
 
     # --- Pass 2 ---
-    adaptive_min_dist = 1.75 * M
+    adaptive_min_dist = 3.0 * M
+    # adaptive_min_dist = 1.75 * M
     steps.set_description(f"Pass 2: components @ min_dist={adaptive_min_dist:.3f}")
     components, sizes, labels1 = _build_components(pts, orig_ids, adaptive_min_dist)
     steps.update(1)
