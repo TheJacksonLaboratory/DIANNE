@@ -1307,7 +1307,15 @@ def makeSubtileRunFn(patchCoordinates, ads, samples, qs, ts, mpp, imgs, PCMA_alp
 
         def _get_features(sample, df_grid_, cb):
             if sample not in feat_cache:
-                feat_cache[sample] = _ensure_features(sample, df_grid_, progress_cb=cb, cancel_event=cancel_event)
+                # Preferred: precomputed features in the sample directory.
+                sd_path = os.path.join(os.path.dirname(imgs[sample]), 'features', f'1-{model}_features.parquet')
+                if os.path.isfile(sd_path):
+                    feat_cache[sample] = pd.read_parquet(sd_path)
+                    if cb:
+                        cb('features_cached', f'Using precomputed features for {sample}', fraction=1.0)
+                else:
+                    feat_cache[sample] = _ensure_features(sample, df_grid_, progress_cb=cb, cancel_event=cancel_event)
+
             return feat_cache[sample]
 
         def _get_subtile_data(sample):

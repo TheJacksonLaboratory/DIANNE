@@ -16,7 +16,7 @@ done
 
 if [[ "$DEVICE" == gpu ]]; then
     : "${TIME:=1h}"
-    PART=gpu_a100 QOS=gpu_inference GRES=(--gres=gpu:1) NV=--nv
+    PART=gpu_a100_mig QOS=gpu_inference GRES=(--gres=gpu:1) NV=--nv
     CONTAINER=/projects/chuang-lab/USERS/domans/containers/mtimm-python.sif
 else
     : "${TIME:=8h}"

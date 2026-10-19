@@ -252,6 +252,97 @@ def viewSTQkomp(dataPath, samples, F=2, model='ctranspath', color='lime', patch_
                                     sample_metadata=sample_metadata, mpp=mpp, save_path=save_path, username=username)[1]
     return drawings
 
+def viewSTQkompMerged(dataPath, samples, dataPath2, samples2, F=2, model='ctranspath', color='lime', patch_size=8,
+                PCMA_alpha=0.8, multiplier=2, body_overlap=0.25, max_cells=20000, idm='./identity-matrix.csv',
+                classifierPaths=None, load_features=False, sample_metadata=None, sample_metadata2=None,
+                mpp=None, save_path=None, username='auto', erode=False):
+
+    """Views two KOMP STQ datasets (dataPath/samples and dataPath2/samples2) merged into a single DIANNE viewer.
+    Like viewSTQkomp, but combines samples drawn from two dataset roots. See viewSTQkomp for parameter details.
+    """
+
+    sources = [(dataPath, samples), (dataPath2, samples2)]
+
+    imgs = {}
+    valid_sources = []
+    for dpath, smpls in sources:
+        dimgs = {s: iname for s in smpls if os.path.isfile((iname:=f'{dpath}/{s}/image.ome.tiff')) and is_pyramidal(iname)}
+        imgs.update(dimgs)
+        valid_sources.append((dpath, [s for s in smpls if s in dimgs.keys()]))
+    sources = valid_sources
+    all_samples = [s for _, smpls in sources for s in smpls]
+
+    if not os.path.isfile(idm):
+        pd.DataFrame(np.eye(3)).to_csv(idm, index=False, header=False)
+
+    first_dpath, first_samples = next((dpath, smpls) for dpath, smpls in sources if smpls)
+    ts, mpp, tile_size = loadSTQParams(first_dpath + first_samples[0], F)
+
+    if load_features:
+        ads, patchCoordinatesParts, patchesCDFsParts = {}, [], []
+        for dpath, smpls in sources:
+            if not smpls:
+                continue
+            fname = f'features/false-{F}-{model}_features.tsv.gz'
+            if not os.path.isfile(f'{dpath}{smpls[0]}/features/false-{F}-{model}_features.tsv.gz'):
+                fname = fname.replace('tsv.gz', 'csv.gz').replace('/false-', '/')
+
+            print(fname)
+            dads, dimgs, dpatchCoordinates, dpatchesCDFs, qs, ts, mpp, L, N = loadDataAndPreparePatches(smpls,
+                                                                    dpath, fname, L=None, ts=ts, mpp=mpp, N=patch_size)
+            ads.update(dads)
+            imgs.update(dimgs)
+            patchCoordinatesParts.append(dpatchCoordinates)
+            patchesCDFsParts.append(dpatchesCDFs)
+
+        patchCoordinates = pd.concat(patchCoordinatesParts, axis=0)
+        patchesCDFs = pd.concat(patchesCDFsParts, axis=0)
+        print(f'Prepared {patchesCDFs.shape[0]} patches')
+        sizes = {s: ads[s].shape[0] for s in all_samples}
+        runfn = makeRunFn(patchCoordinates, ads, all_samples, qs, ts, mpp, tile_size=tile_size, patch_size=patch_size,
+                                 PCMA_alpha=PCMA_alpha, alpha_img=0.5, multiplier=multiplier, erode=erode, body_overlap=body_overlap)
+        searchfn = makeSearchFn(patchCoordinates, patchesCDFs, ads, all_samples, qs, ts, mpp, tile_size=tile_size,
+                                 patch_size=patch_size, PCMA_alpha=PCMA_alpha, body_overlap=body_overlap)
+        # Subtile inference (GPU) reuses the same tile-level classifier training,
+        # so it's only meaningful for the ctranspath feature model it's derived from.
+        # Note: it always reads the base single-tile (F=1) CTransPath grid — the
+        # CTransPath model's own 224px tile crop is independent of this pipeline's
+        # F (which only scales the *coarser* tile_size used for classifier training).
+        subtile_runfn = makeSubtileRunFn(patchCoordinates, ads, all_samples, qs, ts, mpp, imgs,
+                                 PCMA_alpha=PCMA_alpha, tile_size=tile_size, patch_size=patch_size,
+                                 model=model, annotations_dir=_resolved_annotations_dir(save_path)) if model == 'ctranspath' else None
+        savefn = makeSaveFn(patchCoordinates, ads, all_samples, qs, ts, mpp, PCMA_alpha=PCMA_alpha, tile_size=tile_size,
+                                   patch_size=patch_size, body_overlap=body_overlap, classifierPaths=classifierPaths)
+        loadfn = makeLoadFn(classifierPaths)
+        listfn = makeListFn(classifierPaths)
+    else:
+        runfn, subtile_runfn, searchfn, savefn, loadfn, listfn, sizes = None, None, None, None, None, None, None
+
+    matrices = {s: idm for s in all_samples}
+    bundle_paths = {s: f'{dpath}{s}' for dpath, smpls in sources for s in smpls}
+    all_annotations = {}
+    for dpath, smpls in sources:
+        for sample in smpls:
+            try:
+                with open(f'{dpath}{sample}/cells-index.pkl', 'rb') as f:
+                    index = pickle.load(f)
+                all_annotations[sample] = pd.Categorical(['Cell expanded from nucleus']*len(index))
+            except:
+                pass
+
+    uannotations = sorted(set(a for sample in all_annotations.keys() for a in all_annotations[sample].unique()))
+    annotationsPalette = {a: mcolors.to_hex(color) for i, a in enumerate(uannotations)}
+
+    merged_metadata = {**(sample_metadata or {}), **(sample_metadata2 or {})} if sample_metadata or sample_metadata2 else None
+
+    drawings = create_viewer(all_samples, imgs, height="800px", run_inference_fn=runfn,
+                                    run_subtile_inference_fn=subtile_runfn, run_search_fn=searchfn, sample_sizes=sizes,
+                                    xenium_mpp=mpp, max_cells=max_cells, matrices=matrices, xenium_bundle_paths=bundle_paths,
+                                    annotations=all_annotations, category_colors=annotationsPalette,
+                                    save_func=savefn, load_func=loadfn, list_names_func=listfn,
+                                    sample_metadata=merged_metadata, mpp=mpp, save_path=save_path, username=username)[1]
+    return drawings
+
 
 def viewMIQ(dpath, imfname='adjusted-all-channels.ome.tif', samples=None, height="800px",
             mpp=0.2125, max_cells=10000, username='auto'):
