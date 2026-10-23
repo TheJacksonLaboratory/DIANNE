@@ -26,7 +26,8 @@ fi
 [[ "$TIME" =~ ^[0-9]+$ ]] && TIME="${TIME}:00:00" || TIME="${TIME%h}:00:00"
 
 echo "Launching $DEVICE notebook (time $TIME)..."
-> err_jupyter.err 2>/dev/null || { touch err_jupyter.err; chmod 600 err_jupyter.err; }
+: > err_jupyter.err
+chmod 600 err_jupyter.err
 
 JOBID=$(sbatch --parsable --time="$TIME" --partition="$PART" --qos="$QOS" "${GRES[@]+"${GRES[@]}"}" \
     --export="ALL,CONTAINER=$CONTAINER,NV_FLAG=$NV" "$SB")
