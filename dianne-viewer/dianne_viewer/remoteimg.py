@@ -27,6 +27,15 @@ def split_prefix(path):
     return None, p
 
 
+def is_dicom_dir(path):
+    """True for a local directory holding .dcm files (or a DICOMDIR index file)."""
+    p = str(path)
+    if not os.path.isdir(p):
+        return False
+    with os.scandir(p) as it:
+        return any(e.name.lower().endswith('.dcm') or e.name == 'DICOMDIR' for e in it)
+
+
 class _Level:
     """Lazy (H, W, 3) uint8 array: slicing triggers a region read via reader(y0, y1, x0, x1)."""
     dtype = np.dtype('uint8')
@@ -55,13 +64,17 @@ class _LazyRGBImage(PyramidImage):
 
 class DicomImage(_LazyRGBImage):
     def __init__(self, path):
-        from wsidicom import WsiDicom, WsiDicomWebClient
-        from dicomweb_client.api import DICOMwebClient
-        parts = [s for s in str(path).strip('/').split('/') if s]
-        if len(parts) != 2:
-            raise ValueError(f"DICOM path must be 'DICOM:/<study_uid>/<series_uid>', got {path!r}")
-        client = WsiDicomWebClient(DICOMwebClient(os.environ.get('DIANNE_DICOMWEB_URL', DICOMWEB_URL)))
-        self.slide = WsiDicom.open_web(client, *parts)
+        from wsidicom import WsiDicom
+        if os.path.isdir(str(path)):   # local folder of .dcm files
+            name, self.slide = str(path), WsiDicom.open(str(path))
+        else:
+            from wsidicom import WsiDicomWebClient
+            from dicomweb_client.api import DICOMwebClient
+            parts = [s for s in str(path).strip('/').split('/') if s]
+            if len(parts) != 2:
+                raise ValueError(f"DICOM path must be 'DICOM:/<study_uid>/<series_uid>' or a local directory, got {path!r}")
+            client = WsiDicomWebClient(DICOMwebClient(os.environ.get('DIANNE_DICOMWEB_URL', DICOMWEB_URL)))
+            name, self.slide = f'DICOM:/{parts[0]}/{parts[1]}', WsiDicom.open_web(client, *parts)
         lvls = list(self.slide.levels)
         def mk(lvl):
             def read(y0, y1, x0, x1):
@@ -70,7 +83,7 @@ class DicomImage(_LazyRGBImage):
                 a = self.slide.read_region((x0, y0), lvl.level, (x1 - x0, y1 - y0))  # x, y in this level's pixels
                 return np.asarray(a.convert('RGB'))
             return read
-        super().__init__(f'DICOM:/{parts[0]}/{parts[1]}', [(l.size.width, l.size.height) for l in lvls], [mk(l) for l in lvls])
+        super().__init__(name, [(l.size.width, l.size.height) for l in lvls], [mk(l) for l in lvls])
 
 
 class OmeZarrImage(_LazyRGBImage):

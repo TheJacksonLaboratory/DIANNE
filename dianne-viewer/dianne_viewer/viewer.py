@@ -5,7 +5,7 @@ from IPython.display import display, HTML, Javascript
 import ipywidgets as widgets
 
 from .tiff          import PyramidImage
-from .remoteimg     import split_prefix, DicomImage, OmeZarrImage, GenericTiffImage, is_generic_rgb_tiff
+from .remoteimg     import split_prefix, is_dicom_dir, DicomImage, OmeZarrImage, GenericTiffImage, is_generic_rgb_tiff
 from .multichannel  import MultichannelImage
 from .monochannel   import MonochannelImage
 from .server        import ViewerServer, _matrix_dict
@@ -109,7 +109,7 @@ def _open_image(path):
     import tifffile, zarr, fsspec
 
     src, rest = split_prefix(path)
-    if src == 'DICOM':
+    if src == 'DICOM' or (src is None and is_dicom_dir(rest)):
         return DicomImage(rest)
     if src == 'ZARR':
         return OmeZarrImage(rest)
