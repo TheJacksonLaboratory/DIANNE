@@ -5,7 +5,7 @@ from IPython.display import display, HTML, Javascript
 import ipywidgets as widgets
 
 from .tiff          import PyramidImage
-from .remoteimg     import split_prefix, DicomImage, OmeZarrImage
+from .remoteimg     import split_prefix, DicomImage, OmeZarrImage, GenericTiffImage, is_generic_rgb_tiff
 from .multichannel  import MultichannelImage
 from .monochannel   import MonochannelImage
 from .server        import ViewerServer, _matrix_dict
@@ -118,8 +118,14 @@ def _open_image(path):
     if is_url:
         _fh  = fsspec.open(path_str, 'rb').open()
         _tif = tifffile.TiffFile(_fh)
+    else:
+        _tif = tifffile.TiffFile(path_str)
+    if is_generic_rgb_tiff(_tif):   # SVS / NDPI / plain pyramidal RGB TIFF
+        return GenericTiffImage(path, _tif)
+    if is_url:
         store = _tif.aszarr()
     else:
+        _tif.close()
         store = tifffile.imread(str(path), aszarr=True)
     z = zarr.open(store, mode='r')
     arr0 = z["0"] if isinstance(z, zarr.Group) else z

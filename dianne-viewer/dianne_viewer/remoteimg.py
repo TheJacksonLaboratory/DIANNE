@@ -1,4 +1,4 @@
-"""RGB pyramids from DICOM-WSI (DICOMweb) and OME-Zarr v3 (OMERO / NGFF), served through PyramidImage.
+"""RGB pyramids from generic TIFF (SVS / NDPI / plain pyramidal), DICOM-WSI (DICOMweb) and OME-Zarr v3 (OMERO / NGFF), served through PyramidImage.
 
 Paths:  "DICOM:/{study_uid}/{series_uid}"   (server: env DIANNE_DICOMWEB_URL, default NCI IDC proxy)
         "ZARR:/https://host/x.zarr/0"      (URL or local path of one multiscale image group)
@@ -100,3 +100,23 @@ class OmeZarrImage(_LazyRGBImage):
                 return np.ascontiguousarray(np.transpose(sub, [rest.index('y'), rest.index('x'), rest.index('c')]))
             return read
         super().__init__('ZARR:' + base, [(a.shape[xi], a.shape[yi]) for a in arrs], [mk(a) for a in arrs])
+
+
+def is_generic_rgb_tiff(tif):
+    """True for a non-OME TIFF whose first series is interleaved RGB(A) (SVS, NDPI, plain pyramidal)."""
+    if tif.is_ome or not tif.series:
+        return False
+    lv = tif.series[0].levels[0]
+    return lv.axes == 'YXS' and lv.shape[-1] in (3, 4)
+
+
+class GenericTiffImage(_LazyRGBImage):
+    """Non-OME RGB TIFF: each series-0 level is read via series.levels[i].aszarr(), re-tiled to uniform 512 px
+    (NDPI strips / odd SVS tile sizes don't leak into the viewer's tile grid)."""
+    def __init__(self, path, tif):
+        import zarr
+        self._tif = tif   # keep the file handle alive
+        zs = [zarr.open(lv.aszarr(), mode='r') for lv in tif.series[0].levels]
+        arrs = [z['0'] if isinstance(z, zarr.Group) else z for z in zs]   # version-dependent: Array or 1-array Group
+        rd = lambda a: (lambda y0, y1, x0, x1: np.ascontiguousarray(a[y0:y1, x0:x1, :3]))
+        super().__init__(path, [(a.shape[1], a.shape[0]) for a in arrs], [rd(a) for a in arrs])
