@@ -323,6 +323,25 @@ and confirm the secondary layer shifts to match; then Option/Alt-click the
 same button and confirm automatic (SIFT + phase correlation) alignment
 converges to a comparable result.
 
+10.6 **Interactive affine aligner.** Shift-click **Align** (requires a primary
+and a secondary image for the sample) and confirm a centred modal opens with a
+lime hourglass and "Loading thumbnails..." until both images appear. Drag the
+frame to move it, its corner squares to scale (Shift: uniform, Alt: about the
+centre), edge diamonds to shear, and the round knob to rotate; drag the
+background to pan and use the wheel to zoom. Arrow keys nudge, `q`/`e` rotate,
+`+`/`-` scale, `f` fits the view, `r` resets, `[`/`]` change opacity and `b`
+cycles blend modes. Click **Autotune** (edge-based optimizer; it assumes the
+alignment already looks good and only makes small corrections) and confirm the
+status line reports the shift; press `u` to undo. Click **Apply & save** (or
+Ctrl+S) and confirm the secondary layer updates and the modal closes, while
+Esc/Cancel closes it without changes.
+
+10.7 **Alignment persistence.** After any alignment (aligner, manual or
+automatic) confirm `affine/<sample>.affine.csv` and `.affine_inv.csv` exist
+under the save path. Restart the viewer and confirm the secondary layer loads
+already aligned for every sample, and that a saved matrix takes precedence over
+one passed via `secondary_matrices`.
+
 ---
 
 ## 12. Settings adjustment

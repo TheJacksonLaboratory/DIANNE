@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Interactive affine aligner modal (Shift+click on **Align**; `js/aligner.js`, `/aligner_*` endpoints), ported from the notebook aligner. Includes an **Autotune** button (coarse-to-fine ECC affine refinement on gradient-magnitude images, so it works across stains such as H&E vs mIF; rejects large drifts; `u` undoes) and a lime hourglass "Loading thumbnails..." indicator.
+- Secondary→primary matrices are persisted to `<save_path>/affine/<sample>.affine.csv` (+ `.affine_inv.csv`) after every alignment (aligner, manual shift, auto-align) and loaded on viewer start for any sample with a secondary image; they take precedence over `secondary_matrices`.
+
+### Changed
+- **Align** button is shown whenever secondary images are provided (previously required matrices).
+
 ## [0.1.0] — 2026-05-31
 
 ### Added

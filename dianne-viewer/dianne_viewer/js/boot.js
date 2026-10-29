@@ -476,6 +476,16 @@ function _pushPromotedStroke(sample, cls, copies, groupId) {
 }
 
 // ── Toolbar ────────────────────────────────────────────────────────────────
+const affineAligner = createAffineAligner({
+  BASE_URL,
+  getSample: () => ACTIVE_SAMPLE,
+  onApplied: (sample, mat) => {
+    SAMPLE_SECONDARY_MATRIX[sample] = mat;
+    if (patches) patches.setContext(ACTIVE_SAMPLE, BASE_URL, TILE_SIZE, SAMPLE_SECONDARY_MATRIX[ACTIVE_SAMPLE]);
+    secLayer.drawSecondaryLayer(viewport.getTransform());
+    log('Aligned (affine): saved to affine/' + sample + '.affine.csv');
+  },
+});
 const toolbar = createToolbar(root, viewport, draw, BASE_URL,
   HAS_RUN_INFERENCE ? { onRun: (btn) => _overlayCtrlApi.runInference(btn) } : null,
   HAS_RUN_SEARCH ? { onRun: (btn) => _overlayCtrlApi.runSearch(btn) } : null,
@@ -537,6 +547,10 @@ const toolbar = createToolbar(root, viewport, draw, BASE_URL,
   { dropdown: secLayer.getSecChDropdown() },
   hoverInteraction,
   HAS_MATRICES ? {
+    onAffineAlign: function() {
+      if (!SAMPLE_SECONDARY_META[ACTIVE_SAMPLE]) { log('Align: no secondary image for ' + ACTIVE_SAMPLE); return; }
+      affineAligner.open();
+    },
     onAlign: function(btn, manualShift) {
       if (btn) btn.disabled = true;
       let body;

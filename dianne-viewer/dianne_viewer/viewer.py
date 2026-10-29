@@ -7,7 +7,7 @@ import ipywidgets as widgets
 from .tiff          import PyramidImage
 from .multichannel  import MultichannelImage
 from .monochannel   import MonochannelImage
-from .server        import ViewerServer
+from .server        import ViewerServer, _matrix_dict
 from .xetranscripts import XeniumTranscripts
 from .xencells      import XeniumCells, XeniumCellsFast
 
@@ -489,21 +489,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         for sample, img in _pool.map(_open_sec, _sec_samples):
           secondary_sample_images[sample] = img
           sample_secondary_meta[sample]   = img.metadata
+    _affine_dir = _save_root / 'affine'
     for sample in _sec_samples:
-      mat_path = secondary_matrices.get(sample)
+      # a matrix saved by the interactive aligner / Align button takes precedence
+      mat_path = _affine_dir / f'{ViewerServer._safe_filename_component(sample)}.affine.csv'
+      if not mat_path.is_file():
+        mat_path = secondary_matrices.get(sample)
       if mat_path is not None:
         import numpy as _np
-        _mat = _np.loadtxt(str(mat_path), delimiter=',')
-        _M   = _mat[:2, :2].astype(float)
-        _Tr  = _mat[:2, -1].astype(float)
-        _Mi  = _np.linalg.inv(_M)
-        sample_secondary_matrix[sample] = {
-          'm00': float(_M[0, 0]),  'm01': float(_M[0, 1]),
-          'm10': float(_M[1, 0]),  'm11': float(_M[1, 1]),
-          'tx':  float(_Tr[0]),    'ty':  float(_Tr[1]),
-          'mi00': float(_Mi[0, 0]), 'mi01': float(_Mi[0, 1]),
-          'mi10': float(_Mi[1, 0]), 'mi11': float(_Mi[1, 1]),
-        }
+        sample_secondary_matrix[sample] = _matrix_dict(_np.loadtxt(str(mat_path), delimiter=','))
 
     xenium_by_sample = {}
     xenium_cells_by_sample = {}
@@ -579,6 +573,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     # ── store per-sample alignment matrices on server for /align endpoint ─────
     server._align_matrices = dict(sample_secondary_matrix)   # {sample: matrix_dict|None}
     server._adjust_primary_matrices = bool(adjust_primary_matrices)
+    server._affine_dir = str(_affine_dir)
 
     # ── store tile_coords_fn on server for lazy per-sample serving ────────────
     # Derived from run_inference_fn.tile_coords / .tile_size when available.
@@ -680,6 +675,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       'fullscreen.js',
       'sample_ribbon.js',
       'modals.js',
+      'aligner.js',
       'footer_controls.js',
       'metadata_panel.js',
       # §2-§13 annotation library subsystem (data model, canvas, tab UI)
@@ -706,7 +702,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     _stop_url = f'{base_url}/stop'
 
     _ts = _time.monotonic()
-    has_matrices = bool(matrices) or bool(secondary_matrices)
+    has_matrices = bool(matrices) or bool(secondary_matrices) or bool(secondary_images)
     has_cuda = _detect_cuda()
 
     html = _render(

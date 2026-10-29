@@ -585,7 +585,7 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
   if (alignOptions && typeof alignOptions.onAlign === 'function') {
     const alignBtn = document.createElement('button');
     alignBtn.textContent = 'Align';
-    alignBtn.title = 'Manual align by default (pick two anchors). Hold Option/Alt and click for auto-align (SIFT+phase).';
+    alignBtn.title = 'Manual align by default (pick two anchors). Hold Option/Alt and click for auto-align (SIFT+phase). Hold Shift and click for the interactive affine aligner.';
     alignBtn.dataset.demoId = 'align-btn';
     alignBtn.style.cssText = [
       'background:rgba(80,200,255,0.15)', 'border:1px solid #40b8e8',
@@ -594,7 +594,9 @@ function createToolbar(container, viewport, draw, baseUrl, runInferenceOptions, 
     ].join(';');
     alignBtn.addEventListener('click', e => {
       if (!alignBtn.disabled) {
-        if (!e.altKey && typeof draw.enterManualAlignMode === 'function') {
+        if (e.shiftKey && typeof alignOptions.onAffineAlign === 'function') {
+          alignOptions.onAffineAlign();
+        } else if (!e.altKey && typeof draw.enterManualAlignMode === 'function') {
           // Plain click → manual anchor mode
           manualAligning     = true;
           manualAlignStep    = 1;

@@ -93,6 +93,14 @@ except Exception:
     pass
 
 
+def _matrix_dict(M):
+    """2x3 (or 3x3) secondary->primary affine array -> dict used by the JS side (forward + inverse linear part)."""
+    M = np.asarray(M, dtype=float)
+    L, Mi = M[:2, :2], np.linalg.inv(M[:2, :2])
+    return {'m00': L[0, 0], 'm01': L[0, 1], 'm10': L[1, 0], 'm11': L[1, 1], 'tx': float(M[0, -1]), 'ty': float(M[1, -1]),
+            'mi00': Mi[0, 0], 'mi01': Mi[0, 1], 'mi10': Mi[1, 0], 'mi11': Mi[1, 1]}
+
+
 class ViewerServer:
     """
     Tiny HTTP server running in a daemon thread.
@@ -233,6 +241,8 @@ class ViewerServer:
         # Alignment matrices — set by create_viewer after construction
         self._align_matrices = {}          # {sample: matrix_dict|None}
         self._adjust_primary_matrices = True
+        self._affine_dir = None            # set by create_viewer; <dir>/<sample>.affine.csv persisted here
+        self._aligner_cache = {}           # {(sample, 'primary'|'secondary'): (png, w, h, ds)}
 
         if port is None:
             with socket.socket() as s:
@@ -738,6 +748,104 @@ class ViewerServer:
         ds = h0 / h_lr  # full-res pixels per low-res pixel
         return gray, ds
 
+    def _set_matrix(self, sample, mat):
+        """Store the secondary->primary matrix for `sample` and persist it to <affine_dir>/<sample>.affine{,_inv}.csv."""
+        self._align_matrices[sample] = mat
+        if not self._affine_dir:
+            return
+        try:
+            M = np.array([[mat['m00'], mat['m01'], mat['tx']], [mat['m10'], mat['m11'], mat['ty']]], dtype=float)
+            Mi = np.linalg.inv(np.vstack([M, [0, 0, 1]]))[:2]
+            os.makedirs(self._affine_dir, exist_ok=True)
+            stem = os.path.join(self._affine_dir, self._safe_filename_component(sample))
+            for path, A in ((stem + '.affine.csv', M), (stem + '.affine_inv.csv', Mi)):
+                np.savetxt(path + '.tmp', A, delimiter=',', fmt='%.10f')
+                os.replace(path + '.tmp', path)
+        except Exception as exc:
+            print(f'[DIANNE] could not save affine for {sample!r}: {exc}', flush=True)
+
+    def _aligner_image(self, sample, which, max_dim=1500):
+        """(png_bytes, w, h, ds) low-res RGB view of the primary/secondary image for the interactive aligner."""
+        key = (sample, which)
+        if key not in self._aligner_cache:
+            img = (self.images if which == 'primary' else self.secondary_images).get(sample)
+            if img is None:
+                raise RuntimeError(f'no {which} image for sample {sample!r}')
+            z = getattr(img, '_z', None)
+            if z is None:
+                raise RuntimeError('image has no zarr store (_z)')
+            import zarr
+            best = img.n_levels - 1
+            for i in range(img.n_levels):
+                if max(img.levels[i]['shape']) <= max_dim:
+                    best = i
+                    break
+            d = np.asarray((z[str(best)] if isinstance(z, zarr.Group) else z)[:])
+            if d.ndim == 3:
+                if not getattr(img, '_channels_last', False):
+                    d = np.moveaxis(d, 0, -1)
+                d = d[..., :3] if d.shape[2] in (3, 4) else d.astype(np.float32).mean(axis=2)
+            if d.dtype != np.uint8:
+                d = d.astype(np.float32)
+                lo, hi = np.percentile(d, (0.5, 99.5))
+                d = np.clip((d - lo) / max(hi - lo, 1e-6) * 255.0, 0, 255).astype(np.uint8)
+            if d.ndim == 2:
+                d = np.stack([d] * 3, axis=-1)
+            h, w = d.shape[:2]
+            ok, buf = cv2.imencode('.png', np.ascontiguousarray(d[..., ::-1]))
+            if not ok:
+                raise RuntimeError('PNG encoding failed')
+            self._aligner_cache[key] = (buf.tobytes(), w, h, img.levels[0]['shape'][0] / h)
+        return self._aligner_cache[key]
+
+    def _aligner_info(self, sample):
+        fpng, fw, fh, fs = self._aligner_image(sample, 'primary')
+        _mpng, mw, mh, ms = self._aligner_image(sample, 'secondary')
+        return {'ok': True, 'fw': fw, 'fh': fh, 'fs': fs, 'mw': mw, 'mh': mh, 'ms': ms,
+                'matrix': self._align_matrices.get(sample)}
+
+    def _aligner_autotune(self, sample, M):
+        """Refine a visually-good 2x3 secondary->primary matrix with coarse-to-fine ECC (affine) on gradient-magnitude images of the aligner thumbnails."""
+        M = np.asarray(M, dtype=float)
+        if M.shape != (2, 3) or not np.isfinite(M).all() or abs(np.linalg.det(M[:, :2])) < 1e-12:
+            raise ValueError('matrix must be a finite, invertible 2x3 array')
+        fpng, fw, fh, fs = self._aligner_image(sample, 'primary')
+        mpng, mw, mh, ms = self._aligner_image(sample, 'secondary')
+        gray = lambda b: cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_GRAYSCALE).astype(np.float32)
+        F, Mv = gray(fpng), gray(mpng)
+        H0 = np.eye(3); H0[:2, :2] = M[:, :2] * (ms / fs); H0[:2, 2] = M[:, 2] / fs      # secondary-down -> primary-down
+        Wd = np.linalg.inv(H0)                                                           # primary-down -> secondary-down
+        def edges(a):   # blurred gradient magnitude: polarity- and stain-independent (e.g. H&E vs mIF)
+            a = cv2.GaussianBlur(a, (0, 0), 2)
+            g = cv2.magnitude(cv2.Sobel(a, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(a, cv2.CV_32F, 0, 1, ksize=3))
+            return g / (float(np.percentile(g, 99)) + 1e-6)
+        crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 1e-5)
+        cc = 0.0
+        for base in (250, 500, 900):
+            sp, ss = min(1.0, base / max(fw, fh)), min(1.0, base / max(mw, mh))
+            f = cv2.resize(F, None, fx=sp, fy=sp, interpolation=cv2.INTER_AREA)
+            m = cv2.resize(Mv, None, fx=ss, fy=ss, interpolation=cv2.INTER_AREA)
+            P, S = np.diag([sp, sp, 1.0]), np.diag([ss, ss, 1.0])
+            W = (S @ Wd @ np.linalg.inv(P))[:2].astype(np.float32)
+            cc, W = cv2.findTransformECC(edges(f), edges(m), W, cv2.MOTION_AFFINE, crit, None, 5)
+            Wd = np.linalg.inv(S) @ np.vstack([W, [0, 0, 1]]) @ P
+        H = np.linalg.inv(Wd)
+        # safety: the tuning is meant to be small; reject large jumps of the secondary corners (primary-down px)
+        c = np.array([[0, 0, 1], [mw, 0, 1], [mw, mh, 1], [0, mh, 1]], dtype=float).T
+        moved = float(np.abs((H @ c)[:2] - (H0 @ c)[:2]).max())
+        if moved > 0.1 * max(fw, fh):
+            raise RuntimeError('optimizer drifted too far from the current alignment; not applied')
+        Mn = np.hstack([H[:2, :2] * (fs / ms), (H[:2, 2] * fs)[:, None]])
+        return {'ok': True, 'M': Mn.tolist(), 'cc': float(cc), 'moved_px': moved * fs}
+
+    def _aligner_save(self, sample, M):
+        M = np.asarray(M, dtype=float)
+        if M.shape != (2, 3) or not np.isfinite(M).all() or abs(np.linalg.det(M[:, :2])) < 1e-12:
+            raise ValueError('matrix must be a finite, invertible 2x3 array')
+        mat = _matrix_dict(M)
+        self._set_matrix(sample, mat)
+        return {'ok': True, 'matrix': mat}
+
     def _compute_alignment(self, sample, viewport=None):
         """Compute translation correction via phase cross-correlation.
 
@@ -890,7 +998,7 @@ class ViewerServer:
                 'mi00': 1.0, 'mi01': 0.0, 'mi10': 0.0, 'mi11': 1.0,
             }
 
-        self._align_matrices[sample] = new_mat
+        self._set_matrix(sample, new_mat)
         return {'matrix': new_mat, 'shift': {'dx': dx, 'dy': dy}}
 
     def _apply_manual_shift(self, sample, dx, dy):
@@ -907,7 +1015,7 @@ class ViewerServer:
                 'tx':  sign * dx, 'ty': sign * dy,
                 'mi00': 1.0, 'mi01': 0.0, 'mi10': 0.0, 'mi11': 1.0,
             }
-        self._align_matrices[sample] = new_mat
+        self._set_matrix(sample, new_mat)
         return {'matrix': new_mat, 'shift': {'dx': dx, 'dy': dy}}
 
     def set_sample(self, sample):
@@ -1008,6 +1116,19 @@ class ViewerServer:
                         col     = int(qs['col'][0])
                         data    = image.get_channel_tile(channel, level, row, col)
                         self._respond(200, data, 'image/png')
+                    except Exception as e:
+                        self._respond(400, str(e).encode())
+
+                elif parsed.path == '/aligner_info':
+                    try:
+                        self._respond(200, json.dumps(srv._aligner_info(sample_name)).encode(), 'application/json')
+                    except Exception as e:
+                        self._respond(400, json.dumps({'ok': False, 'error': str(e)}).encode(), 'application/json')
+
+                elif parsed.path == '/aligner_image':
+                    try:
+                        which = 'secondary' if qs.get('which', ['primary'])[0] == 'secondary' else 'primary'
+                        self._respond(200, srv._aligner_image(sample_name, which)[0], 'image/png')
                     except Exception as e:
                         self._respond(400, str(e).encode())
 
@@ -1368,6 +1489,23 @@ class ViewerServer:
                     except Exception as exc:
                         import traceback; traceback.print_exc()
                         body = json.dumps({'ok': False, 'error': str(exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/aligner_autotune':
+                    try:
+                        body = json.dumps(srv._aligner_autotune(str(data.get('sample', srv.chosen_sample)), data.get('M'))).encode()
+                    except Exception as _exc:
+                        body = json.dumps({'ok': False, 'error': str(_exc)}).encode()
+                    self._respond(200, body, 'application/json')
+                    return
+
+                elif parsed.path == '/aligner_save':
+                    try:
+                        result = srv._aligner_save(str(data.get('sample', srv.chosen_sample)), data.get('M'))
+                        body = json.dumps(result).encode()
+                    except Exception as _exc:
+                        body = json.dumps({'ok': False, 'error': str(_exc)}).encode()
                     self._respond(200, body, 'application/json')
                     return
 
