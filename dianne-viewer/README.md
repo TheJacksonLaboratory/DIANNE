@@ -11,6 +11,7 @@
 
 - **Pyramid TIFF and OME-TIFF** rendering (mono- and multi-channel).
 - **Zarr-backed image pyramids** for remote and local access.
+- **DICOM-WSI and OME-Zarr v3 (OMERO)** RGB images via `DICOM:/<study_uid>/<series_uid>` and `ZARR:/https://…/image.zarr/0` paths (extras `[dicom]`, `[zarr-remote]`).
 - **Xenium cell and transcript overlays** — interactive scatter overlays from Xenium output files.
 - **Parquet-based cell overlays** for large-scale cell annotation display.
 - **Classifier probability overlays** — live inference result rendering on top of WSI tiles.

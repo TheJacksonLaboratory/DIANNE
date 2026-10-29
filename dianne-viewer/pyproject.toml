@@ -43,6 +43,10 @@ dependencies = [
     "ipython>=8.0",
 ]
 
+[project.optional-dependencies]
+dicom = ["wsidicom>=0.20", "dicomweb-client>=0.59"]   # DICOM:/study/series paths
+zarr-remote = ["tensorstore>=0.1.60"]                  # ZARR:/https://… OME-Zarr v3 paths
+
 [project.urls]
 Homepage = "https://github.com/TheJacksonLaboratory/DIANNE"
 Repository = "https://github.com/TheJacksonLaboratory/DIANNE"

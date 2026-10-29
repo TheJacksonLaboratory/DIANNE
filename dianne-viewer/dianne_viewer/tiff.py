@@ -19,9 +19,9 @@ class PyramidImage:
     def __init__(self, path, _zarr_store=None):
         self.path  = str(path)
         store      = _zarr_store if _zarr_store is not None else tifffile.imread(self.path, aszarr=True)
-        self._z    = zarr.open(store, mode='r')
+        self._z    = store if isinstance(store, dict) else zarr.open(store, mode='r')  # dict: lazy levels from remoteimg
 
-        arr = self._z["0"] if isinstance(self._z, zarr.Group) else self._z
+        arr = self._z["0"] if isinstance(self._z, (zarr.Group, dict)) else self._z
         proper_tile = max(arr.chunks[-2], arr.chunks[-1])
         if proper_tile != self.TILE:
             if getattr(self, 'verbose', False):

@@ -702,7 +702,7 @@ class ViewerServer:
                 best = i
                 break
 
-        arr = z[str(best)] if isinstance(z, zarr.Group) else z
+        arr = z[str(best)] if isinstance(z, (zarr.Group, dict)) else z
         data = arr[:]  # load into memory
 
         rgb = None
@@ -780,7 +780,7 @@ class ViewerServer:
                 if max(img.levels[i]['shape']) <= max_dim:
                     best = i
                     break
-            d = np.asarray((z[str(best)] if isinstance(z, zarr.Group) else z)[:])
+            d = np.asarray((z[str(best)] if isinstance(z, (zarr.Group, dict)) else z)[:])
             if d.ndim == 3:
                 if not getattr(img, '_channels_last', False):
                     d = np.moveaxis(d, 0, -1)
