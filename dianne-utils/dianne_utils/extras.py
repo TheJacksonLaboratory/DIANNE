@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
 from matplotlib.patches import Patch
 from sklearn.metrics import roc_auc_score, average_precision_score
-from .utils import get_tile_mask_means3, get_metrics
+# from .utils import get_tile_mask_means3, get_metrics
 from .interpolation import interpolate_points as interpolatePoints
 
 from dianne_core.core import inferProbFast
@@ -128,7 +128,7 @@ def show_chosen_alpha_plot(path, F=2, alpha=0.80, dpi=75):
     plt.show()
     return
 
-def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
+def show_alphas_plot(path, F=2, figsize=(9, 4.5), m='ctranspath', alphah=0.8, title=None):
     # ', '.join([f'{v:.2f}' for v in np.linspace(0.0, 1.0, 21, endpoint=True)])
     # ', '.join([f'{v:.2f}' for v in np.linspace(0.0, 0.15, 15, endpoint=True)])
 
@@ -137,7 +137,8 @@ def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
 
     dfs = []
     for alpha in alphas:
-        df = pd.read_csv(f'{path}/tumor-F{F}-{alpha:.2f}-None.csv', index_col=0)
+        df = pd.read_csv(f'{path}/tumor-F{F}-{m}-{alpha:.2f}.csv', index_col=0)
+        # df = pd.read_csv(f'{path}/tumor-F{F}-{alpha:.2f}-None.csv', index_col=0)
         df['alpha'] = alpha
         dfs.append(df)
     dft = pd.concat(dfs)
@@ -145,7 +146,8 @@ def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
 
     dfs = []
     for alpha in alphas:
-        df = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}-None.csv', index_col=0)
+        df = pd.read_csv(f'{path}/normal-F{F}-{m}-{alpha:.2f}.csv', index_col=0)
+        # df = pd.read_csv(f'{path}/normal-F{F}-{alpha:.2f}-None.csv', index_col=0)
         df['alpha'] = alpha
         dfs.append(df)
     dfn = pd.concat(dfs)
@@ -163,6 +165,18 @@ def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
 
     df_sub = pd.concat([df_sub, dfn.groupby('alpha').agg({'dianne_specificity_normal': ['mean', 'std'],
                                                         'dianne_fpr_normal': ['mean', 'std'],})], axis=1)
+
+    df_sub[('dianne_objective', 'mean')] = df_sub['dianne_specificity']['mean'] * \
+                                        df_sub['dianne_precision']['mean'] * \
+                                        df_sub['dianne_specificity_normal']['mean'] * \
+                                        df_sub['dianne_recall']['mean']**1.5
+                                        
+
+    df_sub[('dianne_objective', 'std')] = (df_sub['dianne_specificity']['std'] + \
+                                        df_sub['dianne_recall']['std'] + \
+                                        df_sub['dianne_precision']['std'] + \
+                                        df_sub['dianne_specificity_normal']['std']) *0.0
+    df_sub[('dianne_objective', 'mean')] /= df_sub[('dianne_objective', 'mean')].max()
 
     r = 1.2 / 2.0
     fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True, figsize=figsize, gridspec_kw={'wspace': 0.05, 'hspace': 0., 'width_ratios': [r, 1]})
@@ -198,7 +212,7 @@ def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
     for ax in (ax1, ax2):
         plot_smooth(ax, df_sub.index, df_sub['dianne_precision']['mean'], df_sub['dianne_precision']['std'], color='navy', label='Precision')
         plot_smooth(ax, df_sub.index, df_sub['dianne_recall']['mean'], df_sub['dianne_recall']['std'], color='maroon', label='Recall')
-        # plot_smooth(ax, df_sub.index, df_sub['dianne_fpr']['mean'], df_sub['dianne_fpr']['std'], color='turquoise', label='Accuracy')
+        # plot_smooth(ax, df_sub.index, df_sub['dianne_objective']['mean'], df_sub['dianne_objective']['std'], color='turquoise', label='Objective')
         plot_smooth(ax, df_sub.index, df_sub['dianne_specificity']['mean'], df_sub['dianne_specificity']['std'], color='black', label='Specificity')
         plot_smooth(ax, df_sub.index, df_sub['dianne_specificity_normal']['mean'], df_sub['dianne_specificity_normal']['std'], color='darkgray', label='Sp. normal')
 
@@ -207,12 +221,17 @@ def show_alphas_plot(path, F=2, figsize=(9, 4.5)):
     ax1.tick_params(left=True, labelright=False)
 
     ax2.legend(loc='lower right', fontsize=14)
-    ax2.axvline(x=0.80, color='gold', linestyle='-', linewidth=7.0, alpha=0.5)
+    if alphah < 0.2:
+        ax1.axvline(x=alphah, color='gold', linestyle='-', linewidth=7.0, alpha=0.5)
+    else:
+        ax2.axvline(x=alphah, color='gold', linestyle='-', linewidth=7.0, alpha=0.5)
 
+    if title is not None:
+        plt.suptitle(title, fontsize=16)
     fig.text(0.5, 0.04, r'Augmentation parameter $\alpha$', ha='center', va='top', fontsize=14)
 
     plt.show()
-    return
+    return df_sub.loc[alphah]
 
 def show_nmaxs_plot(path, F=2, alpha=0.8,
                     nmaxs=[5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 

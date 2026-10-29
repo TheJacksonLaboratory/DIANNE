@@ -936,7 +936,7 @@ def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctransp
         ad = loadAd(path, fname=f'features/false-{F}-{featset}_features.tsv.gz')[0]
         ts = 56 * 2
         mpp = 0.25
-        x, y, p = inferProb(ad, clf, qs, tsize=0.5*ts/mpp, R=2, verbose=False)
+        x, y, p = inferProb(ad, clf, qs, tsize=(ts/mpp)/F, R=2, verbose=False)
         search = ad.obs.set_index(['pxl_col_in_wsi', 'pxl_row_in_wsi'])['original_barcode']
         se_inf_dianne = pd.Series(index=search.loc[pd.MultiIndex.from_arrays([x, y], names=['pxl_col_in_wsi', 'pxl_row_in_wsi'])].values, data=p)
 
@@ -953,7 +953,7 @@ def run_one_normal(case, path, clf, plot=False, ysup=None, F=2, featset='ctransp
         cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-normal-R1/{case}_attention_weights.csv'
         se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
 
-        temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85, f=f)
+        temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=ts, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=0.85, f=f)
     except Exception as e:
         temp = None
         print(f'Error processing case {case}: {e}')
@@ -968,7 +968,7 @@ def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, 
             ad = loadAd(path, fname=f'features/false-{F}-{featset}_features.tsv.gz')[0]
             ts = 56 * 2
             mpp = 0.25
-            x, y, p = inferProb(ad, clf, qs, tsize=0.5*ts/mpp, R=2, verbose=False)
+            x, y, p = inferProb(ad, clf, qs, tsize=(ts/mpp)/F, R=2, verbose=False)
             search = ad.obs.set_index(['pxl_col_in_wsi', 'pxl_row_in_wsi'])['original_barcode']
             se_inf_dianne = pd.Series(index=search.loc[pd.MultiIndex.from_arrays([x, y], names=['pxl_col_in_wsi', 'pxl_row_in_wsi'])].values, data=p)
 
@@ -983,7 +983,7 @@ def run_one_tumor(case, path, clf, plot=False, ysup=None, annotationsPath=None, 
             cfile = f'/projects/chuang-lab/USERS/domans/containers/local/clam/results/heatmaps-tumor-R1/{case}_attention_weights.csv'
             se_inf_clam = pd.read_csv(cfile, index_col=0)['tile_probability']
 
-            temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=56 * 2, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=1.5, f=f, dpi=dpi)
+            temp = makeManualAndAutomatedAnnotationComparison4(ad, se_inf_dianne, se_inf_clam, se_inf_segmenter, se_anno, case, ts=ts, filter=0.5, plot=plot, verbose=False, ysup=ysup, aspect=1.5, f=f, dpi=dpi)
         except Exception as e:
             temp = None
             print(f'Error processing case {case}: {e}')
