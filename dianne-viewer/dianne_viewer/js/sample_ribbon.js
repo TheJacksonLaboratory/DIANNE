@@ -363,9 +363,34 @@ function createSampleRibbon({
         'background:' + (hasXe ? 'rgba(31,122,58,0.2)' : 'rgba(80,80,80,0.25)'),
       ].join(';');
 
+    // format + storage badges, right-aligned on the same row as the HE/XE badge
+    const _mkPill = (txt, title, framed = true) => {
+    const b = document.createElement('div');
+    b.textContent = txt; b.title = title;
+    b.style.cssText = 'flex:none;white-space:nowrap;line-height:1;' + (framed
+        ? 'font:10px monospace;padding:1px 6px;border-radius:999px;border:1px solid #3a5a8a;color:#a8c8ff;background:rgba(58,90,138,0.2)'
+        : 'font-size:12px;padding:0 1px');
+    return b;
+    };
+
+    const badgeRow = document.createElement('div');
+    badgeRow.style.cssText = 'display:flex;align-items:center;gap:3px;width:100%;';
+    badge.style.marginRight = 'auto';
+    badgeRow.appendChild(badge);
+
+    if (m.format) badgeRow.appendChild(_mkPill(m.format, 'Image format: ' + m.format));
+    if (m.storage) {
+    const cloud = m.storage === 'cloud';
+    badgeRow.appendChild(_mkPill(
+        cloud ? '\u2601\uFE0F' : '\uD83D\uDCBD',
+        cloud ? 'Remote storage (DICOMweb / HTTP / S3)' : 'Local / mounted disk',
+        false
+    ));
+    }
+
       card.appendChild(thumbWrap);
       card.appendChild(label);
-      card.appendChild(badge);
+      card.appendChild(badgeRow);
 
       // §3: dirty/annotation-count indicator (updated via updateAnnotationBadges)
       const annotBadge = document.createElement('div');

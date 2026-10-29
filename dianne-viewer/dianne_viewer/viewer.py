@@ -5,7 +5,7 @@ from IPython.display import display, HTML, Javascript
 import ipywidgets as widgets
 
 from .tiff          import PyramidImage
-from .remoteimg     import split_prefix, is_dicom_dir, DicomImage, OmeZarrImage, GenericTiffImage, is_generic_rgb_tiff
+from .remoteimg     import split_prefix, is_dicom_dir, DicomImage, OmeZarrImage, source_info, GenericTiffImage, is_generic_rgb_tiff
 from .multichannel  import MultichannelImage
 from .monochannel   import MonochannelImage
 from .server        import ViewerServer, _matrix_dict
@@ -621,7 +621,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
     meta_json = _json_for_script(image.metadata)
     samples_json = _json_for_script(sample_list)
-    sample_meta_json = _json_for_script({s: sample_images[s].metadata for s in sample_list})
+    sample_meta_json = _json_for_script({s: {**sample_images[s].metadata, **source_info(sample_images[s])} for s in sample_list})
     sample_xenium_meta_json = _json_for_script(sample_xenium_meta)
     sample_cells_meta_json       = _json_for_script(sample_cells_meta)
     sample_secondary_meta_json   = _json_for_script(sample_secondary_meta)

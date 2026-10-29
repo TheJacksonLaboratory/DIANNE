@@ -6,6 +6,7 @@ Optional deps (imported lazily): wsidicom + dicomweb-client (DICOM), tensorstore
 """
 import json
 import os
+import re
 import warnings
 import numpy as np
 from .tiff import PyramidImage
@@ -34,6 +35,18 @@ def is_dicom_dir(path):
         return False
     with os.scandir(p) as it:
         return any(e.name.lower().endswith('.dcm') or e.name == 'DICOMDIR' for e in it)
+
+
+def source_info(img):
+    """{'format', 'storage'} badges for the sample ribbon: storage is 'cloud' for DICOMweb or any URL (http, s3, gs, ...), else 'disk'."""
+    p, n = str(img.path), type(img).__name__
+    if n == 'DicomImage':
+        return {'format': 'DICOM', 'storage': 'disk' if os.path.isdir(p) else 'cloud'}
+    if n == 'OmeZarrImage':
+        return {'format': 'Zarr', 'storage': 'cloud' if re.match(r'(?i)zarr:/*[a-z][a-z0-9+.-]*://', p) else 'disk'}
+    ext = os.path.splitext(p.split('?')[0].lower())[1]
+    fmt = ('SVS' if ext == '.svs' else 'NDPI' if ext == '.ndpi' else 'TIFF') if n == 'GenericTiffImage' else 'OME-TIFF'
+    return {'format': fmt, 'storage': 'cloud' if re.match(r'(?i)(?!file:)[a-z][a-z0-9+.-]*://', p) else 'disk'}
 
 
 class _Level:
