@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Sample-ribbon format (OME-TIFF / SVS / NDPI / TIFF / Zarr / DICOM) and storage (☁ cloud / 💾 disk) badges.
+- `create_viewer(lazy_samples=True)`: only the first sample opens before the viewer appears; the rest connect in the background (hourglass card, `/sample_status` polled by the ribbon, ⚠ card on failure). `lazy_samples=False` restores open-everything-first (needed for mixed lists where a later sample is multichannel/mono and the first is not).
 - Interactive affine aligner modal (Shift+click on **Align**; `js/aligner.js`, `/aligner_*` endpoints), ported from the notebook aligner. Includes an **Autotune** button (coarse-to-fine ECC affine refinement on gradient-magnitude images, so it works across stains such as H&E vs mIF; rejects large drifts; `u` undoes) and a lime hourglass "Loading thumbnails..." indicator.
 - Secondary→primary matrices are persisted to `<save_path>/affine/<sample>.affine.csv` (+ `.affine_inv.csv`) after every alignment (aligner, manual shift, auto-align) and loaded on viewer start for any sample with a secondary image; they take precedence over `secondary_matrices`.
 

@@ -738,6 +738,38 @@ const sampleRibbonApi = createSampleRibbon({
   getAnnotationsForMinimap: (sampleName) => annotations.listAnnotations(sampleName, 'library'),
 });
 sampleRibbonApi.buildSampleRibbon();
+
+// ── Lazy samples: poll the server until every sample has connected (or failed) ──
+(function _pollSampleStatus() {
+  const done = new Set(SAMPLES.filter(s => SAMPLE_META[s]));
+  if (done.size >= SAMPLES.length) return;
+  const tick = async () => {
+    try {
+      const qs = [...done].map(s => 'seen=' + encodeURIComponent(s)).join('&');
+      const st = await (await fetch(BASE_URL + '/sample_status?' + qs)).json();
+      for (const [s, v] of Object.entries(st)) {
+        if (done.has(s)) continue;
+        if (v.status === 'ready' && v.payload) {
+          const p = v.payload;
+          SAMPLE_META[s] = p.meta;
+          if (p.xenium_meta) SAMPLE_XENIUM_META[s] = p.xenium_meta;
+          if (p.cells_meta) SAMPLE_CELLS_META[s] = p.cells_meta;
+          if (p.secondary_meta) SAMPLE_SECONDARY_META[s] = p.secondary_meta;
+          if (p.secondary_matrix) SAMPLE_SECONDARY_MATRIX[s] = p.secondary_matrix;
+          SAMPLE_IS_MONO[s] = !!p.is_mono;
+          done.add(s);
+          sampleRibbonApi.markSampleReady(s);
+        } else if (v.status === 'error') {
+          done.add(s);
+          sampleRibbonApi.markSampleError(s, v.error);
+        }
+      }
+      _refreshAnnotationBadges();
+    } catch (e) { /* server busy: retry */ }
+    if (done.size < SAMPLES.length) setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 500);
+})();
 function _refreshAnnotationBadges() {
   // A sample not yet visited this session has an empty in-memory annotations
   // store regardless of what's actually saved for it (same caveat as

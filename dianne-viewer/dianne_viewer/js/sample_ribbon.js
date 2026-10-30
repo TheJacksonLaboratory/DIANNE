@@ -266,7 +266,7 @@ function createSampleRibbon({
     ].join(';');
     samplesRibbon.appendChild(legend);
 
-    for (const sampleName of SAMPLES) {
+    function _buildCard(sampleName) {
       const hasXe = !!(SAMPLE_XENIUM_META[sampleName] || SAMPLE_CELLS_META[sampleName]);
       const card = document.createElement('button');
       card.dataset.sampleCard = 'true';
@@ -468,10 +468,50 @@ function createSampleRibbon({
         }
       });
 
-      samplesRibbon.appendChild(card);
+      return card;
     }
+    _buildCardFn = _buildCard;
+    for (const sampleName of SAMPLES)
+      samplesRibbon.appendChild(SAMPLE_META[sampleName] ? _buildCard(sampleName) : _placeholderCard(sampleName));
     setActiveSampleFn(ACTIVE_SAMPLE_REF());
   }
+
+  // ── Lazy samples: hourglass card until the server finishes connecting ──────
+  let _buildCardFn = null;
+  function _placeholderCard(sampleName, error) {
+    const card = document.createElement('div');
+    card.dataset.sampleCard = 'true';
+    card.dataset.sampleName = sampleName;
+    card.title = error ? 'Failed to open: ' + error : 'Connecting\u2026';
+    card.style.cssText = [
+      'width:100%', 'box-sizing:border-box', 'border:1px solid ' + (error ? '#7a1f1f' : '#4a4a4a'), 'border-radius:6px',
+      'background:#1d1d1d', 'color:#e6e6e6', 'padding:6px', 'display:flex', 'flex-direction:column', 'gap:6px',
+      'cursor:' + (error ? 'not-allowed' : 'progress'), 'opacity:0.7',
+    ].join(';');
+    const icon = document.createElement('div');
+    icon.textContent = error ? '\u26A0' : '\u231B';
+    icon.style.cssText = 'width:100%;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;font-size:32px;'
+      + 'border-radius:4px;background:#0f0f0f;border:1px solid #303030;' + (error ? 'color:#ff8c8c;' : '');
+    const label = document.createElement('div');
+    label.textContent = sampleName;
+    label.style.cssText = 'font:12px monospace;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    card.appendChild(icon);
+    card.appendChild(label);
+    return card;
+  }
+  function _swapCard(sampleName, make) {
+    const old = samplesRibbon.querySelector('[data-sample-card][data-sample-name="' + CSS.escape(sampleName) + '"]');
+    if (!old) return;
+    const card = make();
+    card.style.display = old.style.display;   // keep the metadata-panel filter state
+    old.replaceWith(card);
+  }
+  /** SAMPLE_META[sampleName] (+ xenium/cells meta) is now filled in: swap the placeholder for the full card. */
+  function markSampleReady(sampleName) {
+    if (_buildCardFn) _swapCard(sampleName, () => _buildCardFn(sampleName));
+    _drawAnnotationPreview(sampleName);
+  }
+  function markSampleError(sampleName, error) { _swapCard(sampleName, () => _placeholderCard(sampleName, error)); }
 
   /**
    * Show only the given samples in the ribbon (hide others).
@@ -493,5 +533,5 @@ function createSampleRibbon({
     if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  return { buildSampleRibbon, updateThumbOverlays, redrawAnnotationPreviews, forceResizeAll, setVisibleSamples, scrollToSample, updateAnnotationBadges };
+  return { buildSampleRibbon, updateThumbOverlays, redrawAnnotationPreviews, forceResizeAll, setVisibleSamples, scrollToSample, updateAnnotationBadges, markSampleReady, markSampleError };
 }

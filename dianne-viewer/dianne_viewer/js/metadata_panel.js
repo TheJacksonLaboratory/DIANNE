@@ -501,6 +501,7 @@ function createMetadataPanel({
   let _previewImg = null;
   function _showThumbPreview(sampleName, e) {
     const m = SAMPLE_META[sampleName];
+    if (!m) return;   // still connecting
     const thumbLevel = Math.max(0, Number(m.n_levels) - 1);
     const thumbUrl = BASE_URL + '/thumb?sample=' + encodeURIComponent(sampleName)
       + '&level=' + thumbLevel + '&size=128';

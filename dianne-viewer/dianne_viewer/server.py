@@ -126,7 +126,7 @@ class ViewerServer:
                  xenium=None, xenium_cells=None, xenium_by_sample=None, xenium_cells_by_sample=None,
                  run_inference_fn=None, run_subtile_inference_fn=None, run_search_fn=None, sample_sizes=None,
                  save_fn=None, load_fn=None, list_names_fn=None,
-                 secondary_images=None, annotations_dir=None, username=None):
+                 secondary_images=None, annotations_dir=None, username=None, sample_names=None):
         if images is None:
             if image is None:
                 raise ValueError('ViewerServer requires image or images')
@@ -134,6 +134,10 @@ class ViewerServer:
             images = {default_name: image}
 
         self.images = dict(images)
+        # all sample names, incl. ones still connecting in the background (lazy mode); self.images only holds ready ones
+        self.sample_names = [str(n) for n in (sample_names or self.images.keys())]
+        self._sample_state = {}   # lazy samples: {sample: {'status': 'ready', 'payload': {...}} | {'status': 'error', 'error': str}}
+        self._sample_lock = threading.Lock()
         if not self.images:
             raise ValueError('ViewerServer requires at least one sample image')
 
@@ -150,10 +154,10 @@ class ViewerServer:
         self.xenium_by_sample = {str(k): v for k, v in (xenium_by_sample or {}).items()}
         self.xenium_cells_by_sample = {str(k): v for k, v in (xenium_cells_by_sample or {}).items()}
         if xenium is not None and not self.xenium_by_sample:
-            for sample in self.images.keys():
+            for sample in self.sample_names:
                 self.xenium_by_sample[sample] = xenium
         if xenium_cells is not None and not self.xenium_cells_by_sample:
-            for sample in self.images.keys():
+            for sample in self.sample_names:
                 self.xenium_cells_by_sample[sample] = xenium_cells
 
         self.xenium = self.xenium_by_sample.get(self.chosen_sample)
@@ -204,7 +208,7 @@ class ViewerServer:
         self.clicks  = []
         self.strokes_by_sample = {
             sample: {'strokes_positive': [], 'strokes_negative': []}
-            for sample in self.images.keys()
+            for sample in self.sample_names
         }
         self._annotation_layers_json = '[]'
 
@@ -217,7 +221,7 @@ class ViewerServer:
         # (which is untouched and remains available separately).
         self.annotations_by_sample = {
             sample: {'library': [], 'positive': [], 'negative': []}
-            for sample in self.images.keys()
+            for sample in self.sample_names
         }
         self.annotations_dir = os.environ.get('DIANNE_ANNOTATIONS_DIR') or annotations_dir or os.path.join(os.getcwd(), '.dianne_annotations')
         # Identity recorded as author/last-editor on annotations, and used to
@@ -1018,6 +1022,34 @@ class ViewerServer:
         self._set_matrix(sample, new_mat)
         return {'matrix': new_mat, 'shift': {'dx': dx, 'dy': dy}}
 
+    def register_sample(self, sample, img, payload, secondary=None, xenium=None, xenium_cells=None, matrix=None):
+        """Lazy mode: publish a sample whose connection finished in the background. payload is sent to the client by /sample_status."""
+        with self._sample_lock:
+            self.images[sample] = img
+            if secondary is not None: self.secondary_images[sample] = secondary
+            if xenium is not None: self.xenium_by_sample[sample] = xenium
+            if xenium_cells is not None: self.xenium_cells_by_sample[sample] = xenium_cells
+            self._align_matrices[sample] = matrix
+            self._sample_state[sample] = {'status': 'ready', 'payload': payload}
+
+    def fail_sample(self, sample, error):
+        with self._sample_lock:
+            self._sample_state[sample] = {'status': 'error', 'error': str(error)}
+
+    def sample_status(self, seen=()):
+        """{sample: {'status': 'pending'|'ready'|'error', ...}}; payloads are omitted for samples in *seen*."""
+        with self._sample_lock:
+            out = {}
+            for n in self.sample_names:
+                st = self._sample_state.get(n)
+                if st is None:
+                    out[n] = {'status': 'ready' if n in self.images else 'pending'}
+                elif st['status'] == 'ready' and n in seen:
+                    out[n] = {'status': 'ready'}
+                else:
+                    out[n] = st
+            return out
+
     def set_sample(self, sample):
         sample_name = str(sample)
         if sample_name not in self.images:
@@ -1049,18 +1081,23 @@ class ViewerServer:
                 sample_name = srv._sample_from_qs(qs)
                 image = srv.images.get(sample_name)
 
-                if image is None and parsed.path in ('/meta', '/tile'):
-                    self._respond(404, b'unknown sample')
+                if image is None and parsed.path in ('/meta', '/tile', '/channel_tile', '/thumb'):
+                    pending = sample_name in srv.sample_names and sample_name not in srv._sample_state
+                    self._respond(503 if pending else 404, b'sample still connecting' if pending else b'unknown sample')
                     return
 
                 if parsed.path == '/meta':
                     body = json.dumps(image.metadata).encode()
                     self._respond(200, body, 'application/json')
 
+                elif parsed.path == '/sample_status':
+                    seen = set(qs.get('seen', []))
+                    self._respond(200, json.dumps(srv.sample_status(seen), default=str).encode(), 'application/json')
+
                 elif parsed.path == '/samples':
                     body = json.dumps({
                         'chosen_sample': srv.chosen_sample,
-                        'samples': list(srv.images.keys()),
+                        'samples': srv.sample_names,
                     }).encode()
                     self._respond(200, body, 'application/json')
 
@@ -1246,7 +1283,7 @@ class ViewerServer:
                     # outside the opt-in named 'Save classifier' flow).
                     try:
                         summary = {}
-                        for sample in srv.images.keys():
+                        for sample in srv.sample_names:
                             counts = srv._annotation_counts(sample)
                             strokes = srv.strokes_by_sample.get(sample, {})
                             counts['positive_strokes'] = srv._stroke_group_count(strokes.get('strokes_positive'))
@@ -1263,7 +1300,7 @@ class ViewerServer:
                     # ?sample=NAME (or 'all' for every open sample) &include=library,positive,negative
                     sample_q = qs.get('sample', [srv.chosen_sample])[0]
                     include = set((qs.get('include', ['library,positive,negative'])[0]).split(','))
-                    samples = list(srv.images.keys()) if sample_q == 'all' else [sample_q]
+                    samples = srv.sample_names if sample_q == 'all' else [sample_q]
                     features = []
                     for s in samples:
                         bucket = srv.annotations_by_sample.get(s, {})

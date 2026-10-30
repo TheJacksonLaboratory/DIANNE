@@ -1,4 +1,5 @@
 import json
+import threading
 import subprocess
 from pathlib import Path
 from IPython.display import display, HTML, Javascript
@@ -206,7 +207,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   draw_on_secondary=False, visium_ads=None,
                   sample_mapping=None, fullscreen_on_load=True,
                   sample_metadata=None, fs=None, s3=None, s3_bucket=None,
-                  adjust_primary_matrices=True, save_path=None, username='auto'):
+                  adjust_primary_matrices=True, save_path=None, username='auto', lazy_samples=True):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
 
@@ -306,6 +307,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         persisted (in a ``.dianne_annotations`` subfolder). Defaults to
         ``'./'`` — the notebook's own directory. Overridden by the
         ``DIANNE_ANNOTATIONS_DIR`` environment variable if set.
+    lazy_samples : bool, optional
+        True (default): open only the first sample before the viewer appears; the others connect in the
+        background (hourglass on their ribbon cards). Samples whose type needs a renderer the first sample
+        did not enable (multichannel / mono after an RGB first sample) fail with an error card — use False
+        (open everything up front, the old behaviour) for such mixed lists.
     username : str, optional
         Identity recorded as the author/last-editor of annotations created
         or modified in this session. Defaults to ``'auto'``, which runs
@@ -371,7 +377,8 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     chosen_sample = sample_list[0]
     import time as _time
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    n_samples = len(sample_list)
+    _init_samples = [chosen_sample] if lazy_samples and len(sample_list) > 1 else sample_list
+    n_samples = len(_init_samples)
     print(f'[DIANNE] Opening {n_samples} image(s)…', flush=True)
     _t0 = _time.monotonic()
     sample_images = {}
@@ -383,7 +390,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       return s, img
 
     with ThreadPoolExecutor(max_workers=min(n_samples, 16)) as _pool:
-      _futs = {_pool.submit(_open_sample, s): s for s in sample_list}
+      _futs = {_pool.submit(_open_sample, s): s for s in _init_samples}
       for _fut in as_completed(_futs):
         s, img = _fut.result()
         sample_images[s] = img
@@ -493,7 +500,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     secondary_sample_images = {}
     sample_secondary_meta   = {s: None for s in sample_list}
     sample_secondary_matrix = {s: None for s in sample_list}
-    _sec_samples = [s for s in sample_list if secondary_images.get(s) is not None]
+    _sec_samples = [s for s in _init_samples if secondary_images.get(s) is not None]
     if _sec_samples:
       def _open_sec(sample):
         return sample, _open_image(secondary_images[sample])
@@ -502,24 +509,27 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           secondary_sample_images[sample] = img
           sample_secondary_meta[sample]   = img.metadata
     _affine_dir = _save_root / 'affine'
-    for sample in _sec_samples:
+    def _load_matrix(sample):
       # a matrix saved by the interactive aligner / Align button takes precedence
       mat_path = _affine_dir / f'{ViewerServer._safe_filename_component(sample)}.affine.csv'
       if not mat_path.is_file():
         mat_path = secondary_matrices.get(sample)
       if mat_path is not None:
         import numpy as _np
-        sample_secondary_matrix[sample] = _matrix_dict(_np.loadtxt(str(mat_path), delimiter=','))
+        return _matrix_dict(_np.loadtxt(str(mat_path), delimiter=','))
+    for sample in _sec_samples:
+      sample_secondary_matrix[sample] = _load_matrix(sample)
 
     xenium_by_sample = {}
     xenium_cells_by_sample = {}
     sample_xenium_meta = {s: None for s in sample_list}
     sample_cells_meta = {s: None for s in sample_list}
 
-    for sample in sample_list:
+    def _build_xenium(sample, img_meta):
+      """(transcripts, cells) for *sample*, or (None, None) when it has no xenium bundle / files."""
       bundle_path = xenium_bundle_paths.get(sample)
       if bundle_path is None:
-        continue
+        return None, None
 
       # Collect metadata for lazy xenium zip access (no full download)
       _xe_zips = {}
@@ -527,21 +537,19 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
         _meta = _fetch_xe_zip(bundle_path, _fname, fs=fs, s3=s3, s3_bucket=s3_bucket)
         if _meta is not None:
           _xe_zips[_fname] = _meta
-        #   print(f'[DIANNE] found {_fname} for {sample} ({_meta["type"]})', flush=True)
       if not _xe_zips:
-        # print(f'[DIANNE] no xenium files found for {sample} at {bundle_path}, skipping', flush=True)
-        continue
+        return None, None
 
       matrix_path = matrices.get(sample)
       sample_annotations = _layer0['data'].get(sample)
       sample_colors = _layer0['colors']
 
-      sample_xenium = XeniumTranscripts(bundle_path, sample_images[sample].metadata,
+      sample_xenium = XeniumTranscripts(bundle_path, img_meta,
                         matrix_path=matrix_path,
                         xenium_mpp=xenium_mpp,
                         _zip_content=_xe_zips.get('transcripts.zarr.zip'))
       if 'cells_fast.zarr.zip' in _xe_zips:
-        sample_cells = XeniumCellsFast(bundle_path, sample_images[sample].metadata,
+        sample_cells = XeniumCellsFast(bundle_path, img_meta,
                        matrix_path=matrix_path,
                        xenium_mpp=xenium_mpp,
                        cell_id_to_category=sample_annotations,
@@ -549,13 +557,19 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                        max_cells=max_cells,
                        _zip_content=_xe_zips['cells_fast.zarr.zip'])
       else:
-        sample_cells = XeniumCells(bundle_path, sample_images[sample].metadata,
+        sample_cells = XeniumCells(bundle_path, img_meta,
                        matrix_path=matrix_path,
                        xenium_mpp=xenium_mpp,
                        cell_id_to_category=sample_annotations,
                        category_colors=sample_colors,
                        max_cells=max_cells,
                        _zip_content=_xe_zips.get('cells.zarr.zip'))
+      return sample_xenium, sample_cells
+
+    for sample in _init_samples:
+      sample_xenium, sample_cells = _build_xenium(sample, sample_images[sample].metadata)
+      if sample_xenium is None:
+        continue
       xenium_by_sample[sample] = sample_xenium
       xenium_cells_by_sample[sample] = sample_cells
       sample_xenium_meta[sample] = sample_xenium.metadata
@@ -574,7 +588,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
           list_names_fn=list_names_func,
           secondary_images=secondary_sample_images,
           annotations_dir=annotations_dir,
-          username=current_user)
+          username=current_user, sample_names=sample_list)
     # annotation_layers_json is built later; attach placeholder now, replace after build
     server._annotation_layers_json = '[]'
 
@@ -621,7 +635,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
 
     meta_json = _json_for_script(image.metadata)
     samples_json = _json_for_script(sample_list)
-    sample_meta_json = _json_for_script({s: {**sample_images[s].metadata, **source_info(sample_images[s])} for s in sample_list})
+    sample_meta_json = _json_for_script({s: {**sample_images[s].metadata, **source_info(sample_images[s])} for s in sample_images})
     sample_xenium_meta_json = _json_for_script(sample_xenium_meta)
     sample_cells_meta_json       = _json_for_script(sample_cells_meta)
     sample_secondary_meta_json   = _json_for_script(sample_secondary_meta)
@@ -763,6 +777,36 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     display(HTML(html))
     # print(f'[DIANNE] display(HTML): {_time.monotonic()-_ts:.2f}s', flush=True)
     display(out)
+
+    # ── lazy mode: connect the remaining samples in the background ────────────
+    # Images open in parallel; xenium layers are built one at a time (constructors aren't known to be thread-safe).
+    # Results reach the page through /sample_status (polled by the ribbon).
+    _lazy_rest = [s for s in sample_list if s not in sample_images]
+    if _lazy_rest:
+      _xe_lock = threading.Lock()
+      def _connect(s):
+        try:
+          img = _open_image(images[s])
+          if (isinstance(img, MultichannelImage) and not is_multichannel) or (isinstance(img, MonochannelImage) and not is_monochannel):
+            raise ValueError(f'{type(img).__name__} needs a different renderer than the first sample; '
+                             'put it first or use lazy_samples=False')
+          sec = _open_image(secondary_images[s]) if secondary_images.get(s) is not None else None
+          mat = _load_matrix(s) if sec is not None else None
+          with _xe_lock:
+            xe, xc = _build_xenium(s, img.metadata)
+          payload = {'meta': {**img.metadata, **source_info(img)},
+                     'xenium_meta': xe.metadata if xe else None, 'cells_meta': xc.metadata if xc else None,
+                     'secondary_meta': sec.metadata if sec else None, 'secondary_matrix': mat,
+                     'is_mono': isinstance(img, MonochannelImage)}
+          server.register_sample(s, img, payload, secondary=sec, xenium=xe, xenium_cells=xc, matrix=mat)
+        except Exception as exc:
+          print(f'[DIANNE] could not open sample {s!r}: {exc}', flush=True)
+          server.fail_sample(s, f'{type(exc).__name__}: {exc}')
+      def _connect_all():
+        with ThreadPoolExecutor(max_workers=min(len(_lazy_rest), 16)) as _p:
+          list(_p.map(_connect, _lazy_rest))
+        print(f'[DIANNE] background samples connected in {_time.monotonic()-_t0:.1f}s total', flush=True)
+      threading.Thread(target=_connect_all, daemon=True, name='dianne-connect-samples').start()
 
     # Auto-stop when the cell output is cleared: watch for the viewer root div
     # being disconnected from the DOM and call the server's /stop endpoint.
