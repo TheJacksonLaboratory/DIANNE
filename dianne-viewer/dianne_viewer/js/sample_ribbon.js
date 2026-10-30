@@ -234,6 +234,36 @@ function createSampleRibbon({
     redrawAnnotationPreviews();
   }
 
+  // SenNet provenance tree modal (dark mode); graph + provgraph assets come from the server's /sennet_graph
+  async function _showSennetTree(id) {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483651;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'position:relative;width:95%;max-height:95%;overflow:auto;background:#1b1d21;color:#e4e6ea;border-radius:8px;padding:12px;font:13px monospace;box-shadow:0 6px 20px rgba(0,0,0,0.6)';
+    const x = document.createElement('button');
+    x.type = 'button'; x.textContent = '\u00d7';
+    x.style.cssText = 'position:absolute;top:4px;right:8px;z-index:20;border:0;background:none;color:#e4e6ea;font-size:22px;cursor:pointer';
+    const body = document.createElement('div');
+    body.textContent = 'Loading SenNet provenance for ' + id + '\u2026';
+    box.append(x, body); ov.appendChild(box); document.body.appendChild(ov);
+    const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    x.onclick = close; ov.onclick = e => { if (e.target === ov) close(); };
+    document.addEventListener('keydown', onKey, true);
+    try {
+      const r = await fetch(BASE_URL + '/sennet_graph?id=' + encodeURIComponent(id));
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      if (!window.provGraph) {
+        const st = document.createElement('style'); st.textContent = d.css; document.head.appendChild(st);
+        const sc = document.createElement('script'); sc.textContent = d.js; document.head.appendChild(sc);
+      }
+      if (!ov.isConnected) return;
+      body.textContent = '';
+      window.provGraph(body, Object.assign({}, d.data, { mode: 'tree', height: 900, dark: true }));
+    } catch (err) { body.textContent = 'Could not load SenNet graph: ' + err.message; }
+  }
+
   function buildSampleRibbon() {
     samplesRibbon.innerHTML = '';
     let thumbObserver = null;
@@ -378,6 +408,13 @@ function createSampleRibbon({
     badge.style.marginRight = 'auto';
     badgeRow.appendChild(badge);
 
+    const sennetId = (SAMPLE_METADATA[sampleName] || {}).sennet_id;
+    if (sennetId) {
+      const sb = _mkPill('S', 'SenNet provenance tree: ' + sennetId);
+      sb.style.cursor = 'pointer';
+      sb.addEventListener('click', e => { e.stopPropagation(); _showSennetTree(String(sennetId)); });
+      badgeRow.appendChild(sb);
+    }
     if (m.format) badgeRow.appendChild(_mkPill(m.format, 'Image format: ' + m.format));
     if (m.storage) {
     const cloud = m.storage === 'cloud';

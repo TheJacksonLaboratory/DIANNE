@@ -57,4 +57,4 @@ where = ["."]
 include = ["dianne_viewer*"]
 
 [tool.setuptools.package-data]
-dianne_viewer = ["py.typed", "js/*"]
+dianne_viewer = ["py.typed", "js/*", "provgraph/*.js", "provgraph/*.css"]

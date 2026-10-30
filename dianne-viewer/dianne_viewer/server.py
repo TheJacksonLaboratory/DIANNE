@@ -1090,6 +1090,19 @@ class ViewerServer:
                     body = json.dumps(image.metadata).encode()
                     self._respond(200, body, 'application/json')
 
+                elif parsed.path == '/sennet_graph':
+                    sid = qs.get('id', [''])[0]
+                    if sid not in getattr(srv, '_sennet_ids', ()):   # only ids supplied via sample_metadata
+                        self._respond(404, b'unknown sennet_id')
+                        return
+                    try:
+                        from .provgraph import sennet
+                        d = os.path.dirname(os.path.abspath(sennet.__file__))
+                        body = json.dumps({'data': sennet.graph(sid), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
+                        self._respond(200, body, 'application/json')
+                    except Exception as exc:
+                        self._respond(502, f'{type(exc).__name__}: {exc}'.encode())
+
                 elif parsed.path == '/sample_status':
                     seen = set(qs.get('seen', []))
                     self._respond(200, json.dumps(srv.sample_status(seen), default=str).encode(), 'application/json')
