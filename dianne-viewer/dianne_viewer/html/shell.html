@@ -55,6 +55,22 @@
 </div>
 
 <script>
+// Stale-viewer cleanup: a saved notebook replays this page with no live server behind it.
+// Separate <script> so it still runs when the main viewer script throws.
+(function () {
+  let fails = 0;
+  const check = () => {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 4000);
+    fetch(__BASE_URL__ + '/samples', { cache: 'no-store', signal: ctl.signal })
+      .then(r => { if (!r.ok) throw 0; fails = 0; setTimeout(check, 5000); })
+      .catch(() => { if (++fails >= 2) { const s = document.getElementById('iv-shell'); if (s) s.remove(); } else setTimeout(check, 1500); })
+      .finally(() => clearTimeout(t));
+  };
+  check();
+})();
+</script>
+
+<script>
 (function () {
 __JS__
 })();
