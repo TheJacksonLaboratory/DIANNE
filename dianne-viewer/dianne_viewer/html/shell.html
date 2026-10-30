@@ -58,12 +58,19 @@
 // Stale-viewer cleanup: a saved notebook replays this page with no live server behind it.
 // Separate <script> so it still runs when the main viewer script throws.
 (function () {
-  let fails = 0;
+  // Before any success (saved notebook replay) 2 fails remove the shell; once the server has answered, only
+  // ≥120 s of continuous failure does — busy servers / saturated browser connections must not kill a live viewer.
+  let fails = 0, up = false, since = 0;
   const check = () => {
-    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 4000);
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), up ? 15000 : 4000);
     fetch(__BASE_URL__ + '/samples', { cache: 'no-store', signal: ctl.signal })
-      .then(r => { if (!r.ok) throw 0; fails = 0; setTimeout(check, 5000); })
-      .catch(() => { if (++fails >= 2) { const s = document.getElementById('iv-shell'); if (s) s.remove(); } else setTimeout(check, 1500); })
+      .then(r => { if (!r.ok) throw 0; fails = 0; since = 0; up = true; setTimeout(check, 5000); })
+      .catch(() => {
+        if (document.hidden) { since = 0; return setTimeout(check, 5000); }   // throttled background tab: don't judge
+        const now = Date.now(); if (!since) since = now; ++fails;
+        if (up ? now - since >= 120000 : fails >= 2) { const s = document.getElementById('iv-shell'); if (s) s.remove(); }
+        else setTimeout(check, up ? 5000 : 1500);
+      })
       .finally(() => clearTimeout(t));
   };
   check();
