@@ -1096,9 +1096,9 @@ class ViewerServer:
                         self._respond(404, b'unknown sennet_id')
                         return
                     try:
-                        from .provgraph import sennet
-                        d = os.path.dirname(os.path.abspath(sennet.__file__))
-                        body = json.dumps({'data': sennet.graph(sid), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
+                        from .provgraph import provapi
+                        d = os.path.dirname(os.path.abspath(provapi.__file__))
+                        body = json.dumps({'data': provapi.graph(sid), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:
                         self._respond(502, f'{type(exc).__name__}: {exc}'.encode())

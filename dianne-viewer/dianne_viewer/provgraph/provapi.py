@@ -1,21 +1,49 @@
-"""SenNet provenance helpers: fetch entities from the public Entity API and build graph JSON."""
-import json, re, textwrap, requests
+"""SenNet / HuBMAP provenance helpers: fetch entities from the public Entity API and build graph JSON.
+Ids starting with "HBM" use the HuBMAP API, all others SenNet.
+Optional auth: pass `token` (str, or {'sennet': .., 'hubmap': ..}) or set env SENNET_TOKEN / HUBMAP_TOKEN; each token goes only to its own API."""
+import json, os, re, textwrap, requests
 from datetime import date, timedelta
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 
-API = 'https://entity.api.sennetconsortium.org'
+_APIS = {'sennet': ('https://entity.api.sennetconsortium.org', 'https://assets.api.sennetconsortium.org'),
+         'hubmap': ('https://entity.api.hubmapconsortium.org', 'https://assets.hubmapconsortium.org')}  # (entity API, assets)
 _cache = {}
 
 
+def _api(sid):
+    return _APIS['hubmap' if str(sid).upper().startswith('HBM') else 'sennet']
+
+
+def _tok(sid, token):
+    """Token for the API serving `sid`: `token` (str, or {'sennet': .., 'hubmap': ..}), else env SENNET_TOKEN / HUBMAP_TOKEN; never sent to the other API."""
+    n = 'hubmap' if _api(sid) is _APIS['hubmap'] else 'sennet'
+    return (token.get(n) if isinstance(token, dict) else token) or os.environ.get(f'{n.upper()}_TOKEN') or None
+
+
+def _id(e):
+    return e.get('sennet_id') or e['hubmap_id']
+
+
 def _get(path, token=None):
-    r = requests.get(f'{API}/{path}', headers={'Authorization': f'Bearer {token}'} if token else {}, timeout=60)
+    r = requests.get(f'{_api(path.split("/")[-1])[0]}/{path}', headers={'Authorization': f'Bearer {t}'} if (t := _tok(path.split('/')[-1], token)) else {}, timeout=60)
     r.raise_for_status()
     return r.json()
 
 
+def descendants(sid, token=None):
+    """Ids of all entities descending from `sid`. HuBMAP serves descendants/ only with a token, so fall back to its public Search API."""
+    try: return [_id(d) for d in _get(f'descendants/{sid}', token)]
+    except requests.HTTPError as ex:
+        if ex.response.status_code not in (401, 403) or _api(sid) is not _APIS['hubmap']: raise
+    r = requests.post('https://search.api.hubmapconsortium.org/v3/portal/search', timeout=60, json=dict(
+        query={'term': {'ancestor_ids': entity(sid, token)['uuid']}}, _source=['hubmap_id'], size=10000))
+    r.raise_for_status()
+    return [h['_source']['hubmap_id'] for h in r.json()['hits']['hits']]
+
+
 def entity(sid, token=None):
-    """Full entity record by SenNet id (cached)."""
+    """Full entity record by SenNet / HuBMAP id (cached)."""
     if sid not in _cache:
         _cache[sid] = _get(f'entities/{sid}', token)
     return _cache[sid]
@@ -27,12 +55,12 @@ def kind(e):
     if t == 'Sample':
         c = (e.get('sample_category') or '').lower()
         return c if c in ('organ', 'block', 'section', 'suspension') else 'other'
-    return {'Source': 'source', 'Dataset': 'dataset'}.get(t, 'other')
+    return {'Source': 'source', 'Donor': 'source', 'Dataset': 'dataset'}.get(t, 'other')
 
 
 def parents(e):
     ps = e.get('direct_ancestors') or ([e['direct_ancestor']] if e.get('direct_ancestor') else [])
-    return [p['sennet_id'] for p in ps]
+    return [_id(p) for p in ps]
 
 
 def _flat(d, pre=''):
@@ -118,7 +146,6 @@ def _contrib(cs):
 # Dataset type (text before ' [' so derived e.g. 'Histology [Image Pyramid]' match too) -> short text drawn inside the node disk.
 # Add new types here; unlisted types get no text.
 DATASET_ABBR = {'Xenium': 'XE', 'Histology': 'HE', 'PhenoCycler': 'PC'}
-_ASSETS = 'https://assets.api.sennetconsortium.org'
 
 
 _UNITS = {'s': 1 / 86400, 'sec': 1 / 86400, 'second': 1 / 86400, 'min': 1 / 1440, 'minute': 1 / 1440, 'h': 1 / 24, 'hr': 1 / 24, 'hour': 1 / 24,
@@ -142,13 +169,13 @@ def _size(n):
         n /= 1024
 
 
-def _files(fs, uuid):
+def _files(fs, uuid, sid):
     """Dataset `files` -> [[card (top-level dir), path inside it, size, tooltip, download url], ...] sorted by path."""
     out = []
     for f in fs or []:
         top, _, rest = f.get('rel_path', '').partition('/')
         out.append([top if rest else 'Files', rest or top, _size(f.get('size') or 0), f"{f.get('rel_path', '')}\n{f.get('description', '')}".strip(),
-                    f"{_ASSETS}/{uuid}/{quote(f['rel_path'])}" if uuid and f.get('rel_path') else ''])
+                    f"{_api(sid)[1]}/{uuid}/{quote(f['rel_path'])}" if uuid and f.get('rel_path') else ''])
     return sorted(out)
 
 
@@ -188,9 +215,9 @@ def node(e):
     mp = mp + (_rui(e.get('rui_location')) if k == 'block' else [])
     note = ' '.join(str((e.get('cedar_mapped_metadata') or {}).get('Notes') or '').split()) if k in ('section', 'suspension', 'block') else ''
     note = '' if note == e.get('description') else note[:16] + '…' if len(note) > 17 else note  # caption: <=17 chars; full note stays in the cards
-    return dict(id=e['sennet_id'], kind=k, type=e['entity_type'], parents=parents(e), audit=_audit(e), note=note, dur=_storage(e)[0], days=_storage(e)[1],
+    return dict(id=_id(e), kind=k, type=e['entity_type'], parents=parents(e), audit=_audit(e), note=note, dur=_storage(e)[0], days=_storage(e)[1],
                 protocol=e.get('protocol_url') or (e.get('cedar_mapped_metadata') or {}).get('Preparation Protocol DOI', ''),
-                desc=e.get('description') or '' if k == 'dataset' else '', contrib=_contrib(e.get('contributors')) if k == 'dataset' else [], files=_files(e.get('files'), e.get('uuid')) if k == 'dataset' else [], mapped=mp, uuid=e.get('uuid', ''), sub=_sub(e, mp) if k == 'source' else _organ_sub(e) if k == 'organ' else textwrap.fill(e.get('description') or '', 30) if k in ('section', 'suspension', 'block') else e.get('dataset_type') or '' if k == 'dataset' else '',
+                desc=e.get('description') or '' if k == 'dataset' else '', contrib=_contrib(e.get('contributors')) if k == 'dataset' else [], files=_files(e.get('files'), e.get('uuid'), _id(e)) if k == 'dataset' else [], mapped=mp, uuid=e.get('uuid', ''), sub=_sub(e, mp) if k == 'source' else _organ_sub(e) if k == 'organ' else textwrap.fill(e.get('description') or '', 30) if k in ('section', 'suspension', 'block') else e.get('dataset_type') or '' if k == 'dataset' else '',
                 abbr=DATASET_ABBR.get((e.get('dataset_type') or '').split(' [')[0], '') if k == 'dataset' else '',
                 term=term(e.get('organ')) if k == 'organ' else None,
                 meta=_flat({x: v for x, v in e.items() if x not in skip and not x.startswith(_PRE)}))
@@ -203,14 +230,14 @@ def _fetch(ids, token=None):
 
 def chain(sid, token=None):
     """Provenance from dataset/entity `sid` up to its source: list of nodes."""
-    ids = [sid] + [a['sennet_id'] for a in _get(f'ancestors/{sid}', token)]
+    ids = [sid] + [_id(a) for a in _get(f'ancestors/{sid}', token)]
     return [node(e) for e in _fetch(ids, token)]
 
 
 def tree(sid, token=None):
     """Full tree: every entity descending from the source of `sid` (plus the source itself)."""
     src = next(n['id'] for n in chain(sid, token) if n['kind'] == 'source')
-    ids = [src] + [d['sennet_id'] for d in _get(f'descendants/{src}', token)]
+    ids = [src] + descendants(src, token)
     return [node(e) for e in _fetch(ids, token)]
 
 
@@ -219,11 +246,12 @@ def ometiff_url(sid, token=None):
     Looks in the dataset's own files first (derived datasets), then in its descendant datasets (so a raw dataset id works too)."""
     def find(e):
         for f in sorted(e.get('files') or [], key=lambda f: f.get('rel_path', '')):
-            if f.get('rel_path', '').lower().endswith(('.ome.tif', '.ome.tiff')): return f"{_ASSETS}/{e['uuid']}/{quote(f['rel_path'])}"
+            if f.get('rel_path', '').lower().endswith(('.ome.tif', '.ome.tiff')): return f"{_api(sid)[1]}/{e['uuid']}/{quote(f['rel_path'])}"
     u = find(entity(sid, token))
     if u: return u
-    for d in _get(f'descendants/{sid}', token):
-        if d.get('entity_type') == 'Dataset' and (u := find(entity(d['sennet_id'], token))): return u
+    for i in descendants(sid, token):
+        e = entity(i, token)
+        if e.get('entity_type') == 'Dataset' and (u := find(e)): return u
 
 
 def graph(sid, token=None):

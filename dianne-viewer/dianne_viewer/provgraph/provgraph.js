@@ -170,7 +170,7 @@
     dk.onchange = () => root.classList.toggle('pg-dark', dk.checked);
     cb.onchange = () => g.provGraph(root, { ...data, duration: cb.checked, dark: root.classList.contains('pg-dark') });   // re-layout (node moves are reset)
     const cr = h('div', 'pg-credit', vp), ca = h('a', '', cr);   // fixed overlay: unaffected by pan/zoom
-    ca.href = 'https://docs.sennetconsortium.org/apis/'; ca.textContent = 'Data: SenNet Consortium Entity API'; ca.title = 'Provenance and metadata retrieved via the SenNet Consortium APIs';
+    ca.href = 'https://docs.sennetconsortium.org/apis/'; ca.textContent = 'Data: SenNet / HuBMAP Consortium Entity API'; ca.title = 'Provenance and metadata retrieved via the SenNet Consortium APIs';
     ca.onclick = ev => { ev.preventDefault(); window.open(ca.href, '_blank', 'noopener,noreferrer'); }; cr.onpointerdown = ev => ev.stopPropagation(); cr.onwheel = ev => ev.stopPropagation();
     const lg = h('div', 'pg-legend', root);   // legend
     Object.entries(SYM).filter(([k]) => k !== 'other').forEach(([k]) => { const s = el('svg', { width: 36, height: 28 }, h('span', '', lg)); symbol(s, k, 18, 14); lg.lastChild.append(k); });

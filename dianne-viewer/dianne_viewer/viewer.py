@@ -1,4 +1,4 @@
-import json
+import json, time
 import threading
 import subprocess
 from pathlib import Path
@@ -117,8 +117,11 @@ def _open_image(path):
     path_str = str(path)
     is_url = path_str.startswith('http://') or path_str.startswith('https://')
     if is_url:
-        _fh  = fsspec.open(path_str, 'rb').open()
-        _tif = tifffile.TiffFile(_fh)
+        for _i in range(4):   # public asset servers (e.g. HuBMAP) intermittently answer 503: retry with backoff
+          try: _tif = tifffile.TiffFile(fsspec.open(path_str, 'rb').open()); break
+          except Exception as exc:
+            if _i == 3 or getattr(exc, 'status', 0) not in (429, 502, 503, 504): raise
+            time.sleep(2 ** _i)
     else:
         _tif = tifffile.TiffFile(path_str)
     if is_generic_rgb_tiff(_tif):   # SVS / NDPI / plain pyramidal RGB TIFF
@@ -359,17 +362,17 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     if not sample_list:
       raise ValueError('create_viewer requires at least one sample')
 
-    # Samples with path None but a sennet_id in their metadata: fetch the OME-TIFF URL from the SenNet API
+    # Samples with path None but a sennet_id in their metadata: fetch the OME-TIFF URL from the SenNet/HuBMAP API
     sennet_ids = {str(k): str(v['sennet_id']) for k, v in (sample_metadata or {}).items() if isinstance(v, dict) and v.get('sennet_id')}
     _none = [s for s in sample_list if s in images and images[s] is None and s in sennet_ids]
     if _none:
-      from .provgraph import sennet
+      from .provgraph import provapi
       images = dict(images)
       print(f'[DIANNE] Resolving {len(_none)} SenNet image URL(s)…', flush=True)
       for s in _none:
-        images[s] = sennet.ometiff_url(sennet_ids[s])
+        images[s] = provapi.ometiff_url(sennet_ids[s])
         if not images[s]:
-          raise ValueError(f'no OME-TIFF found in SenNet for sample {s!r} ({sennet_ids[s]})')
+          raise ValueError(f'no OME-TIFF found in SenNet/HuBMAP for sample {s!r} ({sennet_ids[s]})')
 
     missing = [s for s in sample_list if s not in images]
     if missing:
