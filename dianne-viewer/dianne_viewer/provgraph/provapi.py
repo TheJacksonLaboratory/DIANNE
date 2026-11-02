@@ -209,6 +209,27 @@ def _organ_sub(e):
     return f'{h},\n({d})' if h and d else h or (f'({d})' if d else '')
 
 
+_LAB = {'Dataset': ('dataset', 'lab_dataset_id'), 'Sample': ('sample', 'lab_tissue_sample_id'), 'Source': ('source', 'lab_source_id')}
+_labs = {}
+
+
+def lab_id(e, token=None):
+    """Submitter's lab id (SenNet only) from the portal JSON API, e.g. 'JAX_001_KD_C_a'; '' if unavailable (cached)."""
+    u, ep = e.get('uuid'), _LAB.get(e.get('entity_type'))
+    if not u or not ep or _api(_id(e)) is not _APIS['sennet']: return ''
+    if u not in _labs:
+        try:
+            t = _tok(_id(e), token); r = requests.get(f'https://data.sennetconsortium.org/api/json/{ep[0]}', params={'uuid': u}, headers={'Authorization': f'Bearer {t}'} if t else {}, timeout=30)
+            r.raise_for_status(); _labs[u] = str(r.json().get(ep[1]) or '')
+        except Exception: _labs[u] = ''  # optional caption: skip on failure
+    return _labs[u]
+
+
+def _nodes(es, token=None):
+    with ThreadPoolExecutor(8) as ex: labs = list(ex.map(lambda e: lab_id(e, token), es))
+    return [dict(node(e), lab=l) for e, l in zip(es, labs)]
+
+
 def node(e):
     """Graph node: id, kind, parents, tooltip audit, protocol link, grouped `mapped` rows and flat `meta` table."""
     k = kind(e); mp = _mapped(e.get('source_mapped_metadata')) or (_cedar(e.get('cedar_mapped_metadata'), k) if k in _CEDAR else []); skip = _SKIP | ({'metadata'} if k == 'source' else set())  # source: mapped metadata replaces raw metadata
@@ -231,14 +252,14 @@ def _fetch(ids, token=None):
 def chain(sid, token=None):
     """Provenance from dataset/entity `sid` up to its source: list of nodes."""
     ids = [sid] + [_id(a) for a in _get(f'ancestors/{sid}', token)]
-    return [node(e) for e in _fetch(ids, token)]
+    return _nodes(_fetch(ids, token), token)
 
 
 def tree(sid, token=None):
     """Full tree: every entity descending from the source of `sid` (plus the source itself)."""
     src = next(n['id'] for n in chain(sid, token) if n['kind'] == 'source')
     ids = [src] + descendants(src, token)
-    return [node(e) for e in _fetch(ids, token)]
+    return _nodes(_fetch(ids, token), token)
 
 
 def ometiff_url(sid, token=None):

@@ -170,7 +170,7 @@
       if (n.abbr) { const a = el('text', { x: 0, y: 3, 'text-anchor': 'middle', class: 'pg-abbr' }, gr); a.textContent = n.abbr; }
       const t = el('text', { x: 0, y: 28, 'text-anchor': 'middle', 'font-weight': hi ? 700 : 400 }, gr); t.textContent = n.kind === 'thumb' ? '' : n.label || n.id;
       n.subEls = [];
-      [...(n.kind === 'thumb' ? '' : n.sub || '').split('\n').filter(Boolean), ...(n.note ? ['\u0000' + n.note] : [])].forEach((ln, i) => {   // \0 marks the (italic) note line
+      [...(n.kind === 'thumb' ? [] : n.lab ? [n.lab] : []), ...(n.kind === 'thumb' ? '' : n.sub || '').split('\n').filter(Boolean), ...(n.note ? ['\u0000' + n.note] : [])].forEach((ln, i) => {   // \0 marks the (italic) note line
         const nt = ln[0] === '\u0000', s2 = el('text', { x: 0, y: 28 + 12 * fz * (i + 1), 'text-anchor': 'middle', class: 'pg-sub' + (nt ? ' pg-note' : '') }, gr); n.subEls.push(s2); s2.textContent = nt ? ln.slice(1) : ln; });
       gr.addEventListener('pointerenter', () => { n.tipDone = false; clearTimeout(n.tt); n.tt = setTimeout(() => { n.tipDone = true; root.querySelector('.pg-tip')?.remove(); }, TIP_MS); });
       ['pointerenter', 'pointermove'].forEach(t => gr.addEventListener(t, ev => n.audit && !n.drag && !n.tipDone && tip(root, n, ev)));
