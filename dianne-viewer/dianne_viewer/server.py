@@ -1065,14 +1065,24 @@ class ViewerServer:
         return str(requested)
 
     def _komp_thumb_url(self, s):
-        """Thumbnail URL for a kompframe sample: /thumb if loaded in the viewer, else /komp_thumb if its sidecar exists, else None."""
+        """Thumbnail URL for a kompframe sample: /komp_thumb if its sidecar exists, else /thumb if loaded in the viewer, else None."""
         q = quote(str(s), safe='')
+        if self._komp_file(s, ('thumbnail.jpeg', 'thumbnail.tiff')): return f'/komp_thumb?sample={q}'   # true-aspect sidecar preferred (/thumb is padded square)
         if s in self.sample_names: return f'/thumb?sample={q}'
-        if self._komp_file(s, ('thumbnail.jpeg', 'thumbnail.tiff')): return f'/komp_thumb?sample={q}'
 
     def _komp_slide_url(self, s):
         """URL of <komp_dir>/<sample>/slide.jpeg if it exists, else None."""
         if self._komp_file(s, ('slide.jpeg',)): return f'/komp_thumb?sample={quote(str(s), safe="")}&kind=slide'
+
+    def _komp_roi(self, s):
+        """Sample contour on its slide.jpeg as [[x, y], ...] in 0-1 coords from roifile.json ({"0": {"points": xs}, "1": {"points": ys}}), else None."""
+        p = self._komp_file(s, ('roifile.json',))
+        try:
+            with open(p) as f: d = json.load(f)
+            pts = [[round(float(x), 4), round(float(y), 4)] for x, y in zip(d['0']['points'], d['1']['points'])]
+            return pts if len(pts) > 2 else None
+        except Exception:
+            return None
 
     def _komp_file(self, s, names):
         """First existing <komp_dir>/<sample>/<name> for a kompframe sample (never a path outside komp_dir), else None."""
@@ -1142,7 +1152,7 @@ class ViewerServer:
                     try:
                         from .kompgraph import kompapi
                         d = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'provgraph')
-                        body = json.dumps({'data': kompapi.graph(sid, kf, srv._komp_meta, thumbs=srv._komp_thumb_url, slidepics=srv._komp_slide_url), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
+                        body = json.dumps({'data': kompapi.graph(sid, kf, srv._komp_meta, thumbs=srv._komp_thumb_url, slidepics=srv._komp_slide_url, rois=srv._komp_roi), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:
                         self._respond(502, f'{type(exc).__name__}: {exc}'.encode())

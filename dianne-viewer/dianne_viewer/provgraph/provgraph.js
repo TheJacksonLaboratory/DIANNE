@@ -16,17 +16,31 @@
   }
 
   const TH = 96;   // thumbnail node size (1 in)
-  function thumbImg(gr, n, base) {   // tiny thumbnail node; retries while the server is still opening the sample
-    gr.classList.add('pg-thumb'); el('rect', { x: -TH / 2 - 1, y: -TH / 2 - 1, width: TH + 2, height: TH + 2, rx: 3, fill: '#0f0f0f', class: 'pg-sym' }, gr);
-    const im = n.im = el('image', { x: -TH / 2, y: -TH / 2, width: TH, height: TH, preserveAspectRatio: 'xMidYMid meet', href: base + n.thumb }, gr); let k = 0;
-    im.addEventListener('error', () => k++ < 5 && setTimeout(() => im.setAttribute('href', `${base}${n.thumb}&r=${k}`), 1500 * k));
+  function thumbImg(gr, n, base) {   // tiny thumbnail node sized to the image's aspect (longest side TH); retries while the server is still opening the sample
+    gr.classList.add('pg-thumb'); const bg = el('rect', { x: -TH / 2 - 1, y: -TH / 2 - 1, width: TH + 2, height: TH + 2, rx: 3, fill: '#0f0f0f', stroke: SYM[n.type === 'slidepic' ? 'slide' : 'sample'][1], 'stroke-width': 2 }, gr);   // frame = color of the parent node (sample green / slide light blue)
+    const im = n.im = el('image', { x: -TH / 2, y: -TH / 2, width: TH, height: TH, preserveAspectRatio: 'none' }, gr), pre = new Image(); let k = 0;
+    pre.onload = () => { const s = TH / Math.max(pre.naturalWidth, pre.naturalHeight), w = Math.round(pre.naturalWidth * s), hh = Math.round(pre.naturalHeight * s);
+      Object.entries({ x: -w / 2 - 1, y: -hh / 2 - 1, width: w + 2, height: hh + 2 }).forEach(([a, v]) => bg.setAttribute(a, v));
+      Object.entries({ x: -w / 2, y: -hh / 2, width: w, height: hh, href: pre.src }).forEach(([a, v]) => im.setAttribute(a, v));
+      (n.rois || []).forEach(r => el('polygon', { points: r.pts.map(([x, y]) => `${(x - .5) * w},${(y - .5) * hh}`).join(' '), class: 'pg-roi' }, gr)); };   // sample contours on a slide image
+    pre.onerror = () => k++ < 5 && setTimeout(() => pre.src = `${base}${n.thumb}&r=${k}`, 1500 * k);
+    pre.src = base + n.thumb;
   }
 
+  const centroid = pts => { let a = 0, x = 0, y = 0; pts.forEach(([x1, y1], i) => { const [x2, y2] = pts[(i + 1) % pts.length], c = x1 * y2 - x2 * y1; a += c; x += (x1 + x2) * c; y += (y1 + y2) * c; });
+    return a ? [x / (3 * a), y / (3 * a)] : pts[0]; };
+
   function magnify(n, base) {   // FLIP-animate the thumbnail to a large centered preview; Esc / click animates it back
-    const full = base + n.thumb, S = Math.min(900, innerWidth * .85, innerHeight * .85), bd = h('div', 'pg-mag', document.body), im = h('img', '', bd);
-    const set = r => Object.assign(im.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    const full = base + n.thumb, S = Math.min(900, innerWidth * .85, innerHeight * .85), bd = h('div', 'pg-mag', document.body), bx = h('div', 'pg-magbox', bd), im = h('img', '', bx);
+    const set = r => Object.assign(bx.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
     im.src = n.im.getAttribute('href'); set(n.im.getBoundingClientRect());
-    requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('pg-on'); set({ left: (innerWidth - S) / 2, top: (innerHeight - S) / 2, width: S, height: S }); }));
+    if (n.rois && n.rois.length) {   // sample contours (yellow glow) + names at the contour centers
+      const sv = el('svg', { viewBox: '0 0 1 1', preserveAspectRatio: 'none' }, bx);
+      n.rois.forEach(r => { el('polygon', { points: r.pts.map(p => p.join(',')).join(' '), class: 'pg-roi2' }, sv);
+        const c = centroid(r.pts), l = h('div', 'pg-rl', bx); l.textContent = r.name; l.style.left = c[0] * 100 + '%'; l.style.top = c[1] * 100 + '%'; });
+    }
+    const r0 = n.im.getBoundingClientRect(), ar = r0.width / r0.height || 1, tw = ar >= 1 ? S : S * ar, tt = ar >= 1 ? S / ar : S;   // same aspect as the tiny thumb
+    requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('pg-on'); set({ left: (innerWidth - tw) / 2, top: (innerHeight - tt) / 2, width: tw, height: tt }); }));
     const big = new Image(); big.onload = () => bd.isConnected && (im.src = big.src); big.src = `${full}&big=${Math.max(512, Math.round(S * (devicePixelRatio || 1)))}`;
     let closing = false;
     const close = () => { if (closing) return; closing = true; bd.classList.remove('pg-on'); set(n.im.getBoundingClientRect());
