@@ -1,4 +1,4 @@
-import json, time
+import json, os, time
 import threading
 import subprocess
 from pathlib import Path
@@ -209,7 +209,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
                   secondary_images=None, secondary_matrices=None,
                   draw_on_secondary=False, visium_ads=None,
                   sample_mapping=None, fullscreen_on_load=True,
-                  sample_metadata=None, fs=None, s3=None, s3_bucket=None,
+                  sample_metadata=None, kompframe=None, komp_dir=None, fs=None, s3=None, s3_bucket=None,
                   adjust_primary_matrices=True, save_path=None, username='auto', lazy_samples=True):
     """
     Display a pan/zoom/draw viewer for a pyramidal OME-TIFF in JupyterLab.
@@ -342,6 +342,15 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
             }
 
         If omitted or ``None``, the "Metadata" tab is hidden entirely.
+    komp_dir : str, optional
+        Results directory holding ``<sample>/thumbnail.jpeg`` for every kompframe
+        sample (graph thumbnails of samples not loaded in the viewer). Default:
+        two levels above the first loaded sample's image path.
+    kompframe : pandas.DataFrame, optional
+        Frame from ``kompgraph.kompapi.getKFrame`` (columns project, datagroup,
+        mouse, block, slide, sample). Samples listed in ``kompframe['sample']``
+        get a "P" badge in the ribbon that opens their provenance tree (the
+        sample's chain in bold, with a thumbnail per sample); the mouse node's modal shows ``sample_metadata[sample]``.
     """
     if _has_active_viewer():
       display(HTML(
@@ -607,6 +616,11 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
     # annotation_layers_json is built later; attach placeholder now, replace after build
     server._annotation_layers_json = '[]'
     server._sennet_ids = set(sennet_ids.values())
+    server._kompframe = kompframe
+    server._komp_samples = set(sample_list) & set(kompframe['sample']) if kompframe is not None else set()
+    server._komp_meta = sample_metadata
+    server._komp_all = set(kompframe['sample']) if kompframe is not None else set()
+    server._komp_dir = komp_dir or next((os.path.dirname(os.path.dirname(v)) for v in images.values() if isinstance(v, str)), None)  # results dir holding <sample>/thumbnail.jpeg
 
     # This user's last-synced Settings-panel snapshot, if any (see
     # ViewerServer.load_user_settings / the '/settings/save' route).
@@ -780,6 +794,7 @@ def create_viewer(samples, images, width="100%", height="700px", host=None, port
       visium_genes_by_sample = _json_for_script(_visium_genes_by_sample),
       sample_mapping       = _json_for_script({str(k): str(v) for k, v in sample_mapping.items()} if sample_mapping else {}),
       sample_metadata      = sample_metadata_json,
+      komp_samples         = _json_for_script(sorted(server._komp_samples)),
       mpp                  = str(float(mpp)) if mpp is not None else 'null',
       stop_url             = _json_for_script(_stop_url),
       has_matrices         = 'true' if has_matrices else 'false',

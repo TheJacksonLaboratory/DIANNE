@@ -11,7 +11,7 @@
  *   createSampleRibbon({
  *     samplesRibbon, root, viewport,
  *     SAMPLES, SAMPLE_META, SAMPLE_XENIUM_META, SAMPLE_CELLS_META,
- *     SAMPLE_MAPPING, SAMPLE_METADATA,
+ *     SAMPLE_MAPPING, SAMPLE_METADATA, KOMP_SAMPLES,
  *     BASE_URL,
  *     ACTIVE_SAMPLE_REF,
  *     setActiveSampleFn,
@@ -21,7 +21,7 @@
 function createSampleRibbon({
   samplesRibbon, root, viewport,
   SAMPLES, SAMPLE_META, SAMPLE_XENIUM_META, SAMPLE_CELLS_META,
-  SAMPLE_MAPPING, SAMPLE_METADATA,
+  SAMPLE_MAPPING, SAMPLE_METADATA, KOMP_SAMPLES = [],
   BASE_URL,
   ACTIVE_SAMPLE_REF,
   setActiveSampleFn,
@@ -235,7 +235,7 @@ function createSampleRibbon({
   }
 
   // SenNet provenance tree modal (dark mode); graph + provgraph assets come from the server's /sennet_graph
-  async function _showSennetTree(id) {
+  async function _showSennetTree(id, route = '/sennet_graph', label = 'SenNet') {
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:2147483651;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center';
     const box = document.createElement('div');
@@ -244,14 +244,14 @@ function createSampleRibbon({
     x.type = 'button'; x.textContent = '\u00d7';
     x.style.cssText = 'position:absolute;top:4px;right:8px;z-index:20;border:0;background:none;color:#e4e6ea;font-size:22px;cursor:pointer';
     const body = document.createElement('div');
-    body.textContent = 'Loading SenNet provenance for ' + id + '\u2026';
+    body.textContent = 'Loading ' + label + ' provenance for ' + id + '\u2026';
     box.append(x, body); ov.appendChild(box); document.body.appendChild(ov);
     const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
-    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    const onKey = e => { if (e.key === 'Escape') { if (document.querySelector('.pg-mag')) return; e.stopPropagation(); close(); } };
     x.onclick = close; ov.onclick = e => { if (e.target === ov) close(); };
     document.addEventListener('keydown', onKey, true);
     try {
-      const r = await fetch(BASE_URL + '/sennet_graph?id=' + encodeURIComponent(id));
+      const r = await fetch(BASE_URL + route + '?id=' + encodeURIComponent(id));
       if (!r.ok) throw new Error(await r.text());
       const d = await r.json();
       if (!window.provGraph) {
@@ -260,8 +260,8 @@ function createSampleRibbon({
       }
       if (!ov.isConnected) return;
       body.textContent = '';
-      window.provGraph(body, Object.assign({}, d.data, { mode: 'tree', height: 900, dark: true }));
-    } catch (err) { body.textContent = 'Could not load SenNet graph: ' + err.message; }
+      window.provGraph(body, Object.assign({}, d.data, { mode: 'tree', height: 900, dark: true, base: BASE_URL }));
+    } catch (err) { body.textContent = 'Could not load ' + label + ' graph: ' + err.message; }
   }
 
   function buildSampleRibbon() {
@@ -414,6 +414,12 @@ function createSampleRibbon({
       sb.style.cursor = 'pointer';
       sb.addEventListener('click', e => { e.stopPropagation(); _showSennetTree(String(sennetId)); });
       badgeRow.appendChild(sb);
+    }
+    if (KOMP_SAMPLES.includes(sampleName)) {
+      const kb = _mkPill('P', 'Provenance tree: ' + sampleName);
+      kb.style.cursor = 'pointer';
+      kb.addEventListener('click', e => { e.stopPropagation(); _showSennetTree(sampleName, '/komp_graph', 'KOMP'); });
+      badgeRow.appendChild(kb);
     }
     if (m.format) badgeRow.appendChild(_mkPill(m.format, 'Image format: ' + m.format));
     if (m.storage) {

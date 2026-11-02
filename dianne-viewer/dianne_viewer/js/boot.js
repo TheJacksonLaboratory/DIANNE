@@ -37,6 +37,7 @@ const HAS_VISIUM               = __HAS_VISIUM__;
 const VISIUM_GENES_BY_SAMPLE   = __VISIUM_GENES_BY_SAMPLE__;
 const SAMPLE_MAPPING           = __SAMPLE_MAPPING__;
 const SAMPLE_METADATA          = __SAMPLE_METADATA__;
+const KOMP_SAMPLES             = __KOMP_SAMPLES__;  // samples with a KOMP provenance graph ("P" badge)
 const MPP                      = __MPP__;  // µm per image pixel; null if not provided
 const _STOP_URL                = __STOP_URL__;
 const HAS_MATRICES             = __HAS_MATRICES__;
@@ -731,7 +732,7 @@ _overlayCtrlApi.updateOpacitySliderVisibility();
 const sampleRibbonApi = createSampleRibbon({
   samplesRibbon, root, viewport,
   SAMPLES, SAMPLE_META, SAMPLE_XENIUM_META, SAMPLE_CELLS_META,
-  SAMPLE_MAPPING, SAMPLE_METADATA,
+  SAMPLE_MAPPING, SAMPLE_METADATA, KOMP_SAMPLES,
   BASE_URL,
   ACTIVE_SAMPLE_REF: () => ACTIVE_SAMPLE,
   setActiveSampleFn: setActiveSample,

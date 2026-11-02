@@ -2,7 +2,8 @@
 (function (g) {
   const NS = 'http://www.w3.org/2000/svg', TIP_MS = 5000, COL = 170, ROW = 56, PAD = 40;
   const SYM = { source: ['circle', '#e6b800'], organ: ['diamond', '#d62728'], block: ['square', '#f78fb3'],
-    section: ['rect', '#f78fb3'], suspension: ['circle', '#1f77b4'], dataset: ['circle', '#2ca02c'], other: ['circle', '#999'] };
+    section: ['rect', '#f78fb3'], suspension: ['circle', '#1f77b4'], dataset: ['circle', '#2ca02c'], other: ['circle', '#999'],
+    project: ['diamond', '#8e44ad'], datagroup: ['rect', '#e67e22'], mouse: ['circle', '#e6b800'], slide: ['rect', '#17becf'], sample: ['circle', '#2ca02c'] };
   const el = (t, a = {}, p) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); p && p.appendChild(e); return e; };
   const h = (t, c, p) => { const e = document.createElement(t); if (c) e.className = c; p && p.appendChild(e); return e; };
 
@@ -14,7 +15,28 @@
     else el('polygon', { points: `${x},${y - 14} ${x + 12},${y} ${x},${y + 14} ${x - 12},${y}`, ...a }, p);
   }
 
-  function layout(nodes, dur) {  // columns by longest path from a root; rows by DFS order of leaves
+  const TH = 96;   // thumbnail node size (1 in)
+  function thumbImg(gr, n, base) {   // tiny thumbnail node; retries while the server is still opening the sample
+    gr.classList.add('pg-thumb'); el('rect', { x: -TH / 2 - 1, y: -TH / 2 - 1, width: TH + 2, height: TH + 2, rx: 3, fill: '#0f0f0f', class: 'pg-sym' }, gr);
+    const im = n.im = el('image', { x: -TH / 2, y: -TH / 2, width: TH, height: TH, preserveAspectRatio: 'xMidYMid meet', href: base + n.thumb }, gr); let k = 0;
+    im.addEventListener('error', () => k++ < 5 && setTimeout(() => im.setAttribute('href', `${base}${n.thumb}&r=${k}`), 1500 * k));
+  }
+
+  function magnify(n, base) {   // FLIP-animate the thumbnail to a large centered preview; Esc / click animates it back
+    const full = base + n.thumb, S = Math.min(900, innerWidth * .85, innerHeight * .85), bd = h('div', 'pg-mag', document.body), im = h('img', '', bd);
+    const set = r => Object.assign(im.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    im.src = n.im.getAttribute('href'); set(n.im.getBoundingClientRect());
+    requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('pg-on'); set({ left: (innerWidth - S) / 2, top: (innerHeight - S) / 2, width: S, height: S }); }));
+    const big = new Image(); big.onload = () => bd.isConnected && (im.src = big.src); big.src = `${full}&big=${Math.max(512, Math.round(S * (devicePixelRatio || 1)))}`;
+    let closing = false;
+    const close = () => { if (closing) return; closing = true; bd.classList.remove('pg-on'); set(n.im.getBoundingClientRect());
+      setTimeout(() => { bd.remove(); document.removeEventListener('keydown', onKey, true); }, 330); };
+    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    document.addEventListener('keydown', onKey, true); bd.onclick = close;
+  }
+
+  function layout(nodes, dur, vert, stack) {   // vert: rotated 90° CW; stack: node kind drawn as a column right of its parent (vert only)
+    const th = n => n.kind === 'thumb', stk = n => vert && (th(n) || (stack && n.kind === stack));  // columns by longest path from a root; rows by DFS order of leaves
     const by = Object.fromEntries(nodes.map(n => [n.id, { ...n, kids: [] }]));
     nodes.forEach(n => n.parents.forEach(p => by[p] && by[p].kids.push(by[n.id])));
     const depth = {}, d = n => depth[n.id] ??= Math.max(-1, ...n.parents.filter(p => by[p]).map(p => d(by[p]))) + 1;
@@ -22,7 +44,7 @@
     let row = 0; const seen = new Set();
     const place = n => {
       if (seen.has(n.id)) return n.y; seen.add(n.id);
-      const ys = n.kids.map(place);
+      const ys = n.kids.filter(k => !stk(k)).map(place);
       n.y = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : row++; return n.y;
     };
     Object.values(by).filter(n => !n.parents.some(p => by[p])).forEach(place);
@@ -30,6 +52,12 @@
     const len = n => dur && n.days != null ? 130 + 55 * Math.log10(1 + n.days) : COL;
     Object.values(by).sort((a, b) => depth[a.id] - depth[b.id]).forEach(n => {
       const ps = n.parents.filter(p => by[p]); n.px = ps.length ? Math.max(...ps.map(p => by[p].px)) + len(n) : PAD; n.py = PAD + n.y * ROW; });
+    if (vert) {   // rotate 90° CW: depth runs top→bottom, rows right→left
+      const all = Object.values(by), tn = all.some(th), W = stack ? (tn ? 460 : 300) : 130;
+      all.filter(n => !stk(n)).forEach(n => { const a = n.px; n.px = PAD + (row - 1 - n.y) * W; n.py = a; });
+      all.filter(n => stk(n) && !th(n)).forEach(n => { const p = by[n.parents[0]]; if (!p) return; const i = (p.nst = (p.nst ?? -1) + 1); n.px = p.px + 130; n.py = p.py + i * (tn ? 110 : 60); });
+      all.filter(th).forEach(n => { const p = by[n.parents[0]]; if (p) { n.px = p.px + 150; n.py = p.py; } });   // thumbnail right of its sample
+    }
     return by;
   }
 
@@ -48,7 +76,7 @@
   function modal(root, n) {
     const m = h('div', 'pg-modal', root), b = h('div', 'pg-box', m);
     const hd = h('div', 'pg-head', b), L = h('span', 'pg-hl', hd), R = h('span', 'pg-hr', hd);
-    h('b', '', L).textContent = `${n.id} (${n.kind})`; copy(n.id, L);
+    h('b', '', L).textContent = `${n.label || n.id} (${n.kind})`; copy(n.label || n.id, L);
     const u = n.protocol && href(n.protocol);
     if (u) { const a = h('a', 'pg-link', L); a.href = u; a.title = 'Protocol: ' + n.protocol; a.textContent = '🔗';
       a.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); window.open(u, '_blank', 'noopener,noreferrer'); }; copy(n.protocol, L); }
@@ -92,23 +120,24 @@
 
   function tip(root, n, ev) {  // compact created / modified summary on hover
     let d = root.querySelector('.pg-tip'); if (!d) d = h('div', 'pg-tip', root);
-    d.innerHTML = ''; h('b', '', d).textContent = `${n.id} · ${n.kind}`;
+    d.innerHTML = ''; h('b', '', d).textContent = `${n.label || n.id} · ${n.kind}`;
     [['Created', n.audit.created], ['Modified', n.audit.modified]].forEach(([l, [w, who, em]]) => {
       const r = h('div', '', d); h('span', '', r).textContent = l; r.append(` ${w}`); if (who) r.append(` · ${who}`); if (em) r.append(` <${em}>`); });
     const r = root.getBoundingClientRect(); d.style.left = ev.clientX - r.left + 14 + 'px'; d.style.top = ev.clientY - r.top + 14 + 'px';
   }
 
   g.provGraph = function (root, data) {
-    root.innerHTML = ''; root.classList.add('pg-root'); root.classList.toggle('pg-dark', !!data.dark);
+    root.innerHTML = ''; root.classList.add('pg-root'); root.classList.toggle('pg-dark', !!data.dark); root.classList.toggle('pg-big', !!data.vertical);
     const hiSet = new Set(data.chain), mode = data.mode || 'tree';
     const nodes = mode === 'chain' ? data.nodes.filter(n => hiSet.has(n.id)) : data.nodes;
-    const by = layout(nodes, data.duration), all = Object.values(by);
+    const by = layout(nodes, data.duration, data.vertical, data.stack), all = Object.values(by);
     all.forEach(n => { n.ox = n.px; n.oy = n.py; });   // laid-out position, for Reset
     const vp = h('div', 'pg-vp', root); if (data.height) vp.style.height = data.height + 'px';
     const svg = el('svg', {}, vp), world = el('g', {}, svg);
     let T = { x: 0, y: 0, k: 1 }, vis = null;   // vis: Set of nodes kept by shift-click pruning (null = all)
     const apply = () => world.setAttribute('transform', `translate(${T.x},${T.y}) scale(${T.k})`);
-    const edgeD = (a, n) => { const mx = (a.px + n.px) / 2; return `M${a.px + 14},${a.py} C${mx},${a.py} ${mx},${n.py} ${n.px - 14},${n.py}`; };
+    const edgeD = (a, n) => { if (data.vertical && !(data.stack && n.kind === data.stack) && n.kind !== 'thumb') { const my = (a.py + n.py) / 2; return `M${a.px},${a.py + 14} C${a.px},${my} ${n.px},${my} ${n.px},${n.py - 14}`; }
+      const mx = (a.px + n.px) / 2; return `M${a.px + 14},${a.py} C${mx},${a.py} ${mx},${n.py} ${n.px - 14},${n.py}`; };
     const edges = [];
     all.forEach(n => n.parents.forEach(p => { const a = by[p]; if (!a) return; const hi = hiSet.has(n.id) && hiSet.has(p);
       const e = el('path', { class: hi ? 'pg-edge pg-hi' : 'pg-edge' }, world);
@@ -122,10 +151,10 @@
       edges.forEach(x => { if (x.a !== n && x.n !== n) return; const d = edgeD(x.a, x.n); x.e.setAttribute('d', d); x.hit && x.hit.setAttribute('d', d); }); };
     all.forEach(n => {
       const hi = hiSet.has(n.id), gr = n.g = el('g', { class: 'pg-node' }, world);
-      symbol(gr, n.kind, 0, 0, hi);
+      if (n.kind === 'thumb') thumbImg(gr, n, data.base || ''); else symbol(gr, n.kind, 0, 0, hi);
       if (n.abbr) { const a = el('text', { x: 0, y: 3, 'text-anchor': 'middle', class: 'pg-abbr' }, gr); a.textContent = n.abbr; }
-      const t = el('text', { x: 0, y: 28, 'text-anchor': 'middle', 'font-weight': hi ? 700 : 400 }, gr); t.textContent = n.id;
-      [...(n.sub || '').split('\n').filter(Boolean), ...(n.note ? ['\u0000' + n.note] : [])].forEach((ln, i) => {   // \0 marks the (italic) note line
+      const t = el('text', { x: 0, y: 28, 'text-anchor': 'middle', 'font-weight': hi ? 700 : 400 }, gr); t.textContent = n.kind === 'thumb' ? '' : n.label || n.id;
+      [...(n.kind === 'thumb' ? '' : n.sub || '').split('\n').filter(Boolean), ...(n.note ? ['\u0000' + n.note] : [])].forEach((ln, i) => {   // \0 marks the (italic) note line
         const nt = ln[0] === '\u0000', s2 = el('text', { x: 0, y: 40 + 12 * i, 'text-anchor': 'middle', class: 'pg-sub' + (nt ? ' pg-note' : '') }, gr); s2.textContent = nt ? ln.slice(1) : ln; });
       gr.addEventListener('pointerenter', () => { n.tipDone = false; clearTimeout(n.tt); n.tt = setTimeout(() => { n.tipDone = true; root.querySelector('.pg-tip')?.remove(); }, TIP_MS); });
       ['pointerenter', 'pointermove'].forEach(t => gr.addEventListener(t, ev => n.audit && !n.drag && !n.tipDone && tip(root, n, ev)));
@@ -140,7 +169,7 @@
         const x0 = ev.clientX, y0 = ev.clientY, px = n.px, py = n.py; let moved = false; n.drag = true;
         gr.onpointermove = e => { const dx = e.clientX - x0, dy = e.clientY - y0; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
           n.px = px + dx / T.k; n.py = py + dy / T.k; upd(n); };
-        gr.onpointerup = e => { n.drag = false; gr.onpointermove = gr.onpointerup = null; moved || (e.shiftKey ? prune(n) : modal(root, n)); };
+        gr.onpointerup = e => { n.drag = false; gr.onpointermove = gr.onpointerup = null; moved || (e.shiftKey ? prune(n) : n.kind === 'thumb' ? magnify(n, data.base || '') : modal(root, n)); };
       };
     });
     vp.onwheel = ev => { ev.preventDefault(); const r = vp.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
@@ -169,11 +198,11 @@
     const dl = h('label', '', bar), dk = h('input', '', dl); dk.type = 'checkbox'; dk.checked = !!data.dark; dl.append(' Dark mode');
     dk.onchange = () => root.classList.toggle('pg-dark', dk.checked);
     cb.onchange = () => g.provGraph(root, { ...data, duration: cb.checked, dark: root.classList.contains('pg-dark') });   // re-layout (node moves are reset)
-    const cr = h('div', 'pg-credit', vp), ca = h('a', '', cr);   // fixed overlay: unaffected by pan/zoom
+    const cr = h('div', 'pg-credit', vp), ca = h('a', '', cr); if (data.credit === null) cr.remove();   // fixed overlay: unaffected by pan/zoom; credit:null hides it
     ca.href = 'https://docs.sennetconsortium.org/apis/'; ca.textContent = 'Data: SenNet / HuBMAP Consortium Entity API'; ca.title = 'Provenance and metadata retrieved via the SenNet Consortium APIs';
     ca.onclick = ev => { ev.preventDefault(); window.open(ca.href, '_blank', 'noopener,noreferrer'); }; cr.onpointerdown = ev => ev.stopPropagation(); cr.onwheel = ev => ev.stopPropagation();
     const lg = h('div', 'pg-legend', root);   // legend
-    Object.entries(SYM).filter(([k]) => k !== 'other').forEach(([k]) => { const s = el('svg', { width: 36, height: 28 }, h('span', '', lg)); symbol(s, k, 18, 14); lg.lastChild.append(k); });
+    (data.legend || Object.keys(SYM).filter(k => !['other', 'project', 'datagroup', 'mouse', 'slide', 'sample'].includes(k))).forEach(k => { const s = el('svg', { width: 36, height: 28 }, h('span', '', lg)); symbol(s, k, 18, 14); lg.lastChild.append(k); });
     h('span', '', lg).textContent = '· wheel: zoom, drag: pan/move node, shift-click: keep only descendants, double-click: fit';
   };
 })(window);

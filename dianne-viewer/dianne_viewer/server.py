@@ -7,7 +7,7 @@ import socket
 import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 import multiprocessing
 import cv2
 import numpy as np
@@ -1064,6 +1064,12 @@ class ViewerServer:
         requested = qs.get('sample', [self.chosen_sample])[0]
         return str(requested)
 
+    def _komp_thumb_url(self, s):
+        """Thumbnail URL for a kompframe sample: /thumb if loaded in the viewer, else /komp_thumb if its sidecar exists, else None."""
+        q = quote(str(s), safe='')
+        if s in self.sample_names: return f'/thumb?sample={q}'
+        if self._komp_dir and os.sep not in str(s) and any(os.path.isfile(os.path.join(self._komp_dir, str(s), f'thumbnail.{e}')) for e in ('jpeg', 'tiff')): return f'/komp_thumb?sample={q}'
+
     # ── handler factory (closure over self) ───────────────────────────────────
 
     def _make_handler(self):
@@ -1099,6 +1105,35 @@ class ViewerServer:
                         from .provgraph import provapi
                         d = os.path.dirname(os.path.abspath(provapi.__file__))
                         body = json.dumps({'data': provapi.graph(sid), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
+                        self._respond(200, body, 'application/json')
+                    except Exception as exc:
+                        self._respond(502, f'{type(exc).__name__}: {exc}'.encode())
+
+                elif parsed.path == '/komp_thumb':   # sidecar thumbnail of a kompframe sample that is not loaded in the viewer
+                    s = qs.get('sample', [''])[0]
+                    p = next((q for q in (os.path.join(srv._komp_dir or '', s, f'thumbnail.{e}') for e in ('jpeg', 'tiff')) if s in srv._komp_all and os.sep not in s and os.path.isfile(q)), None)
+                    if p is None:
+                        self._respond(404, b'no thumbnail')
+                        return
+                    try:
+                        import io
+                        from PIL import Image
+                        im = Image.open(p).convert('RGB'); im.thumbnail((min(int(qs.get('big', ['0'])[0]), 2048) or 256,) * 2, resample=Image.LANCZOS)
+                        buf = io.BytesIO(); im.save(buf, format='JPEG', quality=85)
+                        self._respond(200, buf.getvalue(), 'image/jpeg')
+                    except Exception as exc:
+                        self._respond(400, f'{type(exc).__name__}: {exc}'.encode())
+
+                elif parsed.path == '/komp_graph':
+                    sid = qs.get('id', [''])[0]
+                    kf = getattr(srv, '_kompframe', None)
+                    if kf is None or sid not in srv._komp_samples:   # only samples present in the supplied kompframe
+                        self._respond(404, b'unknown komp sample')
+                        return
+                    try:
+                        from .kompgraph import kompapi
+                        d = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'provgraph')
+                        body = json.dumps({'data': kompapi.graph(sid, kf, srv._komp_meta, thumbs=srv._komp_thumb_url), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:
                         self._respond(502, f'{type(exc).__name__}: {exc}'.encode())
@@ -1187,10 +1222,13 @@ class ViewerServer:
                         ready = getattr(image, '_thumb_ready', None)
                         if ready is not None:
                             ready.wait(timeout=120)
-                        data = image.thumb
+                        big = min(int(qs.get('big', ['0'])[0]), 2048)   # big=<px>: larger preview from the smallest pyramid level that is >= px (ignores the 256px sidecar thumb)
+                        data = None if big else image.thumb
                         if data is None:
                             level = int(qs.get('level', [str(image.n_levels - 1)])[0])
                             size = int(qs.get('size', ['256'])[0])
+                            if big:
+                                size = big; level = max([i for i, m in image.levels.items() if max(m['shape'][:2]) >= big] or [0])
                             data = image.get_level_thumbnail(level, size=size)
                         self._respond(200, data, 'image/jpeg')
                     except Exception as e:
