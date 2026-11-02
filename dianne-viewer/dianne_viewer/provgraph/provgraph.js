@@ -56,7 +56,7 @@
       const all = Object.values(by), tn = all.some(th), W = stack ? (tn ? 460 : 300) : 130;
       all.filter(n => !stk(n)).forEach(n => { const a = n.px; n.px = PAD + (row - 1 - n.y) * W; n.py = a; });
       all.filter(n => stk(n) && !th(n)).forEach(n => { const p = by[n.parents[0]]; if (!p) return; const i = (p.nst = (p.nst ?? -1) + 1); n.px = p.px + 130; n.py = p.py + i * (tn ? 110 : 60); });
-      all.filter(th).forEach(n => { const p = by[n.parents[0]]; if (p) { n.px = p.px + 150; n.py = p.py; } });   // thumbnail right of its sample
+      all.filter(th).forEach(n => { const p = by[n.parents[0]]; if (p) { n.px = p.kind === 'slide' ? p.px : p.px + 150; n.py = p.kind === 'slide' ? p.py + 115 : p.py; } });   // thumbnail right of its sample; slide image below its slide
     }
     return by;
   }
@@ -136,7 +136,7 @@
     const svg = el('svg', {}, vp), world = el('g', {}, svg);
     let T = { x: 0, y: 0, k: 1 }, vis = null;   // vis: Set of nodes kept by shift-click pruning (null = all)
     const apply = () => world.setAttribute('transform', `translate(${T.x},${T.y}) scale(${T.k})`);
-    const edgeD = (a, n) => { if (data.vertical && !(data.stack && n.kind === data.stack) && n.kind !== 'thumb') { const my = (a.py + n.py) / 2; return `M${a.px},${a.py + 14} C${a.px},${my} ${n.px},${my} ${n.px},${n.py - 14}`; }
+    const edgeD = (a, n) => { if (data.vertical && !(data.stack && n.kind === data.stack) && !(n.kind === 'thumb' && a.kind !== 'slide')) { const my = (a.py + n.py) / 2; return `M${a.px},${a.py + 14} C${a.px},${my} ${n.px},${my} ${n.px},${n.py - 14}`; }
       const mx = (a.px + n.px) / 2; return `M${a.px + 14},${a.py} C${mx},${a.py} ${mx},${n.py} ${n.px - 14},${n.py}`; };
     const edges = [];
     all.forEach(n => n.parents.forEach(p => { const a = by[p]; if (!a) return; const hi = hiSet.has(n.id) && hiSet.has(p);

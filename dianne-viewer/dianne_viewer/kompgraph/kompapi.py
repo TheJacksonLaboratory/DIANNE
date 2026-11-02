@@ -3,7 +3,7 @@
 import pandas as pd
 
 LEVELS = ['project', 'datagroup', 'mouse', 'block', 'slide', 'sample']
-_KIND = {**{l: l for l in LEVELS}, 'thumb': 'thumb'}  # level -> provgraph.js symbol key
+_KIND = {**{l: l for l in LEVELS}, 'thumb': 'thumb', 'slidepic': 'thumb'}  # level -> provgraph.js symbol key
 
 
 def getKFrame(meta, slide_to_samples, project='KOMP'):
@@ -41,9 +41,13 @@ def node(n, parent, sample_meta=None):
                 protocol='', desc='', contrib=[], files=[], mapped=mp, uuid='', sub=n[0], abbr='', term=None, meta={'level': n[0], 'id': str(n[1])})
 
 
-def graph(sample, frame, sample_metadata=None, level='mouse', thumbs=None):
-    """Payload for the viewer: tree nodes + ids of the chain to highlight (bold). `thumbs(sample)` -> thumbnail URL or None; samples with a URL get a thumbnail node linked to them."""
+def graph(sample, frame, sample_metadata=None, level='mouse', thumbs=None, slidepics=None):
+    """Payload for the viewer: tree nodes + ids of the chain to highlight (bold). `thumbs(sample)` -> thumbnail URL or None; samples with a URL get a thumbnail node linked to them. `slidepics(sample)` likewise: one slide image per slide, from its first sample that has one."""
     chain = getKChain(sample, frame); tree = getKTree(chain, frame, level)
     sm = sample_metadata or {}; ex = [dict(node(('thumb', n[1]), n), thumb=u) for n in tree if n[0] == 'sample' and thumbs and (u := thumbs(n[1]))]
+    pics = {}
+    for n, p in tree.items():
+        if n[0] == 'sample' and p not in pics and slidepics and (u := slidepics(n[1])): pics[p] = u
+    ex += [dict(node(('slidepic', p[1]), p), thumb=u) for p, u in pics.items()]
     return dict(target=_nid(('sample', sample)), chain=[_nid(n) for n in chain], legend=LEVELS, credit=None, vertical=True, stack='sample',
                 nodes=[node(n, p, sm.get(sample)) for n, p in tree.items()] + ex)

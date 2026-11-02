@@ -1068,7 +1068,16 @@ class ViewerServer:
         """Thumbnail URL for a kompframe sample: /thumb if loaded in the viewer, else /komp_thumb if its sidecar exists, else None."""
         q = quote(str(s), safe='')
         if s in self.sample_names: return f'/thumb?sample={q}'
-        if self._komp_dir and os.sep not in str(s) and any(os.path.isfile(os.path.join(self._komp_dir, str(s), f'thumbnail.{e}')) for e in ('jpeg', 'tiff')): return f'/komp_thumb?sample={q}'
+        if self._komp_file(s, ('thumbnail.jpeg', 'thumbnail.tiff')): return f'/komp_thumb?sample={q}'
+
+    def _komp_slide_url(self, s):
+        """URL of <komp_dir>/<sample>/slide.jpeg if it exists, else None."""
+        if self._komp_file(s, ('slide.jpeg',)): return f'/komp_thumb?sample={quote(str(s), safe="")}&kind=slide'
+
+    def _komp_file(self, s, names):
+        """First existing <komp_dir>/<sample>/<name> for a kompframe sample (never a path outside komp_dir), else None."""
+        if s in self._komp_all and self._komp_dir and os.sep not in str(s):
+            return next((p for p in (os.path.join(self._komp_dir, str(s), n) for n in names) if os.path.isfile(p)), None)
 
     # ── handler factory (closure over self) ───────────────────────────────────
 
@@ -1111,7 +1120,7 @@ class ViewerServer:
 
                 elif parsed.path == '/komp_thumb':   # sidecar thumbnail of a kompframe sample that is not loaded in the viewer
                     s = qs.get('sample', [''])[0]
-                    p = next((q for q in (os.path.join(srv._komp_dir or '', s, f'thumbnail.{e}') for e in ('jpeg', 'tiff')) if s in srv._komp_all and os.sep not in s and os.path.isfile(q)), None)
+                    p = srv._komp_file(s, ('slide.jpeg',) if qs.get('kind') == ['slide'] else ('thumbnail.jpeg', 'thumbnail.tiff'))
                     if p is None:
                         self._respond(404, b'no thumbnail')
                         return
@@ -1133,7 +1142,7 @@ class ViewerServer:
                     try:
                         from .kompgraph import kompapi
                         d = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'provgraph')
-                        body = json.dumps({'data': kompapi.graph(sid, kf, srv._komp_meta, thumbs=srv._komp_thumb_url), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
+                        body = json.dumps({'data': kompapi.graph(sid, kf, srv._komp_meta, thumbs=srv._komp_thumb_url, slidepics=srv._komp_slide_url), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:
                         self._respond(502, f'{type(exc).__name__}: {exc}'.encode())
