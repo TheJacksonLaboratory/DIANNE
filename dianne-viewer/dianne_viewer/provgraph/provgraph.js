@@ -37,7 +37,7 @@
 
   function layout(nodes, dur, vert, stack) {   // vert: rotated 90° CW; stack: node kind drawn as a column right of its parent (vert only)
     const th = n => n.kind === 'thumb', stk = n => vert && (th(n) || (stack && n.kind === stack));  // columns by longest path from a root; rows by DFS order of leaves
-    const by = Object.fromEntries(nodes.map(n => [n.id, { ...n, kids: [] }]));
+    const by = Object.fromEntries(nodes.map(n => [n.id, { ...n, kids: [], nst: undefined }]));
     nodes.forEach(n => n.parents.forEach(p => by[p] && by[p].kids.push(by[n.id])));
     const depth = {}, d = n => depth[n.id] ??= Math.max(-1, ...n.parents.filter(p => by[p]).map(p => d(by[p]))) + 1;
     Object.values(by).forEach(d);
@@ -55,7 +55,7 @@
     if (vert) {   // rotate 90° CW: depth runs top→bottom, rows right→left
       const all = Object.values(by), tn = all.some(th), W = stack ? (tn ? 460 : 300) : 130;
       all.filter(n => !stk(n)).forEach(n => { const a = n.px; n.px = PAD + (row - 1 - n.y) * W; n.py = a; });
-      all.filter(n => stk(n) && !th(n)).forEach(n => { const p = by[n.parents[0]]; if (!p) return; const i = (p.nst = (p.nst ?? -1) + 1); n.px = p.px + 130; n.py = p.py + i * (tn ? 110 : 60); });
+      all.filter(n => stk(n) && !th(n)).forEach(n => { const p = by[n.parents[0]]; if (!p) return; const i = (p.nst = (p.nst ?? -1) + 1); n.px = p.px + 195; n.py = p.py + 85 + i * (tn ? 110 : 60); });
       all.filter(th).forEach(n => { const p = by[n.parents[0]]; if (p) { n.px = p.kind === 'slide' ? p.px : p.px + 150; n.py = p.kind === 'slide' ? p.py + 115 : p.py; } });   // thumbnail right of its sample; slide image below its slide
     }
     return by;
@@ -128,6 +128,7 @@
 
   g.provGraph = function (root, data) {
     root.innerHTML = ''; root.classList.add('pg-root'); root.classList.toggle('pg-dark', !!data.dark); root.classList.toggle('pg-big', !!data.vertical);
+    let fz = data.fz || 1; root.style.setProperty('--pg-z', fz);   // label font scale (A−/A+)
     const hiSet = new Set(data.chain), mode = data.mode || 'tree';
     const nodes = mode === 'chain' ? data.nodes.filter(n => hiSet.has(n.id)) : data.nodes;
     const by = layout(nodes, data.duration, data.vertical, data.stack), all = Object.values(by);
@@ -154,8 +155,9 @@
       if (n.kind === 'thumb') thumbImg(gr, n, data.base || ''); else symbol(gr, n.kind, 0, 0, hi);
       if (n.abbr) { const a = el('text', { x: 0, y: 3, 'text-anchor': 'middle', class: 'pg-abbr' }, gr); a.textContent = n.abbr; }
       const t = el('text', { x: 0, y: 28, 'text-anchor': 'middle', 'font-weight': hi ? 700 : 400 }, gr); t.textContent = n.kind === 'thumb' ? '' : n.label || n.id;
+      n.subEls = [];
       [...(n.kind === 'thumb' ? '' : n.sub || '').split('\n').filter(Boolean), ...(n.note ? ['\u0000' + n.note] : [])].forEach((ln, i) => {   // \0 marks the (italic) note line
-        const nt = ln[0] === '\u0000', s2 = el('text', { x: 0, y: 40 + 12 * i, 'text-anchor': 'middle', class: 'pg-sub' + (nt ? ' pg-note' : '') }, gr); s2.textContent = nt ? ln.slice(1) : ln; });
+        const nt = ln[0] === '\u0000', s2 = el('text', { x: 0, y: 28 + 12 * fz * (i + 1), 'text-anchor': 'middle', class: 'pg-sub' + (nt ? ' pg-note' : '') }, gr); n.subEls.push(s2); s2.textContent = nt ? ln.slice(1) : ln; });
       gr.addEventListener('pointerenter', () => { n.tipDone = false; clearTimeout(n.tt); n.tt = setTimeout(() => { n.tipDone = true; root.querySelector('.pg-tip')?.remove(); }, TIP_MS); });
       ['pointerenter', 'pointermove'].forEach(t => gr.addEventListener(t, ev => n.audit && !n.drag && !n.tipDone && tip(root, n, ev)));
       gr.addEventListener('pointerleave', () => clearTimeout(n.tt));
@@ -191,13 +193,19 @@
     const btn = (t, tip, f) => { const b = h('button', '', bar); b.textContent = t; b.title = tip; b.onclick = f; };
     btn('Center', 'Fit the (pruned) graph in view', fit);
     btn('Reset', 'Restore pruned nodes and node moves, then center', () => { vis = null; vshow(); all.forEach(n => { n.px = n.ox; n.py = n.oy; upd(n); }); fit(); });
+    btn('Optimize', 'Re-layout the visible (e.g. pruned) nodes compactly, then center', () => {
+      const vs = all.filter(n => !vis || vis.has(n)), nb = layout(vs, data.duration, data.vertical, data.stack);
+      vs.forEach(n => { n.px = nb[n.id].px; n.py = nb[n.id].py; upd(n); }); fit(); });
+    const fs = d => { fz = Math.min(2.5, Math.max(0.6, fz * d)); root.style.setProperty('--pg-z', fz); data.fz = fz;
+      all.forEach(n => n.subEls.forEach((s, i) => s.setAttribute('y', 28 + 12 * fz * (i + 1)))); };
+    btn('\u2212', 'Smaller node labels', () => fs(1 / 1.15)); btn('+', 'Larger node labels', () => fs(1.15));
     const gp = h('div', 'pg-grip', root); gp.title = 'Drag to resize';   // vertical resize handle under the graph
     gp.onpointerdown = ev => { gp.setPointerCapture(ev.pointerId); const y0 = ev.clientY, h0 = vp.getBoundingClientRect().height;
       gp.onpointermove = e => vp.style.height = Math.max(200, h0 + e.clientY - y0) + 'px'; gp.onpointerup = () => gp.onpointermove = gp.onpointerup = null; };
     const lb = h('label', '', bar), cb = h('input', '', lb); cb.type = 'checkbox'; cb.checked = !!data.duration; lb.append(' Scale to storage duration');
     const dl = h('label', '', bar), dk = h('input', '', dl); dk.type = 'checkbox'; dk.checked = !!data.dark; dl.append(' Dark mode');
     dk.onchange = () => root.classList.toggle('pg-dark', dk.checked);
-    cb.onchange = () => g.provGraph(root, { ...data, duration: cb.checked, dark: root.classList.contains('pg-dark') });   // re-layout (node moves are reset)
+    cb.onchange = () => g.provGraph(root, { ...data, fz, duration: cb.checked, dark: root.classList.contains('pg-dark') });   // re-layout (node moves are reset)
     const cr = h('div', 'pg-credit', vp), ca = h('a', '', cr); if (data.credit === null) cr.remove();   // fixed overlay: unaffected by pan/zoom; credit:null hides it
     ca.href = 'https://docs.sennetconsortium.org/apis/'; ca.textContent = 'Data: SenNet / HuBMAP Consortium Entity API'; ca.title = 'Provenance and metadata retrieved via the SenNet Consortium APIs';
     ca.onclick = ev => { ev.preventDefault(); window.open(ca.href, '_blank', 'noopener,noreferrer'); }; cr.onpointerdown = ev => ev.stopPropagation(); cr.onwheel = ev => ev.stopPropagation();
