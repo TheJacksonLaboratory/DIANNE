@@ -103,6 +103,8 @@ class OmeZarrImage(_LazyRGBImage):
     def __init__(self, path):
         import tensorstore as ts
         base = str(path).rstrip('/')
+        if not base.lower().startswith(('http://', 'https://')):
+            base = re.sub(r'/{2,}', '/', os.path.abspath(os.path.expanduser(base)))   # tensorstore rejects '//' (e.g. from 'ZARR://abs/path')
         kv = ({'driver': 'http', 'base_url': base} if base.lower().startswith(('http://', 'https://'))
               else {'driver': 'file', 'path': base + '/'})
         res = ts.KvStore.open({**kv, **({'base_url': base + '/'} if kv['driver'] == 'http' else {})}).result().read('zarr.json').result()
