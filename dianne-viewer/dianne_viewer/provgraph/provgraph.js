@@ -15,39 +15,36 @@
     else el('polygon', { points: `${x},${y - 14} ${x + 12},${y} ${x},${y + 14} ${x - 12},${y}`, ...a }, p);
   }
 
-  const TH = 96;   // thumbnail node size (1 in)
-  function thumbImg(gr, n, base) {   // tiny thumbnail node sized to the image's aspect (longest side TH); retries while the server is still opening the sample
-    gr.classList.add('pg-thumb'); const bg = el('rect', { x: -TH / 2 - 1, y: -TH / 2 - 1, width: TH + 2, height: TH + 2, rx: 3, fill: '#0f0f0f', stroke: SYM[n.type === 'slidepic' ? 'slide' : 'sample'][1], 'stroke-width': 2 }, gr);   // frame = color of the parent node (sample green / slide light blue)
-    const im = n.im = el('image', { x: -TH / 2, y: -TH / 2, width: TH, height: TH, preserveAspectRatio: 'none' }, gr), pre = new Image(); let k = 0;
-    pre.onload = () => { const s = TH / Math.max(pre.naturalWidth, pre.naturalHeight), w = Math.round(pre.naturalWidth * s), hh = Math.round(pre.naturalHeight * s);
-      Object.entries({ x: -w / 2 - 1, y: -hh / 2 - 1, width: w + 2, height: hh + 2 }).forEach(([a, v]) => bg.setAttribute(a, v));
+  let uid = 0; const TH = 96;   // thumbnail node size (1 in)
+  function thumbImg(gr, n, base, cx) {   // thumbnail node sized to the image's aspect (longest side TH); click magnifies it in place (resizable by the corner handle, edges stay attached); retries while the server is still opening the sample
+    gr.classList.add('pg-thumb'); const ig = el('g', {}, gr), big = 1024, cid = 'pgc' + (++uid), cp = el('clipPath', { id: cid }, el('defs', {}, gr)), cr = el('rect', {}, cp); n.iw = n.ih = n.w = n.h = TH; n.sc = 1; n.rl = [];   // rounded-corner clip: the image fills the frame, corner pixels are cut
+    const bg = el('rect', { x: -TH / 2, y: -TH / 2, width: TH, height: TH, rx: 5, fill: 'none', stroke: SYM[n.type === 'slidepic' ? 'slide' : 'sample'][1], 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }, ig);   // frame = color of the parent node (sample green / slide light blue)
+    const im = n.im = el('image', { x: -TH / 2, y: -TH / 2, width: TH, height: TH, preserveAspectRatio: 'none', 'clip-path': `url(#${cid})` }, ig), pre = new Image(); let k = 0; ig.appendChild(bg);   // frame drawn on top of the (clipped) image, exact same size: no gap
+    const ctl = el('g', { class: 'pg-ctl', display: 'none' }, gr), xb = el('g', { class: 'pg-x' }, ctl), rz = el('g', { class: 'pg-rz' }, ctl);   // close (top right) and resize (bottom right) handles
+    el('circle', { r: 9, fill: '#222', stroke: '#fff' }, xb); el('path', { d: 'M-3.5,-3.5L3.5,3.5M3.5,-3.5L-3.5,3.5', stroke: '#fff', 'stroke-width': 1.6 }, xb);
+    el('path', { d: 'M10,-10L10,10L-10,10Z', fill: '#fff', stroke: '#222', 'stroke-width': 1.5, 'stroke-linejoin': 'round' }, rz);
+    const lay = () => { Object.entries({ x: -n.iw / 2, y: -n.ih / 2, width: n.iw, height: n.ih, rx: 5 / n.sc }).forEach(([a, v]) => { cr.setAttribute(a, v); bg.setAttribute(a, v); }); n.w = n.iw * n.sc; n.h = n.ih * n.sc; ig.setAttribute('transform', `scale(${n.sc})`);
+      xb.setAttribute('transform', `translate(${n.w / 2},${-n.h / 2})`); rz.setAttribute('transform', `translate(${n.w / 2 - 6},${n.h / 2 - 6})`);
+      n.rl.forEach(([t, x, y]) => { t.setAttribute('x', (x - .5) * n.w); t.setAttribute('y', (y - .5) * n.h); }); };
+    n.setSc = s => { n.sc = s; lay(); cx.upd(n); };
+    n.mag = on => { gr.classList.toggle('pg-magd', on); ctl.setAttribute('display', on ? '' : 'none'); n.rl.forEach(([t]) => t.setAttribute('display', on ? '' : 'none'));
+      if (on) { n.setSc(Math.max(n.sc, 400 / Math.max(n.iw, n.ih))); const b = new Image(); b.onload = () => n.sc > 1 && im.setAttribute('href', b.src); b.src = `${base}${n.thumb}&big=${big}`; }
+      else { n.setSc(1); im.setAttribute('href', n.small); } };
+    xb.onpointerdown = ev => ev.stopPropagation(); xb.onclick = () => n.mag(false);
+    rz.onpointerdown = ev => { ev.stopPropagation(); rz.setPointerCapture(ev.pointerId); const x0 = ev.clientX, w0 = n.w, h0 = n.h, px = n.px, py = n.py;
+      rz.onpointermove = e => { const s = Math.max(1, (w0 + (e.clientX - x0) / cx.k()) / n.iw); n.sc = s; lay(); n.px = px + (n.w - w0) / 2; n.py = py + (n.h - h0) / 2; cx.upd(n); };   // top-left corner stays put
+      rz.onpointerup = () => rz.onpointermove = rz.onpointerup = null; };
+    pre.onload = () => { const s = TH / Math.max(pre.naturalWidth, pre.naturalHeight), w = Math.round(pre.naturalWidth * s), hh = Math.round(pre.naturalHeight * s); n.iw = w; n.ih = hh; n.small = pre.src;
       Object.entries({ x: -w / 2, y: -hh / 2, width: w, height: hh, href: pre.src }).forEach(([a, v]) => im.setAttribute(a, v));
-      (n.rois || []).forEach(r => el('polygon', { points: r.pts.map(([x, y]) => `${(x - .5) * w},${(y - .5) * hh}`).join(' '), class: 'pg-roi' }, gr)); };   // sample contours on a slide image
+      (n.rois || []).forEach(r => { el('polygon', { points: r.pts.map(([x, y]) => `${(x - .5) * w},${(y - .5) * hh}`).join(' '), class: 'pg-roi' }, ig);   // sample contours on a slide image; names shown when magnified
+        const c = centroid(r.pts), t = el('text', { class: 'pg-rlab', display: 'none' }, gr); t.textContent = r.name; n.rl.push([t, c[0], c[1]]); });
+      lay(); cx.upd(n); };
     pre.onerror = () => k++ < 5 && setTimeout(() => pre.src = `${base}${n.thumb}&r=${k}`, 1500 * k);
-    pre.src = base + n.thumb;
+    pre.src = base + n.thumb; n.small = pre.src; lay();
   }
 
   const centroid = pts => { let a = 0, x = 0, y = 0; pts.forEach(([x1, y1], i) => { const [x2, y2] = pts[(i + 1) % pts.length], c = x1 * y2 - x2 * y1; a += c; x += (x1 + x2) * c; y += (y1 + y2) * c; });
     return a ? [x / (3 * a), y / (3 * a)] : pts[0]; };
-
-  function magnify(n, base) {   // FLIP-animate the thumbnail to a large centered preview; Esc / click animates it back
-    const full = base + n.thumb, S = Math.min(900, innerWidth * .85, innerHeight * .85), bd = h('div', 'pg-mag', document.body), bx = h('div', 'pg-magbox', bd), im = h('img', '', bx);
-    const set = r => Object.assign(bx.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-    im.src = n.im.getAttribute('href'); set(n.im.getBoundingClientRect());
-    if (n.rois && n.rois.length) {   // sample contours (yellow glow) + names at the contour centers
-      const sv = el('svg', { viewBox: '0 0 1 1', preserveAspectRatio: 'none' }, bx);
-      n.rois.forEach(r => { el('polygon', { points: r.pts.map(p => p.join(',')).join(' '), class: 'pg-roi2' }, sv);
-        const c = centroid(r.pts), l = h('div', 'pg-rl', bx); l.textContent = r.name; l.style.left = c[0] * 100 + '%'; l.style.top = c[1] * 100 + '%'; });
-    }
-    const r0 = n.im.getBoundingClientRect(), ar = r0.width / r0.height || 1, tw = ar >= 1 ? S : S * ar, tt = ar >= 1 ? S / ar : S;   // same aspect as the tiny thumb
-    requestAnimationFrame(() => requestAnimationFrame(() => { bd.classList.add('pg-on'); set({ left: (innerWidth - tw) / 2, top: (innerHeight - tt) / 2, width: tw, height: tt }); }));
-    const big = new Image(); big.onload = () => bd.isConnected && (im.src = big.src); big.src = `${full}&big=${Math.max(512, Math.round(S * (devicePixelRatio || 1)))}`;
-    let closing = false;
-    const close = () => { if (closing) return; closing = true; bd.classList.remove('pg-on'); set(n.im.getBoundingClientRect());
-      setTimeout(() => { bd.remove(); document.removeEventListener('keydown', onKey, true); }, 330); };
-    const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
-    document.addEventListener('keydown', onKey, true); bd.onclick = close;
-  }
 
   function layout(nodes, dur, vert, stack) {   // vert: rotated 90° CW; stack: node kind drawn as a column right of its parent (vert only)
     const th = n => n.kind === 'thumb', stk = n => vert && (th(n) || (stack && n.kind === stack));  // columns by longest path from a root; rows by DFS order of leaves
@@ -151,7 +148,13 @@
     const svg = el('svg', {}, vp), world = el('g', {}, svg);
     let T = { x: 0, y: 0, k: 1 }, vis = null;   // vis: Set of nodes kept by shift-click pruning (null = all)
     const apply = () => world.setAttribute('transform', `translate(${T.x},${T.y}) scale(${T.k})`);
-    const edgeD = (a, n) => { if (data.vertical && !(data.stack && n.kind === data.stack) && !(n.kind === 'thumb' && a.kind !== 'slide')) { const my = (a.py + n.py) / 2; return `M${a.px},${a.py + 14} C${a.px},${my} ${n.px},${my} ${n.px},${n.py - 14}`; }
+    const edgeD = (a, n) => {
+      if (n.kind === 'thumb') {   // attach to the thumb's border on the side facing the parent (stays visible wherever the thumb is dragged)
+        const dx = a.px - n.px, dy = a.py - n.py, L = Math.hypot(dx, dy) || 1, tx = (n.w / 2 + 3) / (Math.abs(dx) || 1e-9), ty = (n.h / 2 + 3) / (Math.abs(dy) || 1e-9), t = Math.min(tx, ty, 1);
+        const ex = n.px + dx * t, ey = n.py + dy * t, sx = a.px - dx / L * 14, sy = a.py - dy / L * 14;
+        if (tx < ty) { const mx = (sx + ex) / 2; return `M${sx},${sy} C${mx},${sy} ${mx},${ey} ${ex},${ey}`; }
+        const my = (sy + ey) / 2; return `M${sx},${sy} C${sx},${my} ${ex},${my} ${ex},${ey}`; }
+      if (data.vertical && !(data.stack && n.kind === data.stack)) { const my = (a.py + n.py) / 2; return `M${a.px},${a.py + 14} C${a.px},${my} ${n.px},${my} ${n.px},${n.py - 14}`; }
       const mx = (a.px + n.px) / 2; return `M${a.px + 14},${a.py} C${mx},${a.py} ${mx},${n.py} ${n.px - 14},${n.py}`; };
     const edges = [];
     all.forEach(n => n.parents.forEach(p => { const a = by[p]; if (!a) return; const hi = hiSet.has(n.id) && hiSet.has(p);
@@ -166,7 +169,7 @@
       edges.forEach(x => { if (x.a !== n && x.n !== n) return; const d = edgeD(x.a, x.n); x.e.setAttribute('d', d); x.hit && x.hit.setAttribute('d', d); }); };
     all.forEach(n => {
       const hi = hiSet.has(n.id), gr = n.g = el('g', { class: 'pg-node' }, world);
-      if (n.kind === 'thumb') thumbImg(gr, n, data.base || ''); else symbol(gr, n.kind, 0, 0, hi);
+      if (n.kind === 'thumb') thumbImg(gr, n, data.base || '', { upd, k: () => T.k }); else symbol(gr, n.kind, 0, 0, hi);
       if (n.abbr) { const a = el('text', { x: 0, y: 3, 'text-anchor': 'middle', class: 'pg-abbr' }, gr); a.textContent = n.abbr; }
       const t = el('text', { x: 0, y: 28, 'text-anchor': 'middle', 'font-weight': hi ? 700 : 400 }, gr); t.textContent = n.kind === 'thumb' ? '' : n.label || n.id;
       n.subEls = [];
@@ -181,11 +184,11 @@
       gr.addEventListener('pointerleave', () => edges.forEach(x => x.e.classList.remove('pg-glow')));
       upd(n);
       gr.onpointerdown = ev => {   // drag node; a click without movement opens the modal
-        ev.stopPropagation(); root.querySelector('.pg-tip')?.remove(); gr.setPointerCapture(ev.pointerId);
+        ev.stopPropagation(); root.querySelector('.pg-tip')?.remove(); n.sc > 1 && world.appendChild(gr); gr.setPointerCapture(ev.pointerId);
         const x0 = ev.clientX, y0 = ev.clientY, px = n.px, py = n.py; let moved = false; n.drag = true;
         gr.onpointermove = e => { const dx = e.clientX - x0, dy = e.clientY - y0; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
           n.px = px + dx / T.k; n.py = py + dy / T.k; upd(n); };
-        gr.onpointerup = e => { n.drag = false; gr.onpointermove = gr.onpointerup = null; moved || (e.shiftKey ? prune(n) : n.kind === 'thumb' ? magnify(n, data.base || '') : modal(root, n)); };
+        gr.onpointerup = e => { n.drag = false; gr.onpointermove = gr.onpointerup = null; moved || (e.shiftKey ? prune(n) : n.kind === 'thumb' ? n.sc > 1 || (n.mag(true), world.appendChild(gr)) : modal(root, n)); };
       };
     });
     vp.onwheel = ev => { ev.preventDefault(); const r = vp.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
@@ -206,7 +209,7 @@
     const bar = h('div', 'pg-bar', vp); bar.onpointerdown = bar.onwheel = ev => ev.stopPropagation();   // toolbar: fixed overlay, top left
     const btn = (t, tip, f) => { const b = h('button', '', bar); b.textContent = t; b.title = tip; b.onclick = f; };
     btn('Center', 'Fit the (pruned) graph in view', fit);
-    btn('Reset', 'Restore pruned nodes and node moves, then center', () => { vis = null; vshow(); all.forEach(n => { n.px = n.ox; n.py = n.oy; upd(n); }); fit(); });
+    btn('Reset', 'Restore pruned nodes and node moves, then center', () => { vis = null; vshow(); all.forEach(n => { n.px = n.ox; n.py = n.oy; n.mag ? n.mag(false) : upd(n); }); fit(); });
     btn('Optimize', 'Re-layout the visible (e.g. pruned) nodes compactly, then center', () => {
       const vs = all.filter(n => !vis || vis.has(n)), nb = layout(vs, data.duration, data.vertical, data.stack);
       vs.forEach(n => { n.px = nb[n.id].px; n.py = nb[n.id].py; upd(n); }); fit(); });

@@ -247,7 +247,7 @@ function createSampleRibbon({
     body.textContent = 'Loading ' + label + ' provenance for ' + id + '\u2026';
     box.append(x, body); ov.appendChild(box); document.body.appendChild(ov);
     const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
-    const onKey = e => { if (e.key === 'Escape') { if (document.querySelector('.pg-mag')) return; e.stopPropagation(); close(); } };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); } };   // Esc ignored: close only via × / backdrop
     x.onclick = close; ov.onclick = e => { if (e.target === ov) close(); };
     document.addEventListener('keydown', onKey, true);
     try {
