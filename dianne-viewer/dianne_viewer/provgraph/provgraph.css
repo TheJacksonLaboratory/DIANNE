@@ -46,6 +46,6 @@
 .pg-node.pg-magd{cursor:move}.pg-ctl .pg-x{cursor:pointer}.pg-ctl .pg-rz{cursor:nwse-resize}
 .pg-node.pg-magd image{filter:drop-shadow(0 4px 10px rgba(0,0,0,.5))}
 .pg-root text.pg-rlab{fill:#fff;font-weight:600;font-size:12px;text-anchor:middle;dominant-baseline:middle;paint-order:stroke;stroke:#000;stroke-width:3px;pointer-events:none}
-.pg-root polygon.pg-roi{fill:none;stroke:#000;stroke-width:1.2;pointer-events:none;filter:drop-shadow(0 0 2px #ffd400)}
+.pg-root polygon.pg-roi{fill:none;stroke:#000;stroke-width:.8;vector-effect:non-scaling-stroke;pointer-events:none;filter:drop-shadow(0 0 2px #ffd400)}
 .pg-fb{cursor:pointer}.pg-root text.pg-abbr.pg-btt{font-size:11px;font-weight:600}
 .pg-ic{filter:drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1px #000);pointer-events:none}
