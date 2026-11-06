@@ -1064,6 +1064,8 @@ class ViewerServer:
         requested = qs.get('sample', [self.chosen_sample])[0]
         return str(requested)
 
+    _komp_full_lock = threading.Lock(); _komp_full_cache = {}   # dicts keep insertion order -> LRU
+
     def _komp_thumb_url(self, s):
         """Thumbnail URL for a kompframe sample: /komp_thumb if its sidecar exists, else /thumb if loaded in the viewer, else None."""
         q = quote(str(s), safe='')
@@ -1088,6 +1090,26 @@ class ViewerServer:
         """First existing <komp_dir>/<sample>/<name> for a kompframe sample (never a path outside komp_dir), else None."""
         if s in self._komp_all and self._komp_dir and os.sep not in str(s):
             return next((p for p in (os.path.join(self._komp_dir, str(s), n) for n in names) if os.path.isfile(p)), None)
+
+    def _komp_full(self, s, drop=False):
+        """RGB pyramid of <komp_dir>/<sample>/image.ome.tiff for the graph's live 'Full' view: opened on first use, kept in a small LRU (max 6), closed on drop. None if absent."""
+        with self._komp_full_lock:
+            im = self._komp_full_cache.pop(s, None)
+            if drop:
+                self._komp_full_close(im); return None
+            if im is None:
+                p = self._komp_file(s, ('image.ome.tiff',))
+                if p is None: return None
+                from .tiff import PyramidImage
+                im = PyramidImage(p)
+            self._komp_full_cache[s] = im
+            while len(self._komp_full_cache) > 6: self._komp_full_close(self._komp_full_cache.pop(next(iter(self._komp_full_cache))))
+            return im
+
+    @staticmethod
+    def _komp_full_close(im):
+        try: im and im._z.store.close()
+        except Exception: pass
 
     # ── handler factory (closure over self) ───────────────────────────────────
 
@@ -1143,6 +1165,17 @@ class ViewerServer:
                     except Exception as exc:
                         self._respond(400, f'{type(exc).__name__}: {exc}'.encode())
 
+                elif parsed.path in ('/komp_full_meta', '/komp_full_tile', '/komp_full_close'):   # live full-resolution view of a kompframe sample's image.ome.tiff (RGB only)
+                    s = qs.get('sample', [''])[0]
+                    try:
+                        if parsed.path == '/komp_full_close': srv._komp_full(s, drop=True); self._respond(200, b'ok'); return
+                        im = srv._komp_full(s)
+                        if im is None: self._respond(404, b'no image.ome.tiff'); return
+                        if parsed.path == '/komp_full_meta': self._respond(200, json.dumps(im.metadata).encode(), 'application/json')
+                        else: self._respond(200, im.get_tile(int(qs['level'][0]), int(qs['row'][0]), int(qs['col'][0]), quality=max(1, min(95, int(qs.get('quality', ['85'])[0])))), 'image/jpeg')
+                    except Exception as exc:
+                        self._respond(400, f'{type(exc).__name__}: {exc}'.encode())
+
                 elif parsed.path == '/komp_graph':
                     sid = qs.get('id', [''])[0]
                     kf = getattr(srv, '_kompframe', None)
@@ -1152,7 +1185,7 @@ class ViewerServer:
                     try:
                         from .kompgraph import kompapi
                         d = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'provgraph')
-                        body = json.dumps({'data': kompapi.graph(sid, kf, srv._komp_meta, thumbs=srv._komp_thumb_url, slidepics=srv._komp_slide_url, rois=srv._komp_roi), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
+                        body = json.dumps({'data': kompapi.graph(sid, kf, srv._komp_meta, thumbs=srv._komp_thumb_url, slidepics=srv._komp_slide_url, rois=srv._komp_roi, fulls=lambda s: srv._komp_file(s, ('image.ome.tiff',)) is not None), 'js': open(os.path.join(d, 'provgraph.js')).read(), 'css': open(os.path.join(d, 'provgraph.css')).read()}, default=str).encode()
                         self._respond(200, body, 'application/json')
                     except Exception as exc:
                         self._respond(502, f'{type(exc).__name__}: {exc}'.encode())

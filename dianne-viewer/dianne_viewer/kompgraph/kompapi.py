@@ -41,11 +41,12 @@ def node(n, parent, sample_meta=None):
                 protocol='', desc='', contrib=[], files=[], mapped=mp, uuid='', sub='\n'.join(str((sample_meta or {}).get(k, '')) for k in ('gene', 'allele')) if n[0] == 'mouse' else n[0], abbr='', term=None, meta={'level': n[0], 'id': str(n[1])})
 
 
-def graph(sample, frame, sample_metadata=None, level='mouse', thumbs=None, slidepics=None, rois=None):
+def graph(sample, frame, sample_metadata=None, level='mouse', thumbs=None, slidepics=None, rois=None, fulls=None):
     """Payload for the viewer: tree nodes + ids of the chain to highlight (bold). `thumbs(sample)` -> thumbnail URL or None; samples with a URL get a thumbnail node linked to them. `slidepics(sample)` likewise: one slide image per slide, from its first sample that has one.
+    `fulls(sample)` -> True if the sample has an image.ome.tiff (enables the live Full view on its thumbnail).
     `rois(sample)` -> [[x, y], ...] contour (0-1 coords on the slide image) or None; contours of a slide's samples ride along on its image node."""
     chain = getKChain(sample, frame); tree = getKTree(chain, frame, level)
-    sm = sample_metadata or {}; ex = [dict(node(('thumb', n[1]), n), thumb=u) for n in tree if n[0] == 'sample' and thumbs and (u := thumbs(n[1]))]
+    sm = sample_metadata or {}; ex = [dict(node(('thumb', n[1]), n), thumb=u, sample=str(n[1]), full=bool(fulls and fulls(n[1]))) for n in tree if n[0] == 'sample' and thumbs and (u := thumbs(n[1]))]
     pics = {}
     for n, p in tree.items():
         if n[0] == 'sample' and p not in pics and slidepics and (u := slidepics(n[1])): pics[p] = u

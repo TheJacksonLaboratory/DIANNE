@@ -139,7 +139,7 @@ class PyramidImage:
 
     def _to_jpeg(self, rgb: np.ndarray, quality: int = 85) -> bytes:
         buf = io.BytesIO()
-        Image.fromarray(rgb).save(buf, format='JPEG', quality=quality)
+        Image.fromarray(rgb).save(buf, format='JPEG', quality=quality, **({'subsampling': 0} if quality >= 95 else {}))   # q>=95: full-resolution chroma
         return buf.getvalue()
 
     def _blank_tile(self, h: int = TILE, w: int = TILE, quality: int = 85) -> bytes:

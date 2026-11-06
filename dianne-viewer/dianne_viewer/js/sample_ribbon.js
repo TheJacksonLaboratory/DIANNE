@@ -260,7 +260,7 @@ function createSampleRibbon({
       }
       if (!ov.isConnected) return;
       body.textContent = '';
-      window.provGraph(body, Object.assign({}, d.data, { mode: 'tree', height: 900, dark: true, base: BASE_URL }));
+      window.provGraph(body, Object.assign({}, d.data, { mode: 'tree', height: 900, dark: true, base: BASE_URL, mpp: (SAMPLE_META[ACTIVE_SAMPLE_REF()] || {}).mpp || (typeof MPP !== 'undefined' ? MPP : null) }));
     } catch (err) { body.textContent = 'Could not load ' + label + ' graph: ' + err.message; }
   }
 
